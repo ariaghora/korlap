@@ -87,7 +87,7 @@
     align-items: center;
     gap: 0.4rem;
     padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid #2a2520;
+    border-bottom: 1px solid #1e1b18;
   }
 
   .prompt {
@@ -113,7 +113,7 @@
 
   .run-btn {
     padding: 0.2rem 0.5rem;
-    background: #2a2520;
+    background: #1e1b18;
     border: 1px solid #3a3530;
     border-radius: 4px;
     color: #8a7e6a;
@@ -162,7 +162,7 @@
     padding: 0.25rem 0.75rem;
     font-family: "SF Mono", "Fira Code", monospace;
     font-size: 0.72rem;
-    border-top: 1px solid #2a2520;
+    border-top: 1px solid #1e1b18;
   }
 
   .exit-bar.success {

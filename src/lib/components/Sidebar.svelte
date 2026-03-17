@@ -46,7 +46,7 @@
 <style>
   .sidebar {
     width: 220px;
-    border-right: 1px solid #2a2520;
+    border-right: 1px solid #1e1b18;
     display: flex;
     flex-direction: column;
     background: #0f0d0a;
@@ -91,7 +91,7 @@
   }
 
   .ws-item.active {
-    background: #2a2520;
+    background: #1e1b18;
     border-color: #3a3530;
   }
 

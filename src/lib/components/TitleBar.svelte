@@ -72,7 +72,7 @@
     justify-content: space-between;
     padding: 0 0.75rem;
     height: 40px;
-    border-bottom: 1px solid #2a2520;
+    border-bottom: 1px solid #1e1b18;
     background: #1a1611;
     -webkit-user-select: none;
     user-select: none;
@@ -116,12 +116,12 @@
 
   .repo-tab:hover {
     color: #d4c5a9;
-    background: #2a2520;
+    background: #1e1b18;
   }
 
   .repo-tab.active {
     color: #e8dcc8;
-    background: #2a2520;
+    background: #1e1b18;
     border-color: #3a3530;
   }
 

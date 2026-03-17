@@ -184,7 +184,7 @@
   }
 
   .user-bubble {
-    background: #2a2520;
+    background: #1e1b18;
     border: 1px solid #3a3530;
     border-radius: 10px;
     padding: 0.5rem 0.85rem;
@@ -215,7 +215,7 @@
 
   .assistant-card {
     background: #1a1814;
-    border: 1px solid #2a2520;
+    border: 1px solid #1e1b18;
     border-radius: 8px;
     padding: 0.6rem 0.85rem;
   }
@@ -308,7 +308,7 @@
     display: flex;
     gap: 0.5rem;
     padding: 0.6rem 1rem;
-    border-top: 1px solid #2a2520;
+    border-top: 1px solid #1e1b18;
   }
 
   .input-row input {
@@ -334,7 +334,7 @@
 
   .send-btn {
     padding: 0.55rem 1rem;
-    background: #2a2520;
+    background: #1e1b18;
     border: 1px solid #3a3530;
     color: #d4c5a9;
     border-radius: 8px;

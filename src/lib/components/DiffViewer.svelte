@@ -199,7 +199,7 @@
 
   .file-sidebar {
     width: 240px;
-    border-right: 1px solid #2a2520;
+    border-right: 1px solid #1e1b18;
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
@@ -210,7 +210,7 @@
     align-items: center;
     gap: 0.4rem;
     padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid #2a2520;
+    border-bottom: 1px solid #1e1b18;
     font-size: 0.72rem;
   }
 
@@ -275,7 +275,7 @@
   }
 
   .file-item.active {
-    background: #2a2520;
+    background: #1e1b18;
   }
 
   .file-status {
@@ -321,7 +321,7 @@
 
   .refresh-btn {
     padding: 0.25rem 0.6rem;
-    background: #2a2520;
+    background: #1e1b18;
     border: 1px solid #3a3530;
     border-radius: 4px;
     color: #8a7e6a;

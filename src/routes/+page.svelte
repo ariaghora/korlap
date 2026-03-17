@@ -344,7 +344,7 @@
     width: 48px;
     height: 48px;
     border-radius: 12px;
-    background: #2a2520;
+    background: #1e1b18;
     border: 1px solid #3a3530;
     display: flex;
     align-items: center;
@@ -407,7 +407,7 @@
     text-align: left;
     padding: 0.5rem 0.75rem;
     background: #1a1714;
-    border: 1px solid #2a2520;
+    border: 1px solid #1e1b18;
     border-radius: 6px;
     color: #d4c5a9;
     cursor: pointer;
@@ -468,7 +468,7 @@
     justify-content: space-between;
     padding: 0 1rem;
     height: 38px;
-    border-bottom: 1px solid #2a2520;
+    border-bottom: 1px solid #1e1b18;
     flex-shrink: 0;
   }
 
@@ -496,7 +496,7 @@
 
   .tab.active {
     color: #e8dcc8;
-    background: #2a2520;
+    background: #1e1b18;
   }
 
   .tab-bar-right {
@@ -550,7 +550,7 @@
 
   .archive-btn:hover {
     color: #d4c5a9;
-    background: #2a2520;
+    background: #1e1b18;
   }
 
   /* ── Tab content ──────────────────────────────────── */

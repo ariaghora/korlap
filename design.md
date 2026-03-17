@@ -18,7 +18,7 @@
 | `bg-card` | `#1a1814` | Assistant message cards, input fields |
 | `bg-hover` | `#1e1b17` | Hover states |
 | `bg-active` | `#2a2520` | Selected items, user bubbles, active tab |
-| `border` | `#2a2520` | Primary borders |
+| `border` | `#1e1b18` | Primary borders (soft, low contrast) |
 | `border-light` | `#3a3530` | Active item borders, button borders |
 | `text-muted` | `#4a4540` | Placeholders, separators |
 | `text-dim` | `#6a6050` | Labels, breadcrumb base, secondary text |
