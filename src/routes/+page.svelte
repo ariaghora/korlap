@@ -166,6 +166,7 @@
           }
         } else if (event.type === "done") {
           sending = false;
+          diffRefreshTrigger++;
         } else if (event.type === "error") {
           error = event.message;
           sending = false;
