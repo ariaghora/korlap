@@ -405,7 +405,8 @@
 
   function selectWorkspace(wsId: string) {
     selectedWsId = wsId;
-    // Don't fetch on switch — use cached values. Refresh happens after agent work.
+    // Refresh PR status in background so it's current when the user lands on the workspace
+    refreshPrStatus(wsId);
   }
 </script>
 
