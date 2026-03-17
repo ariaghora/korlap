@@ -433,6 +433,52 @@ pub fn list_workspaces(
         .collect())
 }
 
+// ── Branch commands ──────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn rename_branch(
+    workspace_id: String,
+    new_name: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<WorkspaceInfo, String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    let ws = st
+        .workspaces
+        .get(&workspace_id)
+        .ok_or("Workspace not found")?;
+
+    if ws.status == WorkspaceStatus::Archived {
+        return Err("Cannot rename an archived workspace".into());
+    }
+
+    let old_branch = ws.branch.clone();
+    let new_branch = format!("conductor/{}", new_name);
+    let worktree_path = ws.worktree_path.clone();
+
+    let output = std::process::Command::new("git")
+        .args(["branch", "-m", &old_branch, &new_branch])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("Failed to run git branch -m: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git branch rename failed: {}", stderr.trim()));
+    }
+
+    let ws = st
+        .workspaces
+        .get_mut(&workspace_id)
+        .ok_or("Workspace not found")?;
+    ws.branch = new_branch;
+    ws.name = new_name;
+    let ws_clone = ws.clone();
+    st.save_workspaces()?;
+
+    tracing::info!("Renamed workspace {} to {}", workspace_id, ws_clone.name);
+    Ok(ws_clone)
+}
+
 // ── Git commands ─────────────────────────────────────────────────────
 
 #[derive(Clone, serde::Serialize)]
@@ -693,7 +739,7 @@ pub fn send_message(
     state: State<'_, Mutex<AppState>>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let (worktree_path, gh_profile, repo_id) = {
+    let (worktree_path, gh_profile, repo_id, ws_branch, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
             return Err("Agent is already processing a message".into());
@@ -705,10 +751,13 @@ pub fn send_message(
         if ws.status == WorkspaceStatus::Archived {
             return Err("Cannot send message to archived workspace".into());
         }
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
         (
             ws.worktree_path.clone(),
             ws.gh_profile.clone(),
             ws.repo_id.clone(),
+            ws.branch.clone(),
+            repo.path.clone(),
         )
     };
 
@@ -744,6 +793,21 @@ pub fn send_message(
 
     if let Some(ref sid) = session_id {
         cmd.arg("--resume").arg(sid);
+    } else {
+        // Inject system prompt only on first message (resume inherits it)
+        let base_branch = detect_default_branch(&repo_path)
+            .unwrap_or_else(|_| "main".to_string());
+        let system_prompt = format!(
+            "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
+             Your work takes place in: {}\n\
+             Target branch: {}\n\
+             Base branch: {}\n\
+             Keep all changes on the target branch. Do not modify other branches.",
+            worktree_path.display(),
+            ws_branch,
+            base_branch,
+        );
+        cmd.arg("--system-prompt").arg(&system_prompt);
     }
 
     cmd.current_dir(&worktree_path);
@@ -862,27 +926,17 @@ pub fn stop_agent(
     app: AppHandle,
 ) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    let mut handle = st
-        .agents
-        .remove(&workspace_id)
-        .ok_or("No agent running for this workspace")?;
 
-    handle
-        .child
-        .kill()
-        .map_err(|e| format!("Failed to kill agent: {}", e))?;
-    let _ = handle.child.wait();
-
-    let repo_id = if let Some(ws) = st.workspaces.get_mut(&workspace_id) {
-        ws.status = WorkspaceStatus::Waiting;
-        Some(ws.repo_id.clone())
-    } else {
-        None
-    };
-
-    if let Some(repo_id) = repo_id {
-        st.save_workspaces()?;
+    // Idempotent: if no agent running, just return Ok
+    if let Some(mut handle) = st.agents.remove(&workspace_id) {
+        let _ = handle.child.kill();
+        let _ = handle.child.wait();
     }
+
+    if let Some(ws) = st.workspaces.get_mut(&workspace_id) {
+        ws.status = WorkspaceStatus::Waiting;
+    }
+    st.save_workspaces()?;
 
     let _ = app.emit(
         "agent-status",

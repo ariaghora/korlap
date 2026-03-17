@@ -6,9 +6,10 @@
     sending: boolean;
     disabled: boolean;
     onSend: (prompt: string) => void;
+    onStop: () => void;
   }
 
-  let { messages, sending, disabled, onSend }: Props = $props();
+  let { messages, sending, disabled, onSend, onStop }: Props = $props();
 
   let userInput = $state("");
   let chatArea: HTMLDivElement | undefined = $state();
@@ -144,9 +145,13 @@
       placeholder="Ask to make changes, @mention files, run /commands"
       disabled={disabled}
     />
-    <button type="submit" class="send-btn" disabled={sending || !userInput.trim() || disabled}
-      >Send</button
-    >
+    {#if sending}
+      <button type="button" class="stop-btn" onclick={onStop}>Stop</button>
+    {:else}
+      <button type="submit" class="send-btn" disabled={!userInput.trim() || disabled}
+        >Send</button
+      >
+    {/if}
   </form>
 </div>
 
@@ -350,5 +355,21 @@
   .send-btn:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+
+  .stop-btn {
+    padding: 0.55rem 1rem;
+    background: var(--diff-del-bg);
+    border: 1px solid var(--diff-del);
+    color: var(--diff-del);
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .stop-btn:hover {
+    filter: brightness(1.2);
   }
 </style>

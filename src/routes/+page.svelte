@@ -8,6 +8,8 @@
     listWorkspaces,
     sendMessage,
     onAgentStatus,
+    stopAgent,
+    renameBranch,
     type RepoDetail,
     type WorkspaceInfo,
     type AgentEvent,
@@ -34,7 +36,7 @@
   let activeRepo = $state<RepoDetail | null>(null);
   let selectedWsId = $state<string | null>(null);
   let error = $state("");
-  let sending = $state(false);
+  let sendingMap = $state(new Map<string, boolean>());
   let activeTab = $state<PanelTab>("chat");
   let diffRefreshTrigger = $state(0);
 
@@ -42,6 +44,11 @@
   let activeWorkspaces = $derived(
     workspaces.filter((w) => w.status !== "archived"),
   );
+
+  function setSending(wsId: string, value: boolean) {
+    sendingMap.set(wsId, value);
+    sendingMap = new Map(sendingMap);
+  }
 
   // ── Lifecycle ──────────────────────────────────────────
 
@@ -64,16 +71,45 @@
           ws.status = event.status as WorkspaceInfo["status"];
           workspaces = [...workspaces];
         }
-        if (event.workspace_id === selectedWsId) {
-          if (event.status === "waiting") {
-            sending = false;
-          }
+        if (event.status === "waiting") {
+          setSending(event.workspace_id, false);
         }
       });
     })();
 
+    function handleKeydown(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+
+      const tag = (e.target as HTMLElement)?.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA";
+
+      switch (e.key) {
+        case "n":
+          e.preventDefault();
+          handleNewWorkspace();
+          break;
+        case "w":
+          e.preventDefault();
+          if (selectedWsId) handleArchive(selectedWsId);
+          break;
+        default:
+          if (!inInput && e.key >= "1" && e.key <= "9") {
+            e.preventDefault();
+            const idx = parseInt(e.key) - 1;
+            const active = workspaces.filter((w) => w.status !== "archived");
+            if (idx < active.length) {
+              selectedWsId = active[idx].id;
+            }
+          }
+      }
+    }
+
+    window.addEventListener("keydown", handleKeydown);
+
     return () => {
       unlistenFn?.();
+      window.removeEventListener("keydown", handleKeydown);
     };
   });
 
@@ -140,10 +176,10 @@
   }
 
   async function handleSend(prompt: string) {
-    if (!selectedWsId || sending) return;
+    if (!selectedWsId || sendingMap.get(selectedWsId)) return;
     const wsId = selectedWsId;
     error = "";
-    sending = true;
+    setSending(wsId, true);
 
     addUserMessage(wsId, crypto.randomUUID(), prompt);
 
@@ -165,16 +201,39 @@
             diffRefreshTrigger++;
           }
         } else if (event.type === "done") {
-          sending = false;
+          setSending(wsId, false);
           diffRefreshTrigger++;
         } else if (event.type === "error") {
           error = event.message;
-          sending = false;
+          setSending(wsId, false);
         }
       });
     } catch (e) {
       error = String(e);
-      sending = false;
+      setSending(wsId, false);
+    }
+  }
+
+  async function handleRename(wsId: string, newName: string) {
+    try {
+      const updated = await renameBranch(wsId, newName);
+      const idx = workspaces.findIndex((w) => w.id === wsId);
+      if (idx >= 0) {
+        workspaces[idx] = updated;
+        workspaces = [...workspaces];
+      }
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function handleStop() {
+    if (!selectedWsId) return;
+    try {
+      await stopAgent(selectedWsId);
+      setSending(selectedWsId, false);
+    } catch (e) {
+      error = String(e);
     }
   }
 </script>
@@ -227,6 +286,7 @@
         {selectedWsId}
         onSelect={(wsId) => (selectedWsId = wsId)}
         onNewWorkspace={handleNewWorkspace}
+        onRename={handleRename}
       />
 
       <main class="panel">
@@ -266,9 +326,10 @@
               >
                 <ChatPanel
                   messages={getMessages(ws.id)}
-                  sending={sending && ws.id === selectedWsId}
+                  sending={sendingMap.get(ws.id) ?? false}
                   disabled={ws.status === "archived"}
                   onSend={handleSend}
+                  onStop={handleStop}
                 />
               </div>
             {/each}

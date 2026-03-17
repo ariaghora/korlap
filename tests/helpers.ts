@@ -32,6 +32,10 @@ export async function mockTauri(
             return [];
           case "plugin:dialog|open":
             return null;
+          case "plugin:event|listen":
+            return 0;
+          case "plugin:event|unlisten":
+            return null;
           default:
             console.warn(`[mock] unhandled invoke: ${cmd}`, args);
             return null;
@@ -100,6 +104,13 @@ export async function mockTauriWithRepo(
             return null;
           case "load_messages":
             return [];
+          case "rename_branch":
+            return {
+              ...repoData,
+              id: args?.workspaceId ?? "ws-1",
+              name: args?.newName ?? "renamed",
+              branch: `conductor/${args?.newName ?? "renamed"}`,
+            };
           case "get_changed_files":
             return [];
           case "get_diff":
@@ -131,6 +142,10 @@ export async function mockTauriWithRepo(
             return null;
           }
           case "plugin:dialog|open":
+            return null;
+          case "plugin:event|listen":
+            return 0;
+          case "plugin:event|unlisten":
             return null;
           default:
             console.warn(`[mock] unhandled invoke: ${cmd}`, args);

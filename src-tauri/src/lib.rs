@@ -64,6 +64,7 @@ pub fn run() {
             commands::create_workspace,
             commands::archive_workspace,
             commands::list_workspaces,
+            commands::rename_branch,
             commands::get_changed_files,
             commands::get_diff,
             commands::run_script,

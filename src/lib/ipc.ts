@@ -92,6 +92,15 @@ export async function stopAgent(workspaceId: string): Promise<void> {
   return invoke("stop_agent", { workspaceId });
 }
 
+// ── Branch ──────────────────────────────────────────────────────────
+
+export async function renameBranch(
+  workspaceId: string,
+  newName: string,
+): Promise<WorkspaceInfo> {
+  return invoke<WorkspaceInfo>("rename_branch", { workspaceId, newName });
+}
+
 // ── Git ─────────────────────────────────────────────────────────────
 
 export interface ChangedFile {

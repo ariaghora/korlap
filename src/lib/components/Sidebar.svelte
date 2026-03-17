@@ -6,13 +6,40 @@
     selectedWsId: string | null;
     onSelect: (wsId: string) => void;
     onNewWorkspace: () => void;
+    onRename: (wsId: string, newName: string) => void;
   }
 
-  let { workspaces, selectedWsId, onSelect, onNewWorkspace }: Props = $props();
+  let { workspaces, selectedWsId, onSelect, onNewWorkspace, onRename }: Props =
+    $props();
 
   let activeWorkspaces = $derived(
     workspaces.filter((w) => w.status !== "archived"),
   );
+
+  let editingId = $state<string | null>(null);
+  let editValue = $state("");
+
+  function startEdit(ws: WorkspaceInfo) {
+    editingId = ws.id;
+    editValue = ws.name;
+  }
+
+  function commitEdit(wsId: string) {
+    const trimmed = editValue.trim();
+    if (trimmed && editingId === wsId) {
+      onRename(wsId, trimmed);
+    }
+    editingId = null;
+  }
+
+  function handleEditKeydown(e: KeyboardEvent, wsId: string) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitEdit(wsId);
+    } else if (e.key === "Escape") {
+      editingId = null;
+    }
+  }
 </script>
 
 <aside class="sidebar">
@@ -25,15 +52,28 @@
         class="ws-item"
         class:active={ws.id === selectedWsId}
         onclick={() => onSelect(ws.id)}
+        ondblclick={() => startEdit(ws)}
       >
         <span
           class="ws-dot"
           class:running={ws.status === "running"}
           class:waiting={ws.status === "waiting"}
         ></span>
-        <span class="ws-name">{ws.name}</span>
-        {#if ws.status === "running"}
-          <span class="ws-status">running</span>
+        {#if editingId === ws.id}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="ws-rename-input"
+            bind:value={editValue}
+            onblur={() => commitEdit(ws.id)}
+            onkeydown={(e) => handleEditKeydown(e, ws.id)}
+            onclick={(e) => e.stopPropagation()}
+            autofocus
+          />
+        {:else}
+          <span class="ws-name">{ws.name}</span>
+          {#if ws.status === "running"}
+            <span class="ws-status">running</span>
+          {/if}
         {/if}
       </button>
     {/each}
@@ -134,6 +174,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .ws-rename-input {
+    flex: 1;
+    background: var(--bg-base);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    color: var(--text-bright);
+    font-family: inherit;
+    font-size: 0.82rem;
+    padding: 0.1rem 0.3rem;
+    outline: none;
+    min-width: 0;
   }
 
   .new-ws-btn {
