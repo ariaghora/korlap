@@ -31,6 +31,7 @@ export interface WorkspaceInfo {
 export interface ToolUseInfo {
   name: string;
   input_preview?: string;
+  file_path?: string;
 }
 
 export type AgentEvent =

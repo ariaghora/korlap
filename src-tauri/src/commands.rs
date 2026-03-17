@@ -105,6 +105,8 @@ pub struct ToolUseInfo {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -164,8 +166,13 @@ fn parse_stream_line(
                             .unwrap_or("unknown")
                             .to_string();
 
+                        let file_path = block
+                            .get("input")
+                            .and_then(|input| input.get("file_path"))
+                            .and_then(|f| f.as_str())
+                            .map(|s| s.to_string());
+
                         let input_preview = block.get("input").and_then(|input| {
-                            // Show file_path for file ops, command for Bash
                             if let Some(fp) = input.get("file_path").and_then(|f| f.as_str()) {
                                 Some(fp.to_string())
                             } else if let Some(cmd) =
@@ -184,6 +191,7 @@ fn parse_stream_line(
                         tool_uses.push(ToolUseInfo {
                             name,
                             input_preview,
+                            file_path,
                         });
                     }
                     _ => {}

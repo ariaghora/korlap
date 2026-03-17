@@ -4,7 +4,7 @@ import { saveMessages, loadMessages } from "$lib/ipc";
 
 export type MessageChunk =
   | { type: "text"; content: string }
-  | { type: "tool"; name: string; input: string };
+  | { type: "tool"; name: string; input: string; filePath?: string };
 
 export interface Message {
   id: string;
@@ -60,7 +60,7 @@ export function addAssistantMessage(
   workspaceId: string,
   id: string,
   text: string,
-  toolUses: { name: string; input: string }[],
+  toolUses: { name: string; input: string; filePath?: string }[],
 ) {
   const msgs = ensureWorkspace(workspaceId);
   const chunks: MessageChunk[] = [];
@@ -68,7 +68,7 @@ export function addAssistantMessage(
     chunks.push({ type: "text", content: text });
   }
   for (const tool of toolUses) {
-    chunks.push({ type: "tool", name: tool.name, input: tool.input });
+    chunks.push({ type: "tool", name: tool.name, input: tool.input, filePath: tool.filePath });
   }
   msgs.set(id, {
     id,

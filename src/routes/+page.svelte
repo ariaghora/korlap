@@ -153,6 +153,7 @@
           const toolUses = event.tool_uses.map((t) => ({
             name: t.name,
             input: t.input_preview ?? "",
+            filePath: t.file_path,
           }));
           addAssistantMessage(
             wsId,

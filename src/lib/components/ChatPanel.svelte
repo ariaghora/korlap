@@ -32,29 +32,22 @@
 
   // Files touched in the latest agent turn (after last user message)
   let recentFiles = $derived.by(() => {
-    const files = new Map<string, { adds: number; dels: number }>();
-    // Walk backwards from end, collect tool chunks until we hit a user message
+    const seen = new Set<string>();
+    const files: string[] = [];
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg.role === "user") break;
       for (const chunk of msg.chunks) {
-        if (chunk.type === "tool") {
-          // Extract file path from tool input
-          const input = chunk.input;
-          if (input) {
-            // Input is typically a file path or "command" — extract meaningful path
-            const path = input.replace(/^["']|["']$/g, "");
-            if (path && !path.includes(" ") && path.includes("/") || path.includes(".")) {
-              const name = path.split("/").pop() ?? path;
-              if (!files.has(name)) {
-                files.set(name, { adds: 0, dels: 0 });
-              }
-            }
+        if (chunk.type === "tool" && chunk.filePath) {
+          const name = chunk.filePath.split("/").pop() ?? chunk.filePath;
+          if (!seen.has(name)) {
+            seen.add(name);
+            files.push(name);
           }
         }
       }
     }
-    return [...files.keys()];
+    return files;
   });
 
   function handleSubmit() {
