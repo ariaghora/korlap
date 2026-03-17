@@ -425,6 +425,108 @@ pub fn list_workspaces(
         .collect())
 }
 
+// ── Git commands ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_diff(
+    workspace_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<String, String> {
+    let (repo_path, branch) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        (repo.path.clone(), ws.branch.clone())
+    };
+
+    let base_branch = detect_default_branch(&repo_path)?;
+
+    let output = std::process::Command::new("git")
+        .args(["diff", &format!("{}..{}", base_branch, branch)])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run git diff: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git diff failed: {}", stderr.trim()));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+// ── Script commands ──────────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+#[serde(tag = "type")]
+pub enum ScriptEvent {
+    #[serde(rename = "output")]
+    Output { data: String },
+    #[serde(rename = "exit")]
+    Exit { code: Option<i32> },
+}
+
+#[tauri::command]
+pub fn run_script(
+    workspace_id: String,
+    command: String,
+    on_event: Channel<ScriptEvent>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", &command])
+        .current_dir(&worktree_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run script: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+
+        // Read stdout
+        let stdout_reader = std::io::BufReader::new(stdout);
+        for line in stdout_reader.lines() {
+            match line {
+                Ok(line) => {
+                    let _ = on_event.send(ScriptEvent::Output {
+                        data: line + "\n",
+                    });
+                }
+                Err(_) => break,
+            }
+        }
+
+        // Read remaining stderr
+        let mut stderr_buf = String::new();
+        let mut stderr_reader = std::io::BufReader::new(stderr);
+        let _ = std::io::Read::read_to_string(&mut stderr_reader, &mut stderr_buf);
+        if !stderr_buf.is_empty() {
+            let _ = on_event.send(ScriptEvent::Output { data: stderr_buf });
+        }
+
+        let code = child.wait().ok().and_then(|s| s.code());
+        let _ = on_event.send(ScriptEvent::Exit { code });
+    });
+
+    Ok(())
+}
+
 // ── Message persistence ──────────────────────────────────────────────
 
 #[tauri::command]

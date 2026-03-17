@@ -100,6 +100,10 @@ export async function mockTauriWithRepo(
             return null;
           case "load_messages":
             return [];
+          case "get_diff":
+            return "";
+          case "run_script":
+            return null;
           case "send_message": {
             // Channel serializes as "__CHANNEL__:<id>" string
             const onEvent = args?.onEvent;

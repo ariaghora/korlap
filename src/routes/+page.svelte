@@ -22,6 +22,8 @@
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
+  import DiffViewer from "$lib/components/DiffViewer.svelte";
+  import ScriptRunner from "$lib/components/ScriptRunner.svelte";
 
   type PanelTab = "chat" | "diff" | "terminal" | "scripts";
 
@@ -269,15 +271,29 @@
               </div>
             {/each}
 
-            <!-- Placeholder tabs -->
-            <div class="tab-placeholder" style:display={activeTab === "diff" ? "flex" : "none"}>
-              <p>Diff viewer — coming in M3</p>
-            </div>
+            <!-- Diff tab — one per workspace -->
+            {#each activeWorkspaces as ws (ws.id)}
+              <div
+                class="ws-tab-container"
+                style:display={activeTab === "diff" && ws.id === selectedWsId ? "flex" : "none"}
+              >
+                <DiffViewer workspaceId={ws.id} />
+              </div>
+            {/each}
+
+            <!-- Scripts tab — one per workspace -->
+            {#each activeWorkspaces as ws (ws.id)}
+              <div
+                class="ws-tab-container"
+                style:display={activeTab === "scripts" && ws.id === selectedWsId ? "flex" : "none"}
+              >
+                <ScriptRunner workspaceId={ws.id} />
+              </div>
+            {/each}
+
+            <!-- Terminal placeholder -->
             <div class="tab-placeholder" style:display={activeTab === "terminal" ? "flex" : "none"}>
-              <p>Terminal — coming in M3</p>
-            </div>
-            <div class="tab-placeholder" style:display={activeTab === "scripts" ? "flex" : "none"}>
-              <p>Scripts runner — coming in M3</p>
+              <p>Terminal — coming soon</p>
             </div>
           </div>
         {:else}
@@ -539,7 +555,8 @@
     min-height: 0;
   }
 
-  .ws-chat-container {
+  .ws-chat-container,
+  .ws-tab-container {
     flex: 1;
     flex-direction: column;
     min-height: 0;

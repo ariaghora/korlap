@@ -91,6 +91,28 @@ export async function stopAgent(workspaceId: string): Promise<void> {
   return invoke("stop_agent", { workspaceId });
 }
 
+// ── Git ─────────────────────────────────────────────────────────────
+
+export async function getDiff(workspaceId: string): Promise<string> {
+  return invoke<string>("get_diff", { workspaceId });
+}
+
+// ── Scripts ─────────────────────────────────────────────────────────
+
+export type ScriptEvent =
+  | { type: "output"; data: string }
+  | { type: "exit"; code: number | null };
+
+export async function runScript(
+  workspaceId: string,
+  command: string,
+  onEvent: (event: ScriptEvent) => void,
+): Promise<void> {
+  const channel = new Channel<ScriptEvent>();
+  channel.onmessage = onEvent;
+  return invoke("run_script", { workspaceId, command, onEvent: channel });
+}
+
 // ── Messages ────────────────────────────────────────────────────────
 
 export async function saveMessages(

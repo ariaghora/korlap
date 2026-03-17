@@ -64,6 +64,8 @@ pub fn run() {
             commands::create_workspace,
             commands::archive_workspace,
             commands::list_workspaces,
+            commands::get_diff,
+            commands::run_script,
             commands::save_messages,
             commands::load_messages,
             commands::send_message,
