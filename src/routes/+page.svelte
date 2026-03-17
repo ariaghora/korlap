@@ -279,7 +279,7 @@
       } else if (pr.checks === "failing") {
         sendPrompt(wsId, `PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`, `Fixing checks on PR #${pr.number}`);
       } else {
-        sendPrompt(wsId, `Merge PR #${pr.number}. Use \`gh pr merge ${pr.number} --squash\`. Do not delete the branch — the user will archive the workspace. If merge fails, explain why.`, `Merging PR #${pr.number}`);
+        sendPrompt(wsId, `Merge PR #${pr.number} using \`gh pr merge ${pr.number} --squash --delete-branch=false\`. Only say "PR #${pr.number} merged successfully" on success. If it fails, explain why.`, `Merging PR #${pr.number}`);
       }
       activeTab = "chat";
       return;
