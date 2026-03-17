@@ -1229,9 +1229,8 @@ pub fn send_message(
              Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
              Target branch: {}\n\
              Base branch: {}\n\
-             You have access to Korlap tools via MCP. Use the rename_branch tool to give your \
-             branch a meaningful name once you understand the task. Use conventional prefixes: \
-             feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
+             You have access to Korlap tools via MCP. Use the rename_branch tool to give your branch a meaningful name based on the task. Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
+             IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. Parse the user's request, pick a name, and rename immediately.\n\
              If the task scope changes mid-conversation, rename the branch again to reflect the new direction.\n\
              Keep all changes on the target branch. Do not modify other branches.",
             ws_branch,
