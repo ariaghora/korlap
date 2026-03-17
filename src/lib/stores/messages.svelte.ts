@@ -33,10 +33,10 @@ function ensureWorkspace(workspaceId: string): Map<string, Message> {
   return msgs;
 }
 
-/** Notify Svelte that messages changed */
+/** Notify Svelte that messages changed — only bumps the affected workspace's counter */
 function notifyChange(workspaceId: string, msgs: Map<string, Message>) {
   messagesByWorkspace.set(workspaceId, msgs);
-  _version.count++;
+  _versions.set(workspaceId, (_versions.get(workspaceId) ?? 0) + 1);
 }
 
 /** Add a complete user message */
@@ -99,16 +99,26 @@ export function addAssistantMessage(
   persistMessages(workspaceId);
 }
 
-/** Reactive counter — used to force re-evaluation in components */
-const _version = $state({ count: 0 });
+/** Per-workspace reactive counters — only the affected workspace re-evaluates */
+const _versions = $state(new Map<string, number>());
+
+// Memoization cache (plain JS, not reactive).
+// Returns the same array reference when content hasn't changed,
+// so downstream components see no prop change and skip re-rendering.
+const _msgCache = new Map<string, { version: number; array: Message[] }>();
+const EMPTY_MESSAGES: Message[] = [];
 
 /** Get ordered messages for a workspace */
 export function getMessages(workspaceId: string): Message[] {
-  // Read version to create a reactive dependency
-  void _version.count;
+  // Read this workspace's version counter to create a scoped reactive dependency.
+  const version = _versions.get(workspaceId) ?? 0;
+  const cached = _msgCache.get(workspaceId);
+  if (cached && cached.version === version) return cached.array;
   const msgs = messagesByWorkspace.get(workspaceId);
-  if (!msgs) return [];
-  return [...msgs.values()];
+  if (!msgs || msgs.size === 0) return EMPTY_MESSAGES;
+  const array = [...msgs.values()];
+  _msgCache.set(workspaceId, { version, array });
+  return array;
 }
 
 /** Load persisted messages from disk */
@@ -158,4 +168,14 @@ export function flushPersist(workspaceId: string) {
   if (!msgs) return;
   const arr = [...msgs.values()];
   saveMessages(workspaceId, arr).catch(() => {});
+}
+
+/** Remove all in-memory state for a workspace (call on archive) */
+export function clearWorkspaceData(workspaceId: string) {
+  const pending = pendingSaves.get(workspaceId);
+  if (pending) clearTimeout(pending);
+  pendingSaves.delete(workspaceId);
+  messagesByWorkspace.delete(workspaceId);
+  _versions.delete(workspaceId);
+  _msgCache.delete(workspaceId);
 }

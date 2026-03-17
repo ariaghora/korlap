@@ -428,7 +428,7 @@ pub fn set_repo_profile(
 // ── Workspace commands ───────────────────────────────────────────────
 
 #[tauri::command]
-pub fn create_workspace(
+pub async fn create_workspace(
     repo_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {
@@ -583,7 +583,7 @@ pub fn save_repo_settings(
 }
 
 #[tauri::command]
-pub fn archive_workspace(
+pub async fn archive_workspace(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
