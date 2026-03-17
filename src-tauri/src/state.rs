@@ -15,6 +15,8 @@ pub struct RepoInfo {
     pub id: String,
     pub path: PathBuf,
     pub gh_profile: Option<String>,
+    #[serde(default)]
+    pub default_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

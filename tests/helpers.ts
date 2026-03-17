@@ -44,6 +44,10 @@ export async function mockTauri(
             return { state: "none", url: "", number: 0, title: "", checks: "none", mergeable: false, additions: 0, deletions: 0 };
           case "get_pr_template":
             return "";
+          case "list_gh_profiles":
+            return [];
+          case "set_repo_profile":
+            return null;
           default:
             console.warn(`[mock] unhandled invoke: ${cmd}`, args);
             return null;
@@ -141,6 +145,10 @@ export async function mockTauriWithRepo(
             return { state: "none", url: "", number: 0, title: "", checks: "none", mergeable: false, additions: 0, deletions: 0 };
           case "get_pr_template":
             return "";
+          case "list_gh_profiles":
+            return [];
+          case "set_repo_profile":
+            return null;
           case "send_message": {
             // Channel serializes as "__CHANNEL__:<id>" string
             const onEvent = args?.onEvent;

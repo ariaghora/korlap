@@ -68,14 +68,10 @@
     let unlistenFn: (() => void) | undefined;
 
     (async () => {
-      try {
-        repos = await listRepos();
-        if (repos.length > 0) {
-          await selectRepo(repos[0]);
-        }
-      } catch (e) {
-        error = String(e);
-      }
+      listRepos().then((r) => {
+        repos = r;
+        if (r.length > 0) selectRepo(r[0]);
+      }).catch((e) => { error = String(e); });
 
       unlistenFn = await onAgentStatus((event) => {
         const ws = workspaces.find((w) => w.id === event.workspace_id);
@@ -115,7 +111,7 @@
             const idx = parseInt(e.key) - 1;
             const active = workspaces.filter((w) => w.status !== "archived");
             if (idx < active.length) {
-              selectedWsId = active[idx].id;
+              selectWorkspace(active[idx].id);
             }
           }
       }
@@ -149,25 +145,22 @@
     }
   }
 
-  async function selectRepo(repo: RepoDetail) {
+  function selectRepo(repo: RepoDetail) {
     activeRepo = repo;
     selectedWsId = null;
     error = "";
-    try {
-      const [ws, settings] = await Promise.all([
-        listWorkspaces(repo.id),
-        getRepoSettings(repo.id),
-      ]);
+
+    listWorkspaces(repo.id).then((ws) => {
       workspaces = ws;
-      repoSettings = settings;
-      await Promise.all(
-        workspaces
-          .filter((w) => w.status !== "archived")
-          .map((w) => loadPersistedMessages(w.id)),
-      );
-    } catch (e) {
-      error = String(e);
-    }
+      const active = ws.filter((w) => w.status !== "archived");
+      active.forEach((w) => loadPersistedMessages(w.id));
+      active.forEach((w) => {
+        refreshChangeCounts(w.id);
+        refreshPrStatus(w.id);
+      });
+    }).catch((e) => { error = String(e); });
+
+    getRepoSettings(repo.id).then((s) => { repoSettings = s; }).catch(() => {});
   }
 
   async function handleNewWorkspace() {
@@ -176,7 +169,7 @@
     try {
       const ws = await createWorkspace(activeRepo.id);
       workspaces = [...workspaces, ws];
-      selectedWsId = ws.id;
+      selectWorkspace(ws.id);
       activeTab = "chat";
     } catch (e) {
       error = String(e);
@@ -301,31 +294,34 @@
     }
   }
 
-  // Refresh change counts and PR status when diff trigger changes
-  async function refreshWorkspaceStatus(wsId: string) {
+  // Refresh change counts (fast, local git only)
+  async function refreshChangeCounts(wsId: string) {
     try {
-      const [files, pr] = await Promise.all([
-        getChangedFiles(wsId),
-        getPrStatus(wsId),
-      ]);
+      const files = await getChangedFiles(wsId);
       const adds = files.reduce((s, f) => s + f.additions, 0);
       const dels = files.reduce((s, f) => s + f.deletions, 0);
       changeCounts.set(wsId, { additions: adds, deletions: dels });
       changeCounts = new Map(changeCounts);
-      prStatusMap.set(wsId, pr);
-      prStatusMap = new Map(prStatusMap);
     } catch {
-      // gh might not be installed or no remote — silently ignore
+      // ignore
     }
   }
 
-  // Trigger status refresh when diffRefreshTrigger changes
-  $effect(() => {
-    void diffRefreshTrigger; // track
-    if (selectedWsId) {
-      refreshWorkspaceStatus(selectedWsId);
+  // Refresh PR status (slow, network call — run in background)
+  async function refreshPrStatus(wsId: string) {
+    try {
+      const pr = await getPrStatus(wsId);
+      prStatusMap.set(wsId, pr);
+      prStatusMap = new Map(prStatusMap);
+    } catch {
+      // gh not installed or no remote
     }
-  });
+  }
+
+  function selectWorkspace(wsId: string) {
+    selectedWsId = wsId;
+    // Don't fetch on switch — use cached values. Refresh happens after agent work.
+  }
 </script>
 
 {#if !activeRepo}
@@ -377,7 +373,7 @@
         {workspaces}
         {selectedWsId}
         {prStatusMap}
-        onSelect={(wsId) => (selectedWsId = wsId)}
+        onSelect={selectWorkspace}
         onNewWorkspace={handleNewWorkspace}
         onRename={handleRename}
       />
@@ -405,7 +401,9 @@
               {/each}
             </div>
             <div class="tab-bar-right">
-              {#if wsPr && wsPr.state === "open"}
+              {#if selectedWs.status === "running"}
+                <span class="status-badge running">Running</span>
+              {:else if wsPr && wsPr.state === "open"}
                 {#if wsPr.checks === "failing"}
                   <button class="status-badge checks-fail" onclick={handlePrAction}>Fix issues</button>
                 {:else if wsPr.mergeable && wsPr.checks === "passing"}
@@ -415,8 +413,6 @@
                 {:else}
                   <span class="status-badge pr-open">PR #{wsPr.number}</span>
                 {/if}
-              {:else if selectedWs.status === "running"}
-                <span class="status-badge running">Running</span>
               {:else if selectedWs.status === "waiting"}
                 <span class="status-badge waiting">Ready</span>
               {/if}
@@ -430,6 +426,7 @@
           </div>
 
           <div class="tab-content">
+            <!-- Chat: always mounted (preserves scroll per workspace via display:none) -->
             {#each activeWorkspaces as ws (ws.id)}
               <div
                 class="ws-tab-container"
@@ -445,37 +442,29 @@
               </div>
             {/each}
 
-            {#each activeWorkspaces as ws (ws.id)}
-              <div
-                class="ws-tab-container"
-                style:display={activeTab === "diff" && ws.id === selectedWsId ? "flex" : "none"}
-              >
+            <!-- Diff/Scripts/Terminal: only mount for the SELECTED workspace + active tab -->
+            {#if activeTab === "diff" && selectedWs}
+              <div class="ws-tab-container" style:display="flex">
                 <DiffViewer
-                  workspaceId={ws.id}
+                  workspaceId={selectedWs.id}
                   refreshTrigger={diffRefreshTrigger}
-                  prState={prStatusMap.get(ws.id)?.state}
+                  prState={prStatusMap.get(selectedWs.id)?.state}
                   onCreatePr={handlePrAction}
                 />
               </div>
-            {/each}
+            {/if}
 
-            {#each activeWorkspaces as ws (ws.id)}
-              <div
-                class="ws-tab-container"
-                style:display={activeTab === "scripts" && ws.id === selectedWsId ? "flex" : "none"}
-              >
-                <ScriptRunner workspaceId={ws.id} savedRunScript={repoSettings?.run_script || ""} />
+            {#if activeTab === "scripts" && selectedWs}
+              <div class="ws-tab-container" style:display="flex">
+                <ScriptRunner workspaceId={selectedWs.id} savedRunScript={repoSettings?.run_script || ""} />
               </div>
-            {/each}
+            {/if}
 
-            {#each activeWorkspaces as ws (ws.id)}
-              <div
-                class="ws-tab-container"
-                style:display={activeTab === "terminal" && ws.id === selectedWsId ? "flex" : "none"}
-              >
-                <TerminalView workspaceId={ws.id} />
+            {#if activeTab === "terminal" && selectedWs}
+              <div class="ws-tab-container" style:display="flex">
+                <TerminalView workspaceId={selectedWs.id} />
               </div>
-            {/each}
+            {/if}
           </div>
         {:else}
           <div class="panel-empty">
@@ -489,10 +478,16 @@
       <RepoSettingsPanel
         repoId={activeRepo.id}
         repoName={activeRepo.display_name}
-        onClose={async () => {
+        currentProfile={activeRepo.gh_profile ?? null}
+        onClose={() => {
           showSettings = false;
           if (activeRepo) {
-            repoSettings = await getRepoSettings(activeRepo.id);
+            getRepoSettings(activeRepo.id).then((s) => { repoSettings = s; }).catch(() => {});
+            listRepos().then((r) => {
+              repos = r;
+              const updated = r.find((x) => x.id === activeRepo!.id);
+              if (updated) activeRepo = updated;
+            }).catch(() => {});
           }
         }}
       />
