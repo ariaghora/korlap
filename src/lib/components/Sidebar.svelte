@@ -4,13 +4,14 @@
   interface Props {
     workspaces: WorkspaceInfo[];
     selectedWsId: string | null;
+    creatingWsId: string | null;
     prStatusMap: Map<string, PrStatus>;
     onSelect: (wsId: string) => void;
     onNewWorkspace: () => void;
     onRename: (wsId: string, newName: string) => void;
   }
 
-  let { workspaces, selectedWsId, prStatusMap, onSelect, onNewWorkspace, onRename }: Props =
+  let { workspaces, selectedWsId, creatingWsId, prStatusMap, onSelect, onNewWorkspace, onRename }: Props =
     $props();
 
   let activeWorkspaces = $derived(
@@ -49,20 +50,20 @@
   </div>
   <div class="workspace-list">
     {#each activeWorkspaces as ws}
-      {@const pr = prStatusMap.get(ws.id)}
       <button
         class="ws-item"
         class:active={ws.id === selectedWsId}
         onclick={() => onSelect(ws.id)}
-        ondblclick={() => startEdit(ws)}
+        ondblclick={() => ws.id !== creatingWsId && startEdit(ws)}
       >
         <span
           class="ws-dot"
-          class:running={ws.status === "running" && (!pr || pr.state === "none")}
-          class:waiting={ws.status === "waiting" && (!pr || pr.state === "none")}
-          class:pr-open={pr?.state === "open" && pr?.mergeable !== "conflicting" && pr?.checks !== "failing"}
-          class:pr-fail={pr?.state === "open" && (pr?.checks === "failing" || pr?.mergeable === "conflicting")}
-          class:pr-merge={pr?.state === "open" && pr?.mergeable === "mergeable" && pr?.checks === "passing"}
+          class:creating={ws.id === creatingWsId}
+          class:running={ws.id !== creatingWsId && ws.status === "running" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
+          class:waiting={ws.id !== creatingWsId && ws.status === "waiting" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
+          class:pr-open={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable !== "conflicting" && prStatusMap.get(ws.id)?.checks !== "failing"}
+          class:pr-fail={prStatusMap.get(ws.id)?.state === "open" && (prStatusMap.get(ws.id)?.checks === "failing" || prStatusMap.get(ws.id)?.mergeable === "conflicting")}
+          class:pr-merge={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable === "mergeable" && prStatusMap.get(ws.id)?.checks === "passing"}
         ></span>
         {#if editingId === ws.id}
           <!-- svelte-ignore a11y_autofocus -->
@@ -75,15 +76,15 @@
             autofocus
           />
         {:else}
-          <span class="ws-name">{ws.name}</span>
-          {#if ws.status === "running"}
+          <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
+          {#if ws.id !== creatingWsId && ws.status === "running"}
             <span class="ws-status">running</span>
           {/if}
         {/if}
       </button>
     {/each}
   </div>
-  <button class="new-ws-btn" onclick={onNewWorkspace}>
+  <button class="new-ws-btn" onclick={onNewWorkspace} disabled={!!creatingWsId}>
     + New workspace
   </button>
 </aside>
@@ -148,6 +149,11 @@
     background: var(--border-light);
   }
 
+  .ws-dot.creating {
+    background: var(--accent);
+    animation: pulse 1s ease-in-out infinite;
+  }
+
   .ws-dot.running {
     background: var(--accent);
     box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 53%, transparent);
@@ -196,6 +202,11 @@
     white-space: nowrap;
   }
 
+  .ws-name.creating-name {
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
   .ws-rename-input {
     flex: 1;
     background: var(--bg-base);
@@ -221,9 +232,14 @@
     font-size: 0.8rem;
   }
 
-  .new-ws-btn:hover {
+  .new-ws-btn:hover:not(:disabled) {
     color: var(--accent);
     border-color: var(--accent);
     background: var(--bg-hover);
+  }
+
+  .new-ws-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 </style>

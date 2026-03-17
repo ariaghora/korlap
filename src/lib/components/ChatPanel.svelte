@@ -4,12 +4,13 @@
   interface Props {
     messages: Message[];
     sending: boolean;
+    creating?: boolean;
     disabled: boolean;
     onSend: (prompt: string) => void;
     onStop: () => void;
   }
 
-  let { messages, sending, disabled, onSend, onStop }: Props = $props();
+  let { messages, sending, creating = false, disabled, onSend, onStop }: Props = $props();
 
   let userInput = $state("");
   let chatArea: HTMLDivElement | undefined = $state();
@@ -52,7 +53,7 @@
   });
 
   function handleSubmit() {
-    if (!userInput.trim() || sending || disabled) return;
+    if (!userInput.trim() || sending || disabled || creating) return;
     const prompt = userInput.trim();
     userInput = "";
     onSend(prompt);
@@ -68,7 +69,12 @@
 
 <div class="chat-panel">
   <div class="chat-area" bind:this={chatArea} onscroll={handleScroll}>
-    {#if messages.length === 0 && !sending}
+    {#if creating}
+      <div class="chat-empty">
+        <div class="creating-spinner"></div>
+        <p class="creating-text">Setting up workspace...</p>
+      </div>
+    {:else if messages.length === 0 && !sending}
       <div class="chat-empty">
         <p>Send a message to start the agent.</p>
       </div>
@@ -147,7 +153,7 @@
       bind:value={userInput}
       onkeydown={handleKeydown}
       placeholder="Ask to make changes, @mention files, run /commands"
-      disabled={disabled}
+      disabled={disabled || creating}
     />
     {#if sending}
       <button type="button" class="stop-btn" onclick={onStop}>Stop</button>
@@ -179,10 +185,30 @@
   .chat-empty {
     flex: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 0.75rem;
     color: var(--text-dim);
     font-size: 0.85rem;
+  }
+
+  .creating-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--border-light);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .creating-text {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   /* ── User messages ─────────────────────────── */

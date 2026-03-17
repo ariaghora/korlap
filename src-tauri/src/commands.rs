@@ -428,7 +428,7 @@ pub fn set_repo_profile(
 // ── Workspace commands ───────────────────────────────────────────────
 
 #[tauri::command]
-pub fn create_workspace(
+pub async fn create_workspace(
     repo_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {

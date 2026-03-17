@@ -26,6 +26,7 @@
     addActionMessage,
     getMessages,
     loadPersistedMessages,
+    clearWorkspaceData,
   } from "$lib/stores/messages.svelte";
   import { onMount } from "svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -48,6 +49,7 @@
   let activeTab = $state<PanelTab>("chat");
   let diffRefreshTrigger = $state(0);
   let showSettings = $state(false);
+  let creatingWsId = $state<string | null>(null);
   let repoSettings = $state<RepoSettings | null>(null);
   let prStatusMap = $state(new Map<string, PrStatus>());
   let changeCounts = $state(new Map<string, { additions: number; deletions: number }>());
@@ -59,7 +61,6 @@
 
   function setSending(wsId: string, value: boolean) {
     sendingMap.set(wsId, value);
-    sendingMap = new Map(sendingMap);
   }
 
   // ── Lifecycle ──────────────────────────────────────────
@@ -77,7 +78,6 @@
         const ws = workspaces.find((w) => w.id === event.workspace_id);
         if (ws) {
           ws.status = event.status as WorkspaceInfo["status"];
-          workspaces = [...workspaces];
         }
         if (event.status === "waiting") {
           setSending(event.workspace_id, false);
@@ -173,27 +173,54 @@
     getRepoSettings(repo.id).then((s) => { repoSettings = s; }).catch(() => {});
   }
 
-  async function handleNewWorkspace() {
-    if (!activeRepo) return;
+  function handleNewWorkspace() {
+    if (!activeRepo || creatingWsId) return;
     error = "";
-    try {
-      const ws = await createWorkspace(activeRepo.id);
-      workspaces = [...workspaces, ws];
-      selectWorkspace(ws.id);
-      activeTab = "chat";
-    } catch (e) {
+
+    const tempId = `creating-${crypto.randomUUID()}`;
+    const repoId = activeRepo.id;
+    const placeholder: WorkspaceInfo = {
+      id: tempId,
+      name: "Creating...",
+      branch: "",
+      worktree_path: "",
+      repo_id: repoId,
+      gh_profile: null,
+      status: "waiting",
+      created_at: Date.now() / 1000,
+    };
+    creatingWsId = tempId;
+    workspaces.push(placeholder);
+    selectWorkspace(tempId);
+    activeTab = "chat";
+    // Handler returns here. Browser paints the placeholder.
+
+    createWorkspace(repoId).then((ws) => {
+      const idx = workspaces.findIndex((w) => w.id === tempId);
+      if (idx >= 0) workspaces[idx] = ws;
+      selectedWsId = ws.id;
+      creatingWsId = null;
+    }).catch((e) => {
+      const failIdx = workspaces.findIndex((w) => w.id === tempId);
+      if (failIdx >= 0) workspaces.splice(failIdx, 1);
+      if (selectedWsId === tempId) selectedWsId = null;
+      creatingWsId = null;
       error = String(e);
-    }
+    });
   }
 
   async function handleArchive(wsId: string) {
     error = "";
     try {
       await archiveWorkspace(wsId);
-      workspaces = workspaces.filter((w) => w.id !== wsId);
-      if (selectedWsId === wsId) {
-        selectedWsId = null;
-      }
+      const archIdx = workspaces.findIndex((w) => w.id === wsId);
+      if (archIdx >= 0) workspaces.splice(archIdx, 1);
+      if (selectedWsId === wsId) selectedWsId = null;
+      if (creatingWsId === wsId) creatingWsId = null;
+      clearWorkspaceData(wsId);
+      sendingMap.delete(wsId);
+      prStatusMap.delete(wsId);
+      changeCounts.delete(wsId);
     } catch (e) {
       error = String(e);
     }
@@ -232,10 +259,27 @@
           diffRefreshTrigger++;
           refreshChangeCounts(wsId);
           refreshPrStatus(wsId);
-          // Refresh workspace list to pick up any branch renames from MCP
+          // Refresh workspace list to pick up any branch renames from MCP.
+          // Merge in-place instead of replacing the array to preserve granular reactivity.
           if (activeRepo) {
             listWorkspaces(activeRepo.id)
-              .then((ws) => { workspaces = ws; })
+              .then((fresh) => {
+                const freshIds = new Set(fresh.map((w) => w.id));
+                for (const fw of fresh) {
+                  const idx = workspaces.findIndex((w) => w.id === fw.id);
+                  if (idx >= 0) {
+                    workspaces[idx] = fw;
+                  } else {
+                    workspaces.push(fw);
+                  }
+                }
+                // Remove stale entries (archived externally), but keep the placeholder
+                for (let i = workspaces.length - 1; i >= 0; i--) {
+                  if (!freshIds.has(workspaces[i].id) && workspaces[i].id !== creatingWsId) {
+                    workspaces.splice(i, 1);
+                  }
+                }
+              })
               .catch(() => {});
           }
         } else if (event.type === "error") {
@@ -260,7 +304,6 @@
       const idx = workspaces.findIndex((w) => w.id === wsId);
       if (idx >= 0) {
         workspaces[idx] = updated;
-        workspaces = [...workspaces];
       }
     } catch (e) {
       error = String(e);
@@ -330,7 +373,6 @@
         return; // No change — skip reactive update
       }
       changeCounts.set(wsId, { additions: adds, deletions: dels });
-      changeCounts = new Map(changeCounts);
     } catch {
       // ignore
     }
@@ -355,7 +397,6 @@
         return; // No change — skip reactive update
       }
       prStatusMap.set(wsId, pr);
-      prStatusMap = new Map(prStatusMap);
     } catch {
       // gh not installed or no remote
     }
@@ -415,6 +456,7 @@
       <Sidebar
         {workspaces}
         {selectedWsId}
+        {creatingWsId}
         {prStatusMap}
         onSelect={selectWorkspace}
         onNewWorkspace={handleNewWorkspace}
@@ -423,8 +465,6 @@
 
       <main class="panel">
         {#if selectedWs}
-          {@const wsChanges = changeCounts.get(selectedWs.id)}
-          {@const wsPr = prStatusMap.get(selectedWs.id)}
           <div class="tab-bar">
             <div class="tabs">
               {#each ["chat", "diff", "terminal"] as tab}
@@ -434,11 +474,14 @@
                   onclick={() => (activeTab = tab as PanelTab)}
                 >
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  {#if tab === "diff" && wsChanges && (wsChanges.additions > 0 || wsChanges.deletions > 0)}
-                    <span class="diff-badge">
-                      <span class="diff-add">+{wsChanges.additions}</span>
-                      <span class="diff-del">-{wsChanges.deletions}</span>
-                    </span>
+                  {#if tab === "diff" && changeCounts.get(selectedWs.id)}
+                    {@const cc = changeCounts.get(selectedWs.id)}
+                    {#if cc && (cc.additions > 0 || cc.deletions > 0)}
+                      <span class="diff-badge">
+                        <span class="diff-add">+{cc.additions}</span>
+                        <span class="diff-del">-{cc.deletions}</span>
+                      </span>
+                    {/if}
                   {/if}
                 </button>
               {/each}
@@ -446,17 +489,17 @@
             <div class="tab-bar-right">
               {#if selectedWs.status === "running"}
                 <span class="status-badge running">Running</span>
-              {:else if wsPr && wsPr.state === "open"}
-                {#if wsPr.mergeable === "conflicting"}
+              {:else if prStatusMap.get(selectedWs.id)?.state === "open"}
+                {#if prStatusMap.get(selectedWs.id)?.mergeable === "conflicting"}
                   <button class="status-badge conflicts" onclick={handlePrAction}>Conflicts</button>
-                {:else if wsPr.checks === "failing"}
+                {:else if prStatusMap.get(selectedWs.id)?.checks === "failing"}
                   <button class="status-badge checks-fail" onclick={handlePrAction}>Fix issues</button>
-                {:else if wsPr.checks === "pending"}
-                  <span class="status-badge checks-pending">PR #{wsPr.number} · Checks</span>
+                {:else if prStatusMap.get(selectedWs.id)?.checks === "pending"}
+                  <span class="status-badge checks-pending">PR #{prStatusMap.get(selectedWs.id)?.number} · Checks</span>
                 {:else}
-                  <button class="status-badge mergeable" onclick={handlePrAction}>Merge #{wsPr.number}</button>
+                  <button class="status-badge mergeable" onclick={handlePrAction}>Merge #{prStatusMap.get(selectedWs.id)?.number}</button>
                 {/if}
-              {:else if wsPr && wsPr.state === "merged"}
+              {:else if prStatusMap.get(selectedWs.id)?.state === "merged"}
                 <span class="status-badge merged">Done</span>
               {:else if selectedWs.status === "waiting"}
                 <span class="status-badge waiting">Ready</span>
@@ -471,15 +514,19 @@
           </div>
 
           <div class="tab-content">
-            <!-- Chat: always mounted (preserves scroll per workspace via display:none) -->
+            <!-- Chat: always mounted, stacked via absolute positioning.
+                 Visibility toggle = no reflow. display:none → flex forces full layout recomputation. -->
             {#each activeWorkspaces as ws (ws.id)}
+              {@const isVisible = activeTab === "chat" && ws.id === selectedWsId}
               <div
-                class="ws-tab-container"
-                style:display={activeTab === "chat" && ws.id === selectedWsId ? "flex" : "none"}
+                class="ws-chat-layer"
+                class:visible={isVisible}
+                inert={!isVisible}
               >
                 <ChatPanel
                   messages={getMessages(ws.id)}
                   sending={sendingMap.get(ws.id) ?? false}
+                  creating={ws.id === creatingWsId}
                   disabled={ws.status === "archived"}
                   onSend={handleSend}
                   onStop={handleStop}
@@ -487,9 +534,9 @@
               </div>
             {/each}
 
-            <!-- Diff/Scripts/Terminal: only mount for the SELECTED workspace + active tab -->
+            <!-- Diff/Terminal: mount on demand, positioned absolute to fill tab-content -->
             {#if activeTab === "diff" && selectedWs}
-              <div class="ws-tab-container" style:display="flex">
+              <div class="ws-tab-container active-layer">
                 <DiffViewer
                   workspaceId={selectedWs.id}
                   refreshTrigger={diffRefreshTrigger}
@@ -500,7 +547,7 @@
             {/if}
 
             {#if activeTab === "terminal" && selectedWs}
-              <div class="ws-tab-container" style:display="flex">
+              <div class="ws-tab-container active-layer">
                 <TerminalView workspaceId={selectedWs.id} />
               </div>
             {/if}
@@ -850,13 +897,38 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    position: relative;
   }
 
-  .ws-chat-container,
+  /* Chat layers: stacked absolutely so all stay laid out.
+     Switching = visibility toggle (compositor-only, no reflow). */
+  .ws-chat-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    visibility: hidden;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .ws-chat-layer.visible {
+    visibility: visible;
+    pointer-events: auto;
+    z-index: 1;
+  }
+
   .ws-tab-container {
-    flex: 1;
+    display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+
+  /* Diff/terminal: also absolute to coexist with stacked chat layers */
+  .ws-tab-container.active-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
   }
 
   .tab-placeholder {
