@@ -486,7 +486,7 @@ pub fn get_changed_files(
         }
     }
 
-    // Also pick up untracked files
+    // Also pick up untracked files (new files the agent created)
     let untracked = std::process::Command::new("git")
         .args(["ls-files", "--others", "--exclude-standard"])
         .current_dir(&worktree_path)
@@ -497,10 +497,14 @@ pub fn get_changed_files(
         for line in String::from_utf8_lossy(&untracked.stdout).lines() {
             let path = line.trim().to_string();
             if !path.is_empty() {
+                // Count lines for stat
+                let line_count = std::fs::read_to_string(worktree_path.join(&path))
+                    .map(|c| c.lines().count() as i32)
+                    .unwrap_or(0);
                 files.push(ChangedFile {
                     path,
-                    status: "?".to_string(),
-                    additions: 0,
+                    status: "A".to_string(),
+                    additions: line_count,
                     deletions: 0,
                 });
             }
@@ -542,7 +546,27 @@ pub fn get_diff(
         return Err(format!("git diff failed: {}", stderr.trim()));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // If diff is empty and a file_path was given, it might be untracked — show as new file
+    if diff_text.trim().is_empty() {
+        if let Some(ref fp) = file_path {
+            let full_path = worktree_path.join(fp);
+            if full_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&full_path) {
+                    let mut result = format!("--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n", fp, content.lines().count());
+                    for line in content.lines() {
+                        result.push('+');
+                        result.push_str(line);
+                        result.push('\n');
+                    }
+                    return Ok(result);
+                }
+            }
+        }
+    }
+
+    Ok(diff_text)
 }
 
 // ── Script commands ──────────────────────────────────────────────────
