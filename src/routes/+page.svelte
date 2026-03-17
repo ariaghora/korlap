@@ -161,8 +161,7 @@
             event.text.trim(),
             toolUses,
           );
-          const fileWriteTools = new Set(["Write", "Edit", "NotebookEdit", "Bash"]);
-          if (event.tool_uses.some((t) => fileWriteTools.has(t.name))) {
+          if (event.tool_uses.length > 0) {
             diffRefreshTrigger++;
           }
         } else if (event.type === "done") {

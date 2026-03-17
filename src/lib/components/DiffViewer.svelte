@@ -19,14 +19,15 @@
     error = "";
     try {
       files = await getChangedFiles(workspaceId);
-      if (files.length > 0 && !selectedFile) {
-        await selectFile(files[0].path);
-      } else if (files.length === 0) {
+      if (files.length === 0) {
         selectedFile = null;
         diff = "";
-      } else if (selectedFile) {
+      } else if (selectedFile && files.some((f) => f.path === selectedFile)) {
         // Reload current file's diff
         diff = await getDiff(workspaceId, selectedFile);
+      } else {
+        // Selected file gone or no selection — pick first
+        await selectFile(files[0].path);
       }
     } catch (e) {
       error = String(e);
