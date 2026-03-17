@@ -479,14 +479,11 @@
               </div>
             {/if}
 
-            {#each activeWorkspaces as ws (ws.id)}
-              <div
-                class="ws-tab-container"
-                style:display={activeTab === "terminal" && ws.id === selectedWsId ? "flex" : "none"}
-              >
-                <TerminalView workspaceId={ws.id} />
+            {#if activeTab === "terminal" && selectedWs}
+              <div class="ws-tab-container" style:display="flex">
+                <TerminalView workspaceId={selectedWs.id} />
               </div>
-            {/each}
+            {/if}
           </div>
         {:else}
           <div class="panel-empty">
