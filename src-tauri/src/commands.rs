@@ -440,26 +440,23 @@ pub fn get_changed_files(
     workspace_id: String,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<ChangedFile>, String> {
-    let (repo_path, branch) = {
+    let (worktree_path, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (repo.path.clone(), ws.branch.clone())
+        (ws.worktree_path.clone(), repo.path.clone())
     };
 
     let base_branch = detect_default_branch(&repo_path)?;
 
-    // Get file list with stat
+    // Compare worktree working state against base branch
+    // This shows both committed branch changes AND uncommitted edits
     let output = std::process::Command::new("git")
-        .args([
-            "diff",
-            "--numstat",
-            &format!("{}..{}", base_branch, branch),
-        ])
-        .current_dir(&repo_path)
+        .args(["diff", "--numstat", &base_branch])
+        .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run git diff: {}", e))?;
 
@@ -493,6 +490,27 @@ pub fn get_changed_files(
         }
     }
 
+    // Also pick up untracked files
+    let untracked = std::process::Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("Failed to list untracked files: {}", e))?;
+
+    if untracked.status.success() {
+        for line in String::from_utf8_lossy(&untracked.stdout).lines() {
+            let path = line.trim().to_string();
+            if !path.is_empty() {
+                files.push(ChangedFile {
+                    path,
+                    status: "?".to_string(),
+                    additions: 0,
+                    deletions: 0,
+                });
+            }
+        }
+    }
+
     Ok(files)
 }
 
@@ -502,25 +520,25 @@ pub fn get_diff(
     file_path: Option<String>,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<String, String> {
-    let (repo_path, branch) = {
+    let (worktree_path, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (repo.path.clone(), ws.branch.clone())
+        (ws.worktree_path.clone(), repo.path.clone())
     };
 
     let base_branch = detect_default_branch(&repo_path)?;
-    let diff_range = format!("{}..{}", base_branch, branch);
 
+    // Diff worktree working state against base — shows everything the agent changed
     let mut cmd = std::process::Command::new("git");
-    cmd.args(["diff", &diff_range]);
+    cmd.args(["diff", &base_branch]);
     if let Some(ref fp) = file_path {
         cmd.arg("--").arg(fp);
     }
-    cmd.current_dir(&repo_path);
+    cmd.current_dir(&worktree_path);
 
     let output = cmd
         .output()
