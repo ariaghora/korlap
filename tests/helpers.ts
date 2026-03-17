@@ -100,6 +100,8 @@ export async function mockTauriWithRepo(
             return null;
           case "load_messages":
             return [];
+          case "get_changed_files":
+            return [];
           case "get_diff":
             return "";
           case "run_script":

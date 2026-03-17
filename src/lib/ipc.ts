@@ -93,8 +93,24 @@ export async function stopAgent(workspaceId: string): Promise<void> {
 
 // ── Git ─────────────────────────────────────────────────────────────
 
-export async function getDiff(workspaceId: string): Promise<string> {
-  return invoke<string>("get_diff", { workspaceId });
+export interface ChangedFile {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export async function getChangedFiles(
+  workspaceId: string,
+): Promise<ChangedFile[]> {
+  return invoke<ChangedFile[]>("get_changed_files", { workspaceId });
+}
+
+export async function getDiff(
+  workspaceId: string,
+  filePath?: string,
+): Promise<string> {
+  return invoke<string>("get_diff", { workspaceId, filePath });
 }
 
 // ── Scripts ─────────────────────────────────────────────────────────

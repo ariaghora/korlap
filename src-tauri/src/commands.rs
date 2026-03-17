@@ -427,9 +427,79 @@ pub fn list_workspaces(
 
 // ── Git commands ─────────────────────────────────────────────────────
 
+#[derive(Clone, serde::Serialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: String, // "M", "A", "D", "R", "?"
+    pub additions: i32,
+    pub deletions: i32,
+}
+
+#[tauri::command]
+pub fn get_changed_files(
+    workspace_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<ChangedFile>, String> {
+    let (repo_path, branch) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        (repo.path.clone(), ws.branch.clone())
+    };
+
+    let base_branch = detect_default_branch(&repo_path)?;
+
+    // Get file list with stat
+    let output = std::process::Command::new("git")
+        .args([
+            "diff",
+            "--numstat",
+            &format!("{}..{}", base_branch, branch),
+        ])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run git diff: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git diff --numstat failed: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut files = Vec::new();
+
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 3 {
+            let additions = parts[0].parse::<i32>().unwrap_or(0);
+            let deletions = parts[1].parse::<i32>().unwrap_or(0);
+            let path = parts[2].to_string();
+            let status = if additions > 0 && deletions > 0 {
+                "M"
+            } else if additions > 0 {
+                "A"
+            } else {
+                "D"
+            };
+            files.push(ChangedFile {
+                path,
+                status: status.to_string(),
+                additions,
+                deletions,
+            });
+        }
+    }
+
+    Ok(files)
+}
+
 #[tauri::command]
 pub fn get_diff(
     workspace_id: String,
+    file_path: Option<String>,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<String, String> {
     let (repo_path, branch) = {
@@ -443,10 +513,16 @@ pub fn get_diff(
     };
 
     let base_branch = detect_default_branch(&repo_path)?;
+    let diff_range = format!("{}..{}", base_branch, branch);
 
-    let output = std::process::Command::new("git")
-        .args(["diff", &format!("{}..{}", base_branch, branch)])
-        .current_dir(&repo_path)
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["diff", &diff_range]);
+    if let Some(ref fp) = file_path {
+        cmd.arg("--").arg(fp);
+    }
+    cmd.current_dir(&repo_path);
+
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run git diff: {}", e))?;
 
