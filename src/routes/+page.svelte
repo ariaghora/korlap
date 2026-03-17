@@ -56,7 +56,9 @@
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
-    workspaces.filter((w) => w.status !== "archived"),
+    workspaces
+      .filter((w) => w.status !== "archived")
+      .sort((a, b) => a.created_at - b.created_at),
   );
 
   function setSending(wsId: string, value: boolean) {
@@ -109,9 +111,8 @@
           if (!inInput && e.key >= "1" && e.key <= "9") {
             e.preventDefault();
             const idx = parseInt(e.key) - 1;
-            const active = workspaces.filter((w) => w.status !== "archived");
-            if (idx < active.length) {
-              selectWorkspace(active[idx].id);
+            if (idx < activeWorkspaces.length) {
+              selectWorkspace(activeWorkspaces[idx].id);
             }
           }
       }
