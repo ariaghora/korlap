@@ -15,7 +15,9 @@
     $props();
 
   let activeWorkspaces = $derived(
-    workspaces.filter((w) => w.status !== "archived"),
+    workspaces
+      .filter((w) => w.status !== "archived")
+      .sort((a, b) => a.created_at - b.created_at),
   );
 
   let editingId = $state<string | null>(null);
