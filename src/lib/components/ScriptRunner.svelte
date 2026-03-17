@@ -3,9 +3,10 @@
 
   interface Props {
     workspaceId: string;
+    savedRunScript?: string;
   }
 
-  let { workspaceId }: Props = $props();
+  let { workspaceId, savedRunScript }: Props = $props();
 
   let command = $state("");
   let output = $state("");
@@ -50,6 +51,19 @@
 </script>
 
 <div class="script-runner">
+  {#if savedRunScript}
+    <div class="saved-script-bar">
+      <span class="saved-label">Run script</span>
+      <code class="saved-cmd">{savedRunScript}</code>
+      <button
+        class="run-saved-btn"
+        onclick={() => { command = savedRunScript ?? ""; handleRun(); }}
+        disabled={running}
+      >
+        ▶ Run
+      </button>
+    </div>
+  {/if}
   <form class="script-input" onsubmit={(e) => { e.preventDefault(); handleRun(); }}>
     <span class="prompt">$</span>
     <input
@@ -80,6 +94,52 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+
+  .saved-script-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .saved-label {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+  }
+
+  .saved-cmd {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .run-saved-btn {
+    padding: 0.2rem 0.5rem;
+    background: var(--border);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    color: var(--status-ok);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+  }
+
+  .run-saved-btn:hover:not(:disabled) {
+    background: var(--border-light);
+  }
+
+  .run-saved-btn:disabled {
+    opacity: 0.4;
   }
 
   .script-input {

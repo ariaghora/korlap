@@ -1,15 +1,16 @@
 <script lang="ts">
-  import type { WorkspaceInfo } from "$lib/ipc";
+  import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
 
   interface Props {
     workspaces: WorkspaceInfo[];
     selectedWsId: string | null;
+    prStatusMap: Map<string, PrStatus>;
     onSelect: (wsId: string) => void;
     onNewWorkspace: () => void;
     onRename: (wsId: string, newName: string) => void;
   }
 
-  let { workspaces, selectedWsId, onSelect, onNewWorkspace, onRename }: Props =
+  let { workspaces, selectedWsId, prStatusMap, onSelect, onNewWorkspace, onRename }: Props =
     $props();
 
   let activeWorkspaces = $derived(
@@ -48,6 +49,7 @@
   </div>
   <div class="workspace-list">
     {#each activeWorkspaces as ws}
+      {@const pr = prStatusMap.get(ws.id)}
       <button
         class="ws-item"
         class:active={ws.id === selectedWsId}
@@ -56,8 +58,11 @@
       >
         <span
           class="ws-dot"
-          class:running={ws.status === "running"}
-          class:waiting={ws.status === "waiting"}
+          class:running={ws.status === "running" && (!pr || pr.state === "none")}
+          class:waiting={ws.status === "waiting" && (!pr || pr.state === "none")}
+          class:pr-open={pr?.state === "open" && pr?.checks !== "failing"}
+          class:pr-fail={pr?.state === "open" && pr?.checks === "failing"}
+          class:pr-merge={pr?.state === "open" && pr?.mergeable && pr?.checks === "passing"}
         ></span>
         {#if editingId === ws.id}
           <!-- svelte-ignore a11y_autofocus -->
@@ -151,6 +156,21 @@
 
   .ws-dot.waiting {
     background: var(--status-ok);
+  }
+
+  .ws-dot.pr-open {
+    background: #7e8ec8;
+  }
+
+  .ws-dot.pr-fail {
+    background: var(--diff-del);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--diff-del) 50%, transparent);
+  }
+
+  .ws-dot.pr-merge {
+    background: var(--status-ok);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--status-ok) 50%, transparent);
+    animation: pulse 2s ease-in-out infinite;
   }
 
   @keyframes pulse {

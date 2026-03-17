@@ -10,9 +10,15 @@
     onAgentStatus,
     stopAgent,
     renameBranch,
+    getRepoSettings,
+    getPrStatus,
+    getPrTemplate,
+    getChangedFiles,
     type RepoDetail,
+    type RepoSettings,
     type WorkspaceInfo,
     type AgentEvent,
+    type PrStatus,
   } from "$lib/ipc";
   import {
     addUserMessage,
@@ -27,6 +33,7 @@
   import DiffViewer from "$lib/components/DiffViewer.svelte";
   import ScriptRunner from "$lib/components/ScriptRunner.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
+  import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
 
   type PanelTab = "chat" | "diff" | "terminal" | "scripts";
 
@@ -40,6 +47,10 @@
   let sendingMap = $state(new Map<string, boolean>());
   let activeTab = $state<PanelTab>("chat");
   let diffRefreshTrigger = $state(0);
+  let showSettings = $state(false);
+  let repoSettings = $state<RepoSettings | null>(null);
+  let prStatusMap = $state(new Map<string, PrStatus>());
+  let changeCounts = $state(new Map<string, { additions: number; deletions: number }>());
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
@@ -86,6 +97,10 @@
       const inInput = tag === "INPUT" || tag === "TEXTAREA";
 
       switch (e.key) {
+        case ",":
+          e.preventDefault();
+          if (activeRepo) showSettings = !showSettings;
+          break;
         case "n":
           e.preventDefault();
           handleNewWorkspace();
@@ -139,11 +154,16 @@
     selectedWsId = null;
     error = "";
     try {
-      workspaces = await listWorkspaces(repo.id);
+      const [ws, settings] = await Promise.all([
+        listWorkspaces(repo.id),
+        getRepoSettings(repo.id),
+      ]);
+      workspaces = ws;
+      repoSettings = settings;
       await Promise.all(
         workspaces
           .filter((w) => w.status !== "archived")
-          .map((ws) => loadPersistedMessages(ws.id)),
+          .map((w) => loadPersistedMessages(w.id)),
       );
     } catch (e) {
       error = String(e);
@@ -234,6 +254,43 @@
     }
   }
 
+  async function handlePrAction() {
+    if (!selectedWs || !activeRepo) return;
+    const wsId = selectedWs.id;
+    const pr = prStatusMap.get(wsId);
+
+    if (pr && pr.state === "open" && pr.mergeable && pr.checks === "passing") {
+      // Merge
+      handleSend(`Merge PR #${pr.number}. Use \`gh pr merge ${pr.number} --squash --delete-branch\`. If merge fails, explain why.`);
+    } else if (pr && pr.state === "open" && pr.checks === "failing") {
+      // Fix issues
+      handleSend(`PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`);
+    } else {
+      // Create PR
+      const files = await getChangedFiles(wsId).catch(() => []);
+      const baseBranch = activeRepo.default_branch;
+      const template = await getPrTemplate(activeRepo.id).catch(() => "");
+
+      let prompt = `Create a pull request.\n\n`;
+      prompt += `There are ${files.length} uncommitted changes.\n`;
+      prompt += `The current branch is ${selectedWs.branch}.\n`;
+      prompt += `The target branch is origin/${baseBranch}.\n\n`;
+      prompt += `Follow these steps:\n`;
+      prompt += `1. Run \`git diff\` to review uncommitted changes\n`;
+      prompt += `2. Commit them with a descriptive message\n`;
+      prompt += `3. Push to origin\n`;
+      prompt += `4. Use \`gh pr create --base ${baseBranch}\` to create a PR. Keep the title under 80 characters. Keep the description under five sentences unless there's a template.\n\n`;
+      prompt += `If any step fails, explain the issue.\n`;
+
+      if (template) {
+        prompt += `\n## PR Description Template\n\nThis repo has a PR template. Use it:\n\n\`\`\`markdown\n${template}\n\`\`\`\n`;
+      }
+
+      activeTab = "chat";
+      handleSend(prompt);
+    }
+  }
+
   async function handleStop() {
     if (!selectedWsId) return;
     try {
@@ -243,6 +300,32 @@
       error = String(e);
     }
   }
+
+  // Refresh change counts and PR status when diff trigger changes
+  async function refreshWorkspaceStatus(wsId: string) {
+    try {
+      const [files, pr] = await Promise.all([
+        getChangedFiles(wsId),
+        getPrStatus(wsId),
+      ]);
+      const adds = files.reduce((s, f) => s + f.additions, 0);
+      const dels = files.reduce((s, f) => s + f.deletions, 0);
+      changeCounts.set(wsId, { additions: adds, deletions: dels });
+      changeCounts = new Map(changeCounts);
+      prStatusMap.set(wsId, pr);
+      prStatusMap = new Map(prStatusMap);
+    } catch {
+      // gh might not be installed or no remote — silently ignore
+    }
+  }
+
+  // Trigger status refresh when diffRefreshTrigger changes
+  $effect(() => {
+    void diffRefreshTrigger; // track
+    if (selectedWsId) {
+      refreshWorkspaceStatus(selectedWsId);
+    }
+  });
 </script>
 
 {#if !activeRepo}
@@ -276,8 +359,10 @@
       {repos}
       {activeRepo}
       {selectedWs}
+      prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
       onSelectRepo={selectRepo}
       onAddRepo={handleOpenRepo}
+      onSettings={() => (showSettings = true)}
     />
 
     {#if error}
@@ -291,6 +376,7 @@
       <Sidebar
         {workspaces}
         {selectedWsId}
+        {prStatusMap}
         onSelect={(wsId) => (selectedWsId = wsId)}
         onNewWorkspace={handleNewWorkspace}
         onRename={handleRename}
@@ -298,6 +384,8 @@
 
       <main class="panel">
         {#if selectedWs}
+          {@const wsChanges = changeCounts.get(selectedWs.id)}
+          {@const wsPr = prStatusMap.get(selectedWs.id)}
           <div class="tab-bar">
             <div class="tabs">
               {#each ["chat", "diff", "terminal", "scripts"] as tab}
@@ -307,11 +395,27 @@
                   onclick={() => (activeTab = tab as PanelTab)}
                 >
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  {#if tab === "diff" && wsChanges && (wsChanges.additions > 0 || wsChanges.deletions > 0)}
+                    <span class="diff-badge">
+                      <span class="diff-add">+{wsChanges.additions}</span>
+                      <span class="diff-del">-{wsChanges.deletions}</span>
+                    </span>
+                  {/if}
                 </button>
               {/each}
             </div>
             <div class="tab-bar-right">
-              {#if selectedWs.status === "running"}
+              {#if wsPr && wsPr.state === "open"}
+                {#if wsPr.checks === "failing"}
+                  <button class="status-badge checks-fail" onclick={handlePrAction}>Fix issues</button>
+                {:else if wsPr.mergeable && wsPr.checks === "passing"}
+                  <button class="status-badge mergeable" onclick={handlePrAction}>Merge PR #{wsPr.number}</button>
+                {:else if wsPr.checks === "pending"}
+                  <span class="status-badge checks-pending">PR #{wsPr.number} · Checks</span>
+                {:else}
+                  <span class="status-badge pr-open">PR #{wsPr.number}</span>
+                {/if}
+              {:else if selectedWs.status === "running"}
                 <span class="status-badge running">Running</span>
               {:else if selectedWs.status === "waiting"}
                 <span class="status-badge waiting">Ready</span>
@@ -346,7 +450,12 @@
                 class="ws-tab-container"
                 style:display={activeTab === "diff" && ws.id === selectedWsId ? "flex" : "none"}
               >
-                <DiffViewer workspaceId={ws.id} refreshTrigger={diffRefreshTrigger} />
+                <DiffViewer
+                  workspaceId={ws.id}
+                  refreshTrigger={diffRefreshTrigger}
+                  prState={prStatusMap.get(ws.id)?.state}
+                  onCreatePr={handlePrAction}
+                />
               </div>
             {/each}
 
@@ -355,7 +464,7 @@
                 class="ws-tab-container"
                 style:display={activeTab === "scripts" && ws.id === selectedWsId ? "flex" : "none"}
               >
-                <ScriptRunner workspaceId={ws.id} />
+                <ScriptRunner workspaceId={ws.id} savedRunScript={repoSettings?.run_script || ""} />
               </div>
             {/each}
 
@@ -375,6 +484,19 @@
         {/if}
       </main>
     </div>
+
+    {#if showSettings}
+      <RepoSettingsPanel
+        repoId={activeRepo.id}
+        repoName={activeRepo.display_name}
+        onClose={async () => {
+          showSettings = false;
+          if (activeRepo) {
+            repoSettings = await getRepoSettings(activeRepo.id);
+          }
+        }}
+      />
+    {/if}
   </div>
 {/if}
 
@@ -543,6 +665,24 @@
     font-family: inherit;
     font-size: 0.82rem;
     font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .diff-badge {
+    font-size: 0.65rem;
+    font-family: var(--font-mono);
+    display: flex;
+    gap: 0.2rem;
+  }
+
+  .diff-add {
+    color: var(--diff-add);
+  }
+
+  .diff-del {
+    color: var(--diff-del);
   }
 
   .tab:hover {
@@ -581,6 +721,54 @@
   .status-badge.waiting {
     color: var(--status-ok);
     border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
+  }
+
+  .status-badge.pr-open {
+    color: #7e8ec8;
+    border-color: color-mix(in srgb, #7e8ec8 40%, transparent);
+    text-transform: none;
+  }
+
+  .status-badge.checks-pending {
+    color: var(--text-dim);
+    border-color: var(--border-light);
+    text-transform: none;
+    animation: badge-pulse 2s ease-in-out infinite;
+  }
+
+  .status-badge.checks-fail {
+    color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 40%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 7%, transparent);
+    text-transform: none;
+  }
+
+  .status-badge.mergeable {
+    color: var(--status-ok);
+    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
+    background: color-mix(in srgb, var(--status-ok) 7%, transparent);
+    cursor: pointer;
+    text-transform: none;
+  }
+
+  .status-badge.mergeable:hover {
+    filter: brightness(1.2);
+  }
+
+  .status-badge.create-pr {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    cursor: pointer;
+    text-transform: none;
+  }
+
+  .status-badge.create-pr:hover {
+    filter: brightness(1.2);
+  }
+
+  .status-badge.checks-fail {
+    cursor: pointer;
   }
 
   @keyframes badge-pulse {

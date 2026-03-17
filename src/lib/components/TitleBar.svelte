@@ -1,16 +1,20 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import type { RepoDetail, WorkspaceInfo } from "$lib/ipc";
+  import type { RepoDetail, WorkspaceInfo, PrStatus } from "$lib/ipc";
+  import { Settings, ExternalLink, Check, X, Loader } from "lucide-svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   interface Props {
     repos: RepoDetail[];
     activeRepo: RepoDetail;
     selectedWs: WorkspaceInfo | undefined;
+    prStatus: PrStatus | undefined;
     onSelectRepo: (repo: RepoDetail) => void;
     onAddRepo: () => void;
+    onSettings: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, onSelectRepo, onAddRepo }: Props =
+  let { repos, activeRepo, selectedWs, prStatus, onSelectRepo, onAddRepo, onSettings }: Props =
     $props();
 
   function startDrag(e: MouseEvent) {
@@ -53,6 +57,23 @@
   <div class="titlebar-right">
     {#if selectedWs}
       <span class="breadcrumb">
+        {#if prStatus && prStatus.state === "open"}
+          <button
+            class="breadcrumb-pr"
+            onclick={() => openUrl(prStatus!.url)}
+            title="Open PR in browser"
+          >
+            #{prStatus.number}
+            {#if prStatus.checks === "passing"}
+              <Check size={11} class="check-icon pass" />
+            {:else if prStatus.checks === "failing"}
+              <X size={11} class="check-icon fail" />
+            {:else if prStatus.checks === "pending"}
+              <Loader size={11} class="check-icon pending" />
+            {/if}
+          </button>
+          <span class="breadcrumb-sep">·</span>
+        {/if}
         <span class="breadcrumb-branch">{selectedWs.branch}</span>
         <span class="breadcrumb-sep">›</span>
         <span class="breadcrumb-base">{activeRepo.default_branch}</span>
@@ -62,6 +83,9 @@
         <span class="breadcrumb-base">{activeRepo.default_branch}</span>
       </span>
     {/if}
+    <button class="settings-btn" onclick={onSettings} title="Repository settings">
+      <Settings size={14} />
+    </button>
   </div>
 </header>
 
@@ -161,5 +185,55 @@
 
   .breadcrumb-base {
     color: var(--text-dim);
+  }
+
+  .breadcrumb-pr {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.75rem;
+    padding: 0;
+  }
+
+  .breadcrumb-pr:hover {
+    text-decoration: underline;
+  }
+
+  .breadcrumb-pr :global(.check-icon.pass) {
+    color: var(--status-ok);
+  }
+
+  .breadcrumb-pr :global(.check-icon.fail) {
+    color: var(--diff-del);
+  }
+
+  .breadcrumb-pr :global(.check-icon.pending) {
+    color: var(--text-dim);
+    animation: spin 1.5s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .settings-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.9rem;
+    padding: 0.2rem 0.35rem;
+    border-radius: 4px;
+  }
+
+  .settings-btn:hover {
+    color: var(--text-primary);
+    background: var(--border);
   }
 </style>

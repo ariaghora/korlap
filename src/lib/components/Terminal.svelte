@@ -15,9 +15,12 @@
   let term: Terminal | undefined;
   let fitAddon: FitAddon | undefined;
   let resizeObserver: ResizeObserver | undefined;
+  let opened = false;
 
-  onMount(() => {
-    if (!containerEl) return;
+  function initTerminal() {
+    if (!containerEl || opened) return;
+    // Don't open if container is hidden (zero dimensions)
+    if (containerEl.offsetHeight === 0) return;
 
     term = new Terminal({
       scrollback: 10000,
@@ -52,6 +55,7 @@
     term.loadAddon(fitAddon);
     term.open(containerEl);
     fitAddon.fit();
+    opened = true;
 
     // Send keystrokes to PTY
     term.onData((data) => {
@@ -69,10 +73,16 @@
         term.writeln(`\r\n\x1b[31mFailed to open terminal: ${e}\x1b[0m`);
       }
     });
+  }
 
-    // Resize PTY when container resizes
+  onMount(() => {
+    if (!containerEl) return;
+
+    // Use ResizeObserver to detect when container becomes visible
     resizeObserver = new ResizeObserver(() => {
-      if (fitAddon && term) {
+      if (!opened) {
+        initTerminal();
+      } else if (fitAddon && term) {
         fitAddon.fit();
         resizeTerminal(workspaceId, term.rows, term.cols).catch(() => {});
       }
@@ -92,14 +102,20 @@
   .terminal-container {
     flex: 1;
     min-height: 0;
-    padding: 4px;
+    background: var(--bg-base);
+    overflow: hidden;
   }
 
   .terminal-container :global(.xterm) {
     height: 100%;
+    padding: 8px 12px;
   }
 
   .terminal-container :global(.xterm-viewport) {
-    overflow-y: auto;
+    background-color: var(--bg-base) !important;
+  }
+
+  .terminal-container :global(.xterm-screen) {
+    width: 100% !important;
   }
 </style>

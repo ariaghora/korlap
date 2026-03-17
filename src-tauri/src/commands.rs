@@ -357,12 +357,40 @@ pub fn create_workspace(
         id: id.clone(),
         name,
         branch,
-        worktree_path,
+        worktree_path: worktree_path.clone(),
         repo_id: repo_id.clone(),
         gh_profile,
         status: WorkspaceStatus::Waiting,
         created_at: now_unix(),
     };
+
+    // Check if there's a setup script to run
+    let setup_script = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.repo_settings
+            .get(&repo_id)
+            .map(|s| s.setup_script.clone())
+            .unwrap_or_default()
+    };
+
+    if !setup_script.trim().is_empty() {
+        tracing::info!("Running setup script for workspace {}", ws.name);
+        let output = std::process::Command::new("zsh")
+            .args(["-c", &setup_script])
+            .current_dir(&worktree_path)
+            .env("KORLAP_WORKSPACE_NAME", &ws.name)
+            .env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string())
+            .env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string())
+            .env("KORLAP_DEFAULT_BRANCH", &base_branch)
+            .output()
+            .map_err(|e| format!("Setup script failed to start: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("Setup script failed: {}", stderr.trim());
+            // Don't fail workspace creation — just log the warning
+        }
+    }
 
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.workspaces.insert(id, ws.clone());
@@ -372,18 +400,50 @@ pub fn create_workspace(
     Ok(ws)
 }
 
+// ── Repo Settings ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_repo_settings(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<crate::state::RepoSettings, String> {
+    let st = state.lock().map_err(|e| e.to_string())?;
+    Ok(st
+        .repo_settings
+        .get(&repo_id)
+        .cloned()
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_repo_settings(
+    repo_id: String,
+    settings: crate::state::RepoSettings,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    st.repo_settings.insert(repo_id, settings);
+    st.save_repo_settings()?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn archive_workspace(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
-    let (worktree_path, repo_path) = {
+    let (worktree_path, repo_path, ws_name, repo_id) = {
         let mut st = state.lock().map_err(|e| e.to_string())?;
 
         // Kill agent if running
         if let Some(mut handle) = st.agents.remove(&workspace_id) {
             let _ = handle.child.kill();
             let _ = handle.child.wait();
+        }
+
+        // Kill terminal if running
+        if let Some(mut term) = st.terminals.remove(&workspace_id) {
+            let _ = term.child.kill();
         }
 
         let ws = st
@@ -394,8 +454,25 @@ pub fn archive_workspace(
             return Ok(());
         }
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (ws.worktree_path.clone(), repo.path.clone())
+        (ws.worktree_path.clone(), repo.path.clone(), ws.name.clone(), ws.repo_id.clone())
     };
+
+    // Run archive script if configured
+    {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        if let Some(settings) = st.repo_settings.get(&repo_id) {
+            if !settings.archive_script.trim().is_empty() {
+                tracing::info!("Running archive script for workspace {}", ws_name);
+                let _ = std::process::Command::new("zsh")
+                    .args(["-c", &settings.archive_script])
+                    .current_dir(&worktree_path)
+                    .env("KORLAP_WORKSPACE_NAME", &ws_name)
+                    .env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string())
+                    .env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string())
+                    .output();
+            }
+        }
+    }
 
     let output = std::process::Command::new("git")
         .args(["worktree", "remove", "--force"])
@@ -622,6 +699,136 @@ pub fn get_diff(
     }
 
     Ok(diff_text)
+}
+
+// ── PR commands ──────────────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct PrStatus {
+    pub state: String,         // "none", "open", "merged", "closed"
+    pub url: String,
+    pub number: i64,
+    pub title: String,
+    pub checks: String,        // "pending", "passing", "failing", "none"
+    pub mergeable: bool,
+    pub additions: i64,
+    pub deletions: i64,
+}
+
+#[tauri::command]
+pub fn get_pr_status(
+    workspace_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<PrStatus, String> {
+    let (worktree_path, branch) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        (ws.worktree_path.clone(), ws.branch.clone())
+    };
+
+    let output = std::process::Command::new("gh")
+        .args([
+            "pr", "view", &branch,
+            "--json", "state,url,number,title,statusCheckRollup,mergeable,additions,deletions",
+        ])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("Failed to run gh: {}", e))?;
+
+    if !output.status.success() {
+        // No PR exists for this branch
+        return Ok(PrStatus {
+            state: "none".into(),
+            url: String::new(),
+            number: 0,
+            title: String::new(),
+            checks: "none".into(),
+            mergeable: false,
+            additions: 0,
+            deletions: 0,
+        });
+    }
+
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse gh output: {}", e))?;
+
+    let pr_state = v.get("state").and_then(|s| s.as_str()).unwrap_or("OPEN").to_lowercase();
+    let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let number = v.get("number").and_then(|n| n.as_i64()).unwrap_or(0);
+    let title = v.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let additions = v.get("additions").and_then(|n| n.as_i64()).unwrap_or(0);
+    let deletions = v.get("deletions").and_then(|n| n.as_i64()).unwrap_or(0);
+    let mergeable = v.get("mergeable").and_then(|s| s.as_str()).unwrap_or("") == "MERGEABLE";
+
+    // Parse check status from statusCheckRollup
+    let checks = if let Some(checks_arr) = v.get("statusCheckRollup").and_then(|c| c.as_array()) {
+        if checks_arr.is_empty() {
+            "none".to_string()
+        } else {
+            let any_failing = checks_arr.iter().any(|c| {
+                let conclusion = c.get("conclusion").and_then(|s| s.as_str()).unwrap_or("");
+                conclusion == "FAILURE" || conclusion == "ERROR" || conclusion == "TIMED_OUT"
+            });
+            let all_done = checks_arr.iter().all(|c| {
+                let status = c.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                status == "COMPLETED"
+            });
+            if any_failing {
+                "failing".to_string()
+            } else if all_done {
+                "passing".to_string()
+            } else {
+                "pending".to_string()
+            }
+        }
+    } else {
+        "none".to_string()
+    };
+
+    Ok(PrStatus {
+        state: pr_state,
+        url,
+        number,
+        title,
+        checks,
+        mergeable,
+        additions,
+        deletions,
+    })
+}
+
+#[tauri::command]
+pub fn get_pr_template(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let repo_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st.repos.get(&repo_id).ok_or("Repo not found")?;
+        repo.path.clone()
+    };
+
+    // Check common PR template locations
+    let candidates = [
+        ".github/pull_request_template.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        "docs/pull_request_template.md",
+        "PULL_REQUEST_TEMPLATE.md",
+    ];
+
+    for candidate in candidates {
+        let path = repo_path.join(candidate);
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                return Ok(content);
+            }
+        }
+    }
+
+    Ok(String::new()) // No template found
 }
 
 // ── Script commands ──────────────────────────────────────────────────

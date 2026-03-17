@@ -184,6 +184,46 @@ export async function loadMessages(
   return invoke<unknown[]>("load_messages", { workspaceId });
 }
 
+// ── PR Status ────────────────────────────────────────────────────────
+
+export interface PrStatus {
+  state: "none" | "open" | "merged" | "closed";
+  url: string;
+  number: number;
+  title: string;
+  checks: "pending" | "passing" | "failing" | "none";
+  mergeable: boolean;
+  additions: number;
+  deletions: number;
+}
+
+export async function getPrStatus(workspaceId: string): Promise<PrStatus> {
+  return invoke<PrStatus>("get_pr_status", { workspaceId });
+}
+
+export async function getPrTemplate(repoId: string): Promise<string> {
+  return invoke<string>("get_pr_template", { repoId });
+}
+
+// ── Repo Settings ────────────────────────────────────────────────────
+
+export interface RepoSettings {
+  setup_script: string;
+  run_script: string;
+  archive_script: string;
+}
+
+export async function getRepoSettings(repoId: string): Promise<RepoSettings> {
+  return invoke<RepoSettings>("get_repo_settings", { repoId });
+}
+
+export async function saveRepoSettings(
+  repoId: string,
+  settings: RepoSettings,
+): Promise<void> {
+  return invoke("save_repo_settings", { repoId, settings });
+}
+
 // ── Events ───────────────────────────────────────────────────────────
 
 export function onAgentStatus(

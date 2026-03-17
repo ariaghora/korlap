@@ -36,6 +36,7 @@ pub fn run() {
                 workspaces: HashMap::new(),
                 agents: HashMap::new(),
                 session_ids: HashMap::new(),
+                repo_settings: HashMap::new(),
                 data_dir,
                 mcp_api_port: 0,
                 terminals: HashMap::new(),
@@ -84,6 +85,10 @@ pub fn run() {
             commands::write_terminal,
             commands::resize_terminal,
             commands::close_terminal,
+            commands::get_pr_status,
+            commands::get_pr_template,
+            commands::get_repo_settings,
+            commands::save_repo_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
