@@ -24,9 +24,10 @@
     addUserMessage,
     addAssistantMessage,
     addActionMessage,
-    getMessages,
     loadPersistedMessages,
     clearWorkspaceData,
+    setSending,
+    sendingByWorkspace,
   } from "$lib/stores/messages.svelte";
   import { onMount } from "svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -45,7 +46,6 @@
   let activeRepo = $state<RepoDetail | null>(null);
   let selectedWsId = $state<string | null>(null);
   let error = $state("");
-  let sendingMap = $state(new Map<string, boolean>());
   let activeTab = $state<PanelTab>("chat");
   let diffRefreshTrigger = $state(0);
   let showSettings = $state(false);
@@ -58,10 +58,6 @@
   let activeWorkspaces = $derived(
     workspaces.filter((w) => w.status !== "archived"),
   );
-
-  function setSending(wsId: string, value: boolean) {
-    sendingMap.set(wsId, value);
-  }
 
   // ── Lifecycle ──────────────────────────────────────────
 
@@ -219,7 +215,7 @@
     if (selectedWsId === wsId) selectedWsId = null;
     if (creatingWsId === wsId) creatingWsId = null;
     clearWorkspaceData(wsId);
-    sendingMap.delete(wsId);
+    sendingByWorkspace.delete(wsId);
     prStatusMap.delete(wsId);
     changeCounts.delete(wsId);
 
@@ -231,7 +227,7 @@
   }
 
   async function sendPrompt(wsId: string, prompt: string, actionLabel?: string) {
-    if (sendingMap.get(wsId)) return;
+    if (sendingByWorkspace.get(wsId)) return;
     error = "";
     setSending(wsId, true);
 
@@ -528,8 +524,7 @@
                 inert={!isVisible}
               >
                 <ChatPanel
-                  messages={getMessages(ws.id)}
-                  sending={sendingMap.get(ws.id) ?? false}
+                  workspaceId={ws.id}
                   creating={ws.id === creatingWsId}
                   disabled={ws.status === "archived"}
                   onSend={handleSend}
