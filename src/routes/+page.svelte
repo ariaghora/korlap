@@ -550,11 +550,19 @@
               </div>
             {/if}
 
-            {#if activeTab === "terminal" && selectedWs}
-              <div class="ws-tab-container active-layer">
-                <TerminalView workspaceId={selectedWs.id} />
+            <!-- Terminal: always mounted per workspace, toggle display.
+                 Uses display:none (not visibility:hidden) so xterm.js only
+                 inits when it has real dimensions via ResizeObserver. -->
+            {#each activeWorkspaces as ws (ws.id)}
+              {@const isVisible = activeTab === "terminal" && ws.id === selectedWsId}
+              <div
+                class="ws-terminal-layer"
+                class:visible={isVisible}
+                inert={!isVisible}
+              >
+                <TerminalView workspaceId={ws.id} />
               </div>
-            {/if}
+            {/each}
           </div>
         {:else}
           <div class="panel-empty">
@@ -932,6 +940,21 @@
   .ws-tab-container.active-layer {
     position: absolute;
     inset: 0;
+    z-index: 2;
+  }
+
+  /* Terminal layers: kept alive per workspace, toggled via display.
+     display:none gives zero dimensions so xterm.js defers init until visible. */
+  .ws-terminal-layer {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    z-index: 0;
+  }
+
+  .ws-terminal-layer.visible {
+    display: flex;
     z-index: 2;
   }
 

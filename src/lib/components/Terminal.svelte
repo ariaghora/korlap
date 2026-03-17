@@ -78,8 +78,10 @@
   onMount(() => {
     if (!containerEl) return;
 
-    // Use ResizeObserver to detect when container becomes visible
+    // Use ResizeObserver to detect when container becomes visible.
+    // Guard fit() against zero dimensions (display:none when tab not active).
     resizeObserver = new ResizeObserver(() => {
+      if (!containerEl || containerEl.offsetHeight === 0) return;
       if (!opened) {
         initTerminal();
       } else if (fitAddon && term) {
