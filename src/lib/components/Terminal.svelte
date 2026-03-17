@@ -21,7 +21,7 @@
 
     term = new Terminal({
       scrollback: 10000,
-      fontFamily: "var(--font-mono)",
+      fontFamily: "'SF Mono', 'Fira Code', 'Menlo', monospace",
       fontSize: 13,
       theme: {
         background: "#12110e",
