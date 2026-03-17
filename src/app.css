@@ -1,0 +1,46 @@
+:root {
+  /* ── Backgrounds (darkest → lightest) ── */
+  --bg-sidebar: #0f0d0a;
+  --bg-base: #12110e;
+  --bg-titlebar: #1a1611;
+  --bg-card: #1a1814;
+  --bg-hover: #1e1b17;
+  --bg-active: #2a2520;
+
+  /* ── Borders ── */
+  --border: #1e1b18;
+  --border-light: #3a3530;
+
+  /* ── Text ── */
+  --text-muted: #4a4540;
+  --text-dim: #6a6050;
+  --text-secondary: #8a7e6a;
+  --text-primary: #d4c5a9;
+  --text-bright: #e8dcc8;
+
+  /* ── Accent ── */
+  --accent: #c8a97e;
+  --status-ok: #7e9e6b;
+
+  /* ── Diff ── */
+  --diff-add: #7e9e6b;
+  --diff-add-bg: #1a2a1a;
+  --diff-del: #c87e7e;
+  --diff-del-bg: #2a1a1a;
+
+  /* ── Error ── */
+  --error: #e88;
+  --error-bg: #3a1a1a;
+
+  /* ── Type ── */
+  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "SF Mono", "Fira Code", monospace;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}

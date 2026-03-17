@@ -181,12 +181,12 @@
     align-items: center;
     justify-content: center;
     gap: 0.75rem;
-    color: #6a6050;
+    color: var(--text-dim);
     font-size: 0.85rem;
   }
 
   .diff-error {
-    color: #c87e7e;
+    color: var(--diff-del);
   }
 
   .diff-layout {
@@ -199,7 +199,7 @@
 
   .file-sidebar {
     width: 240px;
-    border-right: 1px solid #1e1b18;
+    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
@@ -210,12 +210,12 @@
     align-items: center;
     gap: 0.4rem;
     padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid #1e1b18;
+    border-bottom: 1px solid var(--border);
     font-size: 0.72rem;
   }
 
   .file-count {
-    color: #8a7e6a;
+    color: var(--text-secondary);
     font-weight: 600;
   }
 
@@ -226,28 +226,28 @@
   }
 
   .stat-add {
-    color: #7e9e6b;
-    font-family: "SF Mono", "Fira Code", monospace;
+    color: var(--status-ok);
+    font-family: var(--font-mono);
     font-size: 0.7rem;
   }
 
   .stat-del {
-    color: #c87e7e;
-    font-family: "SF Mono", "Fira Code", monospace;
+    color: var(--diff-del);
+    font-family: var(--font-mono);
     font-size: 0.7rem;
   }
 
   .refresh-btn-sm {
     background: none;
     border: none;
-    color: #6a6050;
+    color: var(--text-dim);
     cursor: pointer;
     font-size: 0.85rem;
     padding: 0 0.2rem;
   }
 
   .refresh-btn-sm:hover {
-    color: #d4c5a9;
+    color: var(--text-primary);
   }
 
   .file-list {
@@ -263,7 +263,7 @@
     padding: 0.3rem 0.6rem;
     background: transparent;
     border: none;
-    color: #d4c5a9;
+    color: var(--text-primary);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.75rem;
@@ -271,16 +271,16 @@
   }
 
   .file-item:hover {
-    background: #1e1b17;
+    background: var(--bg-hover);
   }
 
   .file-item.active {
-    background: #1e1b18;
+    background: var(--border);
   }
 
   .file-status {
     width: 1.2ch;
-    font-family: "SF Mono", "Fira Code", monospace;
+    font-family: var(--font-mono);
     font-weight: 700;
     font-size: 0.72rem;
     flex-shrink: 0;
@@ -288,15 +288,15 @@
   }
 
   .file-status.add {
-    color: #7e9e6b;
+    color: var(--status-ok);
   }
 
   .file-status.del {
-    color: #c87e7e;
+    color: var(--diff-del);
   }
 
   .file-status.mod {
-    color: #c8a97e;
+    color: var(--accent);
   }
 
   .file-path {
@@ -304,12 +304,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: "SF Mono", "Fira Code", monospace;
+    font-family: var(--font-mono);
     font-size: 0.73rem;
   }
 
   .file-dir {
-    color: #6a6050;
+    color: var(--text-dim);
   }
 
   .file-stat-inline {
@@ -321,17 +321,17 @@
 
   .refresh-btn {
     padding: 0.25rem 0.6rem;
-    background: #1e1b18;
-    border: 1px solid #3a3530;
+    background: var(--border);
+    border: 1px solid var(--border-light);
     border-radius: 4px;
-    color: #8a7e6a;
+    color: var(--text-secondary);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.75rem;
   }
 
   .refresh-btn:hover {
-    color: #d4c5a9;
+    color: var(--text-primary);
   }
 
   /* ── Diff content ──────────────────────── */
@@ -339,7 +339,7 @@
   .diff-content {
     flex: 1;
     overflow: auto;
-    font-family: "SF Mono", "Fira Code", monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
     line-height: 1.6;
   }
@@ -351,22 +351,22 @@
   }
 
   .diff-line.add {
-    background: #1a2a1a;
-    color: #7e9e6b;
+    background: var(--diff-add-bg);
+    color: var(--status-ok);
   }
 
   .diff-line.remove {
-    background: #2a1a1a;
-    color: #c87e7e;
+    background: var(--diff-del-bg);
+    color: var(--diff-del);
   }
 
   .diff-line.context {
-    color: #6a6050;
+    color: var(--text-dim);
   }
 
   .diff-line.hunk {
-    color: #c8a97e;
-    background: #1a1814;
+    color: var(--accent);
+    background: var(--bg-card);
     padding-top: 0.4rem;
     padding-bottom: 0.4rem;
     margin-top: 0.5rem;

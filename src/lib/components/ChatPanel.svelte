@@ -172,7 +172,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #6a6050;
+    color: var(--text-dim);
     font-size: 0.85rem;
   }
 
@@ -184,11 +184,11 @@
   }
 
   .user-bubble {
-    background: #1e1b18;
-    border: 1px solid #3a3530;
+    background: var(--border);
+    border: 1px solid var(--border-light);
     border-radius: 10px;
     padding: 0.5rem 0.85rem;
-    color: #e8dcc8;
+    color: var(--text-bright);
     font-size: 0.85rem;
     line-height: 1.5;
     white-space: pre-wrap;
@@ -199,7 +199,7 @@
 
   .assistant-label {
     font-size: 0.68rem;
-    color: #6a6050;
+    color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-top: 0.5rem;
@@ -214,8 +214,8 @@
   }
 
   .assistant-card {
-    background: #1a1814;
-    border: 1px solid #1e1b18;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 0.6rem 0.85rem;
   }
@@ -224,7 +224,7 @@
     margin: 0;
     font-size: 0.85rem;
     line-height: 1.55;
-    color: #d4c5a9;
+    color: var(--text-primary);
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -242,12 +242,12 @@
     align-items: center;
     gap: 0.3rem;
     padding: 0.25rem 0.6rem;
-    background: #1a1814;
-    border: 1px solid #2e2a24;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 14px;
     font-size: 0.75rem;
-    color: #8a7e6a;
-    font-family: "SF Mono", "Fira Code", monospace;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
     letter-spacing: -0.01em;
   }
 
@@ -260,7 +260,7 @@
 
   .thinking {
     font-size: 0.85rem;
-    color: #c8a97e;
+    color: var(--accent);
     padding: 0.3rem 0;
     animation: pulse 2s ease-in-out infinite;
   }
@@ -289,12 +289,12 @@
     align-items: center;
     gap: 0.3rem;
     padding: 0.2rem 0.6rem;
-    background: #1a1814;
-    border: 1px solid #2e2a24;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 14px;
     font-size: 0.73rem;
-    color: #8a7e6a;
-    font-family: "SF Mono", "Fira Code", monospace;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
   }
 
   .file-pill-icon {
@@ -308,14 +308,14 @@
     display: flex;
     gap: 0.5rem;
     padding: 0.6rem 1rem;
-    border-top: 1px solid #1e1b18;
+    border-top: 1px solid var(--border);
   }
 
   .input-row input {
     flex: 1;
-    background: #1a1814;
-    border: 1px solid #2e2a24;
-    color: #d4c5a9;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
     padding: 0.55rem 0.85rem;
     border-radius: 8px;
     font-family: inherit;
@@ -324,7 +324,7 @@
 
   .input-row input:focus {
     outline: none;
-    border-color: #c8a97e55;
+    border-color: color-mix(in srgb, var(--accent) 33%, transparent);
   }
 
   .input-row input:disabled {
@@ -334,9 +334,9 @@
 
   .send-btn {
     padding: 0.55rem 1rem;
-    background: #1e1b18;
-    border: 1px solid #3a3530;
-    color: #d4c5a9;
+    background: var(--border);
+    border: 1px solid var(--border-light);
+    color: var(--text-primary);
     border-radius: 8px;
     cursor: pointer;
     font-family: inherit;
@@ -344,7 +344,7 @@
   }
 
   .send-btn:hover:not(:disabled) {
-    background: #3a3530;
+    background: var(--border-light);
   }
 
   .send-btn:disabled {

@@ -87,12 +87,12 @@
     align-items: center;
     gap: 0.4rem;
     padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid #1e1b18;
+    border-bottom: 1px solid var(--border);
   }
 
   .prompt {
-    color: #c8a97e;
-    font-family: "SF Mono", "Fira Code", monospace;
+    color: var(--accent);
+    font-family: var(--font-mono);
     font-size: 0.85rem;
     font-weight: 600;
   }
@@ -101,30 +101,30 @@
     flex: 1;
     background: transparent;
     border: none;
-    color: #d4c5a9;
-    font-family: "SF Mono", "Fira Code", monospace;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
     font-size: 0.82rem;
     outline: none;
   }
 
   .script-input input::placeholder {
-    color: #4a4540;
+    color: var(--text-muted);
   }
 
   .run-btn {
     padding: 0.2rem 0.5rem;
-    background: #1e1b18;
-    border: 1px solid #3a3530;
+    background: var(--border);
+    border: 1px solid var(--border-light);
     border-radius: 4px;
-    color: #8a7e6a;
+    color: var(--text-secondary);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.75rem;
   }
 
   .run-btn:hover:not(:disabled) {
-    color: #d4c5a9;
-    background: #3a3530;
+    color: var(--text-primary);
+    background: var(--border-light);
   }
 
   .run-btn:disabled {
@@ -133,7 +133,7 @@
 
   .running-indicator {
     font-size: 0.7rem;
-    color: #c8a97e;
+    color: var(--accent);
     animation: pulse 2s ease-in-out infinite;
   }
 
@@ -142,35 +142,35 @@
     overflow: auto;
     margin: 0;
     padding: 0.75rem;
-    font-family: "SF Mono", "Fira Code", monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
     line-height: 1.5;
-    color: #d4c5a9;
+    color: var(--text-primary);
     white-space: pre-wrap;
     word-break: break-all;
   }
 
   .placeholder {
-    color: #4a4540;
+    color: var(--text-muted);
   }
 
   .exit-msg {
-    color: #6a6050;
+    color: var(--text-dim);
   }
 
   .exit-bar {
     padding: 0.25rem 0.75rem;
-    font-family: "SF Mono", "Fira Code", monospace;
+    font-family: var(--font-mono);
     font-size: 0.72rem;
-    border-top: 1px solid #1e1b18;
+    border-top: 1px solid var(--border);
   }
 
   .exit-bar.success {
-    color: #7e9e6b;
+    color: var(--status-ok);
   }
 
   .exit-bar.failure {
-    color: #c87e7e;
+    color: var(--diff-del);
   }
 
   @keyframes pulse {

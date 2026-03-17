@@ -46,10 +46,10 @@
 <style>
   .sidebar {
     width: 220px;
-    border-right: 1px solid #1e1b18;
+    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    background: #0f0d0a;
+    background: var(--bg-sidebar);
     flex-shrink: 0;
   }
 
@@ -59,7 +59,7 @@
 
   .sidebar-label {
     font-size: 0.7rem;
-    color: #6a6050;
+    color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -79,7 +79,7 @@
     background: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
-    color: #d4c5a9;
+    color: var(--text-primary);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.82rem;
@@ -87,12 +87,12 @@
   }
 
   .ws-item:hover {
-    background: #1e1b17;
+    background: var(--bg-hover);
   }
 
   .ws-item.active {
-    background: #1e1b18;
-    border-color: #3a3530;
+    background: var(--border);
+    border-color: var(--border-light);
   }
 
   .ws-dot {
@@ -100,17 +100,17 @@
     height: 6px;
     border-radius: 50%;
     flex-shrink: 0;
-    background: #3a3530;
+    background: var(--border-light);
   }
 
   .ws-dot.running {
-    background: #c8a97e;
-    box-shadow: 0 0 6px #c8a97e88;
+    background: var(--accent);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 53%, transparent);
     animation: pulse 2s ease-in-out infinite;
   }
 
   .ws-dot.waiting {
-    background: #7e9e6b;
+    background: var(--status-ok);
   }
 
   @keyframes pulse {
@@ -125,7 +125,7 @@
 
   .ws-status {
     font-size: 0.65rem;
-    color: #c8a97e;
+    color: var(--accent);
     margin-left: auto;
   }
 
@@ -140,17 +140,17 @@
     margin: 0.5rem;
     padding: 0.4rem;
     background: transparent;
-    border: 1px dashed #3a3530;
+    border: 1px dashed var(--border-light);
     border-radius: 4px;
-    color: #6a6050;
+    color: var(--text-dim);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.8rem;
   }
 
   .new-ws-btn:hover {
-    color: #c8a97e;
-    border-color: #c8a97e;
-    background: #1e1b17;
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--bg-hover);
   }
 </style>

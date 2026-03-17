@@ -103,7 +103,6 @@
     error = "";
     try {
       workspaces = await listWorkspaces(repo.id);
-      // Load persisted messages for all non-archived workspaces
       await Promise.all(
         workspaces
           .filter((w) => w.status !== "archived")
@@ -162,7 +161,6 @@
             event.text.trim(),
             toolUses,
           );
-          // Refresh diff if any file-writing tools were used
           const fileWriteTools = new Set(["Write", "Edit", "NotebookEdit", "Bash"]);
           if (event.tool_uses.some((t) => fileWriteTools.has(t.name))) {
             diffRefreshTrigger++;
@@ -233,7 +231,6 @@
 
       <main class="panel">
         {#if selectedWs}
-          <!-- Tab bar + status badge -->
           <div class="tab-bar">
             <div class="tabs">
               {#each ["chat", "diff", "terminal", "scripts"] as tab}
@@ -261,12 +258,10 @@
             </div>
           </div>
 
-          <!-- Tab content: display:none switching preserves scroll + state -->
           <div class="tab-content">
-            <!-- Chat panels — one per workspace, toggled via display -->
             {#each activeWorkspaces as ws (ws.id)}
               <div
-                class="ws-chat-container"
+                class="ws-tab-container"
                 style:display={activeTab === "chat" && ws.id === selectedWsId ? "flex" : "none"}
               >
                 <ChatPanel
@@ -278,7 +273,6 @@
               </div>
             {/each}
 
-            <!-- Diff tab — one per workspace -->
             {#each activeWorkspaces as ws (ws.id)}
               <div
                 class="ws-tab-container"
@@ -288,7 +282,6 @@
               </div>
             {/each}
 
-            <!-- Scripts tab — one per workspace -->
             {#each activeWorkspaces as ws (ws.id)}
               <div
                 class="ws-tab-container"
@@ -298,7 +291,6 @@
               </div>
             {/each}
 
-            <!-- Terminal placeholder -->
             <div class="tab-placeholder" style:display={activeTab === "terminal" ? "flex" : "none"}>
               <p>Terminal — coming soon</p>
             </div>
@@ -310,19 +302,10 @@
         {/if}
       </main>
     </div>
-
   </div>
 {/if}
 
 <style>
-  :global(body) {
-    margin: 0;
-    background: #12110e;
-    color: #d4c5a9;
-    font-family: "Space Grotesk", system-ui, sans-serif;
-    font-size: 14px;
-  }
-
   /* ── Empty state ─────────────────────────────────── */
 
   .empty-state {
@@ -344,34 +327,34 @@
     width: 48px;
     height: 48px;
     border-radius: 12px;
-    background: #1e1b18;
-    border: 1px solid #3a3530;
+    background: var(--bg-active);
+    border: 1px solid var(--border-light);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 24px;
     font-weight: 700;
-    color: #c8a97e;
+    color: var(--accent);
   }
 
   .empty-content h1 {
     margin: 0;
     font-size: 1.5rem;
-    color: #e8dcc8;
+    color: var(--text-bright);
     font-weight: 600;
   }
 
   .empty-content p {
     margin: 0;
-    color: #8a7e6a;
+    color: var(--text-secondary);
     font-size: 0.85rem;
   }
 
   .open-repo-btn {
     margin-top: 0.5rem;
     padding: 0.6rem 1.5rem;
-    background: #c8a97e;
-    color: #13110e;
+    background: var(--accent);
+    color: var(--bg-base);
     border: none;
     border-radius: 6px;
     font-weight: 600;
@@ -381,7 +364,7 @@
   }
 
   .open-repo-btn:hover {
-    background: #d4b88a;
+    filter: brightness(1.1);
   }
 
   .recent-repos {
@@ -396,7 +379,7 @@
 
   .recent-label {
     font-size: 0.75rem;
-    color: #6a6050;
+    color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 0.25rem;
@@ -406,10 +389,10 @@
     width: 100%;
     text-align: left;
     padding: 0.5rem 0.75rem;
-    background: #1a1714;
-    border: 1px solid #1e1b18;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 6px;
-    color: #d4c5a9;
+    color: var(--text-primary);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.85rem;
@@ -419,13 +402,13 @@
   }
 
   .recent-item:hover {
-    border-color: #3a3530;
-    background: #1e1b17;
+    border-color: var(--border-light);
+    background: var(--bg-hover);
   }
 
   .recent-path {
     font-size: 0.7rem;
-    color: #6a6050;
+    color: var(--text-dim);
   }
 
   /* ── App layout ──────────────────────────────────── */
@@ -456,7 +439,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #6a6050;
+    color: var(--text-dim);
     font-size: 0.85rem;
   }
 
@@ -468,7 +451,7 @@
     justify-content: space-between;
     padding: 0 1rem;
     height: 38px;
-    border-bottom: 1px solid #1e1b18;
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -482,7 +465,7 @@
     background: transparent;
     border: none;
     border-radius: 5px;
-    color: #6a6050;
+    color: var(--text-dim);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.82rem;
@@ -490,13 +473,13 @@
   }
 
   .tab:hover {
-    color: #d4c5a9;
-    background: #1e1b17;
+    color: var(--text-primary);
+    background: var(--bg-hover);
   }
 
   .tab.active {
-    color: #e8dcc8;
-    background: #1e1b18;
+    color: var(--text-bright);
+    background: var(--border);
   }
 
   .tab-bar-right {
@@ -516,41 +499,36 @@
   }
 
   .status-badge.running {
-    color: #c8a97e;
-    border-color: #c8a97e66;
-    background: #c8a97e11;
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
     animation: badge-pulse 2s ease-in-out infinite;
   }
 
   .status-badge.waiting {
-    color: #7e9e6b;
-    border: 1px solid #7e9e6b44;
+    color: var(--status-ok);
+    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
   }
 
   @keyframes badge-pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.6;
-    }
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
   }
 
   .archive-btn {
     padding: 0.2rem 0.5rem;
     background: transparent;
-    border: 1px solid #3a3530;
+    border: 1px solid var(--border-light);
     border-radius: 4px;
-    color: #6a6050;
+    color: var(--text-dim);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.72rem;
   }
 
   .archive-btn:hover {
-    color: #d4c5a9;
-    background: #1e1b18;
+    color: var(--text-primary);
+    background: var(--bg-active);
   }
 
   /* ── Tab content ──────────────────────────────────── */
@@ -573,15 +551,15 @@
     flex: 1;
     align-items: center;
     justify-content: center;
-    color: #4a4540;
+    color: var(--text-muted);
     font-size: 0.85rem;
   }
 
   /* ── Error ──────────────────────────────────────── */
 
   .error {
-    background: #3a1a1a;
-    color: #e88;
+    background: var(--error-bg);
+    color: var(--error);
     padding: 0.4rem 0.75rem;
     font-size: 0.8rem;
     white-space: pre-wrap;
@@ -594,7 +572,7 @@
   .error-dismiss {
     background: none;
     border: none;
-    color: #e88;
+    color: var(--error);
     cursor: pointer;
     font-size: 1.1rem;
     padding: 0 0.25rem;

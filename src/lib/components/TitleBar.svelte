@@ -72,8 +72,8 @@
     justify-content: space-between;
     padding: 0 0.75rem;
     height: 40px;
-    border-bottom: 1px solid #1e1b18;
-    background: #1a1611;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-titlebar);
     -webkit-user-select: none;
     user-select: none;
     cursor: default;
@@ -108,58 +108,58 @@
     background: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
-    color: #8a7e6a;
+    color: var(--text-secondary);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.8rem;
   }
 
   .repo-tab:hover {
-    color: #d4c5a9;
-    background: #1e1b18;
+    color: var(--text-primary);
+    background: var(--border);
   }
 
   .repo-tab.active {
-    color: #e8dcc8;
-    background: #1e1b18;
-    border-color: #3a3530;
+    color: var(--text-bright);
+    background: var(--border);
+    border-color: var(--border-light);
   }
 
   .add-tab {
     font-size: 1rem;
     padding: 0.2rem 0.5rem;
-    color: #6a6050;
+    color: var(--text-dim);
   }
 
   .repo-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #3a3530;
+    background: var(--border-light);
     flex-shrink: 0;
   }
 
   .repo-dot.has-running {
-    background: #c8a97e;
+    background: var(--accent);
   }
 
   .breadcrumb {
     font-size: 0.75rem;
-    color: #6a6050;
+    color: var(--text-dim);
     display: flex;
     align-items: center;
     gap: 0.35rem;
   }
 
   .breadcrumb-branch {
-    color: #c8a97e;
+    color: var(--accent);
   }
 
   .breadcrumb-sep {
-    color: #4a4540;
+    color: var(--text-muted);
   }
 
   .breadcrumb-base {
-    color: #6a6050;
+    color: var(--text-dim);
   }
 </style>
