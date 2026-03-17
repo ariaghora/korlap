@@ -306,7 +306,7 @@ pub fn create_workspace(
     // Generate a unique name (retry if branch already exists)
     let mut name = random_workspace_name();
     for attempt in 0..10 {
-        let branch = format!("conductor/{}", name);
+        let branch = format!("korlap/{}", name);
         let check = std::process::Command::new("git")
             .args(["rev-parse", "--verify", &branch])
             .current_dir(&repo_path)
@@ -329,7 +329,7 @@ pub fn create_workspace(
     }
 
     let id = Uuid::new_v4().to_string();
-    let branch = format!("conductor/{}", name);
+    let branch = format!("korlap/{}", name);
 
     // Worktree lives in app data dir, not in the managed repo
     let worktree_path = {
@@ -452,7 +452,8 @@ pub fn rename_branch(
     }
 
     let old_branch = ws.branch.clone();
-    let new_branch = format!("conductor/{}", new_name);
+    // No prefix — user provides the full branch name (e.g. feat/fix-auth)
+    let new_branch = new_name.clone();
     let worktree_path = ws.worktree_path.clone();
 
     let output = std::process::Command::new("git")
