@@ -1,7 +1,7 @@
 use crate::state::{AgentHandle, AppState, RepoInfo, WorkspaceInfo, WorkspaceStatus};
 use std::io::BufRead;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -224,7 +224,7 @@ pub struct RepoDetail {
 }
 
 #[tauri::command]
-pub fn add_repo(path: String, state: State<'_, Mutex<AppState>>) -> Result<RepoDetail, String> {
+pub fn add_repo(path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<RepoDetail, String> {
     let path = std::path::PathBuf::from(&path);
     let path = path
         .canonicalize()
@@ -264,7 +264,7 @@ pub fn add_repo(path: String, state: State<'_, Mutex<AppState>>) -> Result<RepoD
 }
 
 #[tauri::command]
-pub fn remove_repo(repo_id: String, state: State<'_, Mutex<AppState>>) -> Result<(), String> {
+pub fn remove_repo(repo_id: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
     let mut state = state.lock().map_err(|e| e.to_string())?;
     state.repos.remove(&repo_id).ok_or("Repo not found")?;
     state.workspaces.retain(|_, w| w.repo_id != repo_id);
@@ -273,7 +273,7 @@ pub fn remove_repo(repo_id: String, state: State<'_, Mutex<AppState>>) -> Result
 }
 
 #[tauri::command]
-pub fn list_repos(state: State<'_, Mutex<AppState>>) -> Result<Vec<RepoDetail>, String> {
+pub fn list_repos(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<RepoDetail>, String> {
     let state = state.lock().map_err(|e| e.to_string())?;
     let mut details = Vec::new();
     for repo in state.repos.values() {
@@ -293,7 +293,7 @@ pub fn list_repos(state: State<'_, Mutex<AppState>>) -> Result<Vec<RepoDetail>, 
 #[tauri::command]
 pub fn create_workspace(
     repo_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {
     let (repo_path, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -375,7 +375,7 @@ pub fn create_workspace(
 #[tauri::command]
 pub fn archive_workspace(
     workspace_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let (worktree_path, repo_path) = {
         let mut st = state.lock().map_err(|e| e.to_string())?;
@@ -422,7 +422,7 @@ pub fn archive_workspace(
 #[tauri::command]
 pub fn list_workspaces(
     repo_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<WorkspaceInfo>, String> {
     let state = state.lock().map_err(|e| e.to_string())?;
     Ok(state
@@ -439,7 +439,7 @@ pub fn list_workspaces(
 pub fn rename_branch(
     workspace_id: String,
     new_name: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     let ws = st
@@ -493,7 +493,7 @@ pub struct ChangedFile {
 #[tauri::command]
 pub fn get_changed_files(
     workspace_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<ChangedFile>, String> {
     let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -573,7 +573,7 @@ pub fn get_changed_files(
 pub fn get_diff(
     workspace_id: String,
     file_path: Option<String>,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, String> {
     let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -640,7 +640,7 @@ pub fn run_script(
     workspace_id: String,
     command: String,
     on_event: Channel<ScriptEvent>,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -699,7 +699,7 @@ pub fn run_script(
 pub fn save_messages(
     workspace_id: String,
     messages: serde_json::Value,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let msg_dir = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -715,7 +715,7 @@ pub fn save_messages(
 #[tauri::command]
 pub fn load_messages(
     workspace_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<serde_json::Value, String> {
     let msg_file = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -737,7 +737,7 @@ pub fn send_message(
     workspace_id: String,
     prompt: String,
     on_event: Channel<AgentEvent>,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
     app: AppHandle,
 ) -> Result<(), String> {
     let (worktree_path, gh_profile, repo_id, ws_branch, repo_path) = {
@@ -786,6 +786,35 @@ pub fn send_message(
         None
     };
 
+    // Write .mcp.json for the MCP server into the worktree
+    let mcp_api_port = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.mcp_api_port
+    };
+
+    // Find the MCP server script path (relative to the repo root)
+    let mcp_server_path = repo_path.join("src-mcp").join("server.ts");
+    if mcp_server_path.exists() {
+        let mcp_config = serde_json::json!({
+            "mcpServers": {
+                "korlap": {
+                    "type": "stdio",
+                    "command": "bun",
+                    "args": ["run", mcp_server_path.to_string_lossy()],
+                    "env": {
+                        "KORLAP_API_PORT": mcp_api_port.to_string(),
+                        "KORLAP_WORKSPACE_ID": workspace_id.clone()
+                    }
+                }
+            }
+        });
+        let mcp_json_path = worktree_path.join(".mcp.json");
+        let _ = std::fs::write(
+            &mcp_json_path,
+            serde_json::to_string_pretty(&mcp_config).unwrap_or_default(),
+        );
+    }
+
     // Build claude command
     let mut cmd = std::process::Command::new("claude");
     cmd.arg("-p").arg(&prompt);
@@ -803,6 +832,10 @@ pub fn send_message(
              Your work takes place in: {}\n\
              Target branch: {}\n\
              Base branch: {}\n\
+             You have access to Korlap tools via MCP. Use the rename_branch tool to give your \
+             branch a meaningful name once you understand the task. Use conventional prefixes: \
+             feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
+             If the task scope changes mid-conversation, rename the branch again to reflect the new direction.\n\
              Keep all changes on the target branch. Do not modify other branches.",
             worktree_path.display(),
             ws_branch,
@@ -810,6 +843,10 @@ pub fn send_message(
         );
         cmd.arg("--system-prompt").arg(&system_prompt);
     }
+
+    // Pass MCP env vars so claude can discover the config
+    cmd.env("KORLAP_API_PORT", mcp_api_port.to_string());
+    cmd.env("KORLAP_WORKSPACE_ID", &workspace_id);
 
     cmd.current_dir(&worktree_path);
     cmd.stdout(std::process::Stdio::piped());
@@ -885,7 +922,7 @@ pub fn send_message(
         }
 
         // Clean up state
-        let state: State<'_, Mutex<AppState>> = app_clone.state();
+        let state: State<'_, Arc<Mutex<AppState>>> = app_clone.state();
         if let Ok(mut st) = state.lock() {
             // Wait for child to finish
             if let Some(mut handle) = st.agents.remove(&ws_id) {
@@ -923,7 +960,7 @@ pub fn send_message(
 #[tauri::command]
 pub fn stop_agent(
     workspace_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
     app: AppHandle,
 ) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;

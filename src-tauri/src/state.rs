@@ -49,6 +49,7 @@ pub struct AppState {
     pub agents: HashMap<String, AgentHandle>,
     pub session_ids: HashMap<String, String>,
     pub data_dir: PathBuf,
+    pub mcp_api_port: u16,
 }
 
 impl AppState {

@@ -1,4 +1,5 @@
 mod commands;
+mod mcp_api;
 mod state;
 #[cfg(target_os = "macos")]
 mod traffic;
@@ -36,13 +37,19 @@ pub fn run() {
                 agents: HashMap::new(),
                 session_ids: HashMap::new(),
                 data_dir,
+                mcp_api_port: 0,
             };
 
             if let Err(e) = app_state.load() {
                 tracing::warn!("Failed to load persisted state: {}", e);
             }
 
-            app.manage(Mutex::new(app_state));
+            let state = std::sync::Arc::new(Mutex::new(app_state));
+            let port = mcp_api::start_api(app.handle().clone(), state.clone());
+            state.lock().unwrap().mcp_api_port = port;
+
+            // Tauri commands use State<'_, Arc<Mutex<AppState>>>
+            app.manage(state);
 
             #[cfg(target_os = "macos")]
             {
