@@ -126,7 +126,7 @@
           refreshPrStatus(wsId);
         }
       }
-    }, 5000);
+    }, 15_000);
 
     return () => {
       unlistenFn?.();
@@ -325,6 +325,10 @@
       const files = await getChangedFiles(wsId);
       const adds = files.reduce((s, f) => s + f.additions, 0);
       const dels = files.reduce((s, f) => s + f.deletions, 0);
+      const prev = changeCounts.get(wsId);
+      if (prev && prev.additions === adds && prev.deletions === dels) {
+        return; // No change — skip reactive update
+      }
       changeCounts.set(wsId, { additions: adds, deletions: dels });
       changeCounts = new Map(changeCounts);
     } catch {
@@ -333,9 +337,23 @@
   }
 
   // Refresh PR status (slow, network call — run in background)
+  // Only triggers reactivity when the status actually changed to avoid DOM thrash.
   async function refreshPrStatus(wsId: string) {
     try {
       const pr = await getPrStatus(wsId);
+      const prev = prStatusMap.get(wsId);
+      if (
+        prev &&
+        prev.state === pr.state &&
+        prev.checks === pr.checks &&
+        prev.mergeable === pr.mergeable &&
+        prev.number === pr.number &&
+        prev.additions === pr.additions &&
+        prev.deletions === pr.deletions &&
+        prev.title === pr.title
+      ) {
+        return; // No change — skip reactive update
+      }
       prStatusMap.set(wsId, pr);
       prStatusMap = new Map(prStatusMap);
     } catch {
