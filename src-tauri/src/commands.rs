@@ -728,18 +728,31 @@ pub async fn get_changed_files(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<ChangedFile>, String> {
-    let worktree_path = {
+    let (worktree_path, base_branch) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
-        ws.worktree_path.clone()
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        (ws.worktree_path.clone(), base)
     };
 
     tauri::async_runtime::spawn_blocking(move || {
+        // Find merge-base: the commit where this branch diverged from base
+        let merge_base = std::process::Command::new("git")
+            .args(["merge-base", &base_branch, "HEAD"])
+            .current_dir(&worktree_path)
+            .output()
+            .ok()
+            .and_then(|o| if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else { None })
+            .unwrap_or_else(|| base_branch.clone());
+
         let output = std::process::Command::new("git")
-            .args(["diff", "--numstat", "HEAD"])
+            .args(["diff", "--numstat", &merge_base])
             .current_dir(&worktree_path)
             .output()
             .map_err(|e| format!("Failed to run git diff: {}", e))?;
@@ -807,18 +820,30 @@ pub async fn get_diff(
     file_path: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, String> {
-    let worktree_path = {
+    let (worktree_path, base_branch) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
-        ws.worktree_path.clone()
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        (ws.worktree_path.clone(), base)
     };
 
     tauri::async_runtime::spawn_blocking(move || {
+        let merge_base = std::process::Command::new("git")
+            .args(["merge-base", &base_branch, "HEAD"])
+            .current_dir(&worktree_path)
+            .output()
+            .ok()
+            .and_then(|o| if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else { None })
+            .unwrap_or_else(|| base_branch.clone());
+
         let mut cmd = std::process::Command::new("git");
-        cmd.args(["diff", "HEAD"]);
+        cmd.args(["diff", &merge_base]);
         if let Some(ref fp) = file_path {
             cmd.arg("--").arg(fp);
         }
@@ -865,7 +890,7 @@ pub struct PrStatus {
     pub number: i64,
     pub title: String,
     pub checks: String,        // "pending", "passing", "failing", "none"
-    pub mergeable: bool,
+    pub mergeable: String,       // "mergeable", "conflicting", "unknown"
     pub additions: i64,
     pub deletions: i64,
 }
@@ -903,7 +928,7 @@ pub async fn get_pr_status(
                 number: 0,
                 title: String::new(),
                 checks: "none".into(),
-                mergeable: false,
+                mergeable: "unknown".into(),
                 additions: 0,
                 deletions: 0,
             });
@@ -918,7 +943,7 @@ pub async fn get_pr_status(
         let title = v.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string();
         let additions = v.get("additions").and_then(|n| n.as_i64()).unwrap_or(0);
         let deletions = v.get("deletions").and_then(|n| n.as_i64()).unwrap_or(0);
-        let mergeable = v.get("mergeable").and_then(|s| s.as_str()).unwrap_or("") == "MERGEABLE";
+        let mergeable = v.get("mergeable").and_then(|s| s.as_str()).unwrap_or("UNKNOWN").to_lowercase();
 
         let checks = if let Some(checks_arr) = v.get("statusCheckRollup").and_then(|c| c.as_array()) {
             if checks_arr.is_empty() {

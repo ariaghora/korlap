@@ -23,6 +23,7 @@
   import {
     addUserMessage,
     addAssistantMessage,
+    addActionMessage,
     getMessages,
     loadPersistedMessages,
   } from "$lib/stores/messages.svelte";
@@ -31,11 +32,10 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
-  import ScriptRunner from "$lib/components/ScriptRunner.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
 
-  type PanelTab = "chat" | "diff" | "terminal" | "scripts";
+  type PanelTab = "chat" | "diff" | "terminal";
 
   // ── State ──────────────────────────────────────────────
 
@@ -119,8 +119,18 @@
 
     window.addEventListener("keydown", handleKeydown);
 
+    // Poll PR status every 15s for workspaces that have a PR open
+    const prPollInterval = setInterval(() => {
+      for (const [wsId, pr] of prStatusMap) {
+        if (pr.state === "open") {
+          refreshPrStatus(wsId);
+        }
+      }
+    }, 5000);
+
     return () => {
       unlistenFn?.();
+      clearInterval(prPollInterval);
       window.removeEventListener("keydown", handleKeydown);
     };
   });
@@ -189,13 +199,16 @@
     }
   }
 
-  async function handleSend(prompt: string) {
-    if (!selectedWsId || sendingMap.get(selectedWsId)) return;
-    const wsId = selectedWsId;
+  async function sendPrompt(wsId: string, prompt: string, actionLabel?: string) {
+    if (sendingMap.get(wsId)) return;
     error = "";
     setSending(wsId, true);
 
-    addUserMessage(wsId, crypto.randomUUID(), prompt);
+    if (actionLabel) {
+      addActionMessage(wsId, crypto.randomUUID(), actionLabel);
+    } else {
+      addUserMessage(wsId, crypto.randomUUID(), prompt);
+    }
 
     try {
       await sendMessage(wsId, prompt, (event: AgentEvent) => {
@@ -217,6 +230,8 @@
         } else if (event.type === "done") {
           setSending(wsId, false);
           diffRefreshTrigger++;
+          refreshChangeCounts(wsId);
+          refreshPrStatus(wsId);
           // Refresh workspace list to pick up any branch renames from MCP
           if (activeRepo) {
             listWorkspaces(activeRepo.id)
@@ -232,6 +247,11 @@
       error = String(e);
       setSending(wsId, false);
     }
+  }
+
+  function handleSend(prompt: string) {
+    if (!selectedWsId) return;
+    sendPrompt(selectedWsId, prompt);
   }
 
   async function handleRename(wsId: string, newName: string) {
@@ -252,12 +272,17 @@
     const wsId = selectedWs.id;
     const pr = prStatusMap.get(wsId);
 
-    if (pr && pr.state === "open" && pr.mergeable && pr.checks === "passing") {
-      // Merge
-      handleSend(`Merge PR #${pr.number}. Use \`gh pr merge ${pr.number} --squash --delete-branch\`. If merge fails, explain why.`);
-    } else if (pr && pr.state === "open" && pr.checks === "failing") {
-      // Fix issues
-      handleSend(`PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`);
+    if (pr && pr.state === "open") {
+      if (pr.mergeable === "conflicting") {
+        const baseBranch = activeRepo.default_branch;
+        sendPrompt(wsId, `PR #${pr.number} has merge conflicts with ${baseBranch}.\n\nResolve them:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n5. Push\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving conflicts on PR #${pr.number}`);
+      } else if (pr.checks === "failing") {
+        sendPrompt(wsId, `PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`, `Fixing checks on PR #${pr.number}`);
+      } else {
+        sendPrompt(wsId, `Merge PR #${pr.number}. Use \`gh pr merge ${pr.number} --squash --delete-branch\`. If merge fails, explain why.`, `Merging PR #${pr.number}`);
+      }
+      activeTab = "chat";
+      return;
     } else {
       // Create PR
       const files = await getChangedFiles(wsId).catch(() => []);
@@ -280,7 +305,7 @@
       }
 
       activeTab = "chat";
-      handleSend(prompt);
+      sendPrompt(wsId, prompt, "Creating pull request");
     }
   }
 
@@ -384,7 +409,7 @@
           {@const wsPr = prStatusMap.get(selectedWs.id)}
           <div class="tab-bar">
             <div class="tabs">
-              {#each ["chat", "diff", "terminal", "scripts"] as tab}
+              {#each ["chat", "diff", "terminal"] as tab}
                 <button
                   class="tab"
                   class:active={activeTab === tab}
@@ -404,14 +429,14 @@
               {#if selectedWs.status === "running"}
                 <span class="status-badge running">Running</span>
               {:else if wsPr && wsPr.state === "open"}
-                {#if wsPr.checks === "failing"}
+                {#if wsPr.mergeable === "conflicting"}
+                  <button class="status-badge conflicts" onclick={handlePrAction}>Conflicts</button>
+                {:else if wsPr.checks === "failing"}
                   <button class="status-badge checks-fail" onclick={handlePrAction}>Fix issues</button>
-                {:else if wsPr.mergeable && wsPr.checks === "passing"}
-                  <button class="status-badge mergeable" onclick={handlePrAction}>Merge PR #{wsPr.number}</button>
                 {:else if wsPr.checks === "pending"}
                   <span class="status-badge checks-pending">PR #{wsPr.number} · Checks</span>
                 {:else}
-                  <span class="status-badge pr-open">PR #{wsPr.number}</span>
+                  <button class="status-badge mergeable" onclick={handlePrAction}>Merge #{wsPr.number}</button>
                 {/if}
               {:else if selectedWs.status === "waiting"}
                 <span class="status-badge waiting">Ready</span>
@@ -451,12 +476,6 @@
                   prState={prStatusMap.get(selectedWs.id)?.state}
                   onCreatePr={handlePrAction}
                 />
-              </div>
-            {/if}
-
-            {#if activeTab === "scripts" && selectedWs}
-              <div class="ws-tab-container" style:display="flex">
-                <ScriptRunner workspaceId={selectedWs.id} savedRunScript={repoSettings?.run_script || ""} />
               </div>
             {/if}
 
@@ -764,6 +783,18 @@
 
   .status-badge.checks-fail {
     cursor: pointer;
+  }
+
+  .status-badge.conflicts {
+    color: #c87e7e;
+    border-color: color-mix(in srgb, #c87e7e 40%, transparent);
+    background: color-mix(in srgb, #c87e7e 7%, transparent);
+    cursor: pointer;
+    text-transform: none;
+  }
+
+  .status-badge.conflicts:hover {
+    filter: brightness(1.2);
   }
 
   @keyframes badge-pulse {

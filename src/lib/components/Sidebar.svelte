@@ -60,9 +60,9 @@
           class="ws-dot"
           class:running={ws.status === "running" && (!pr || pr.state === "none")}
           class:waiting={ws.status === "waiting" && (!pr || pr.state === "none")}
-          class:pr-open={pr?.state === "open" && pr?.checks !== "failing"}
-          class:pr-fail={pr?.state === "open" && pr?.checks === "failing"}
-          class:pr-merge={pr?.state === "open" && pr?.mergeable && pr?.checks === "passing"}
+          class:pr-open={pr?.state === "open" && pr?.mergeable !== "conflicting" && pr?.checks !== "failing"}
+          class:pr-fail={pr?.state === "open" && (pr?.checks === "failing" || pr?.mergeable === "conflicting")}
+          class:pr-merge={pr?.state === "open" && pr?.mergeable === "mergeable" && pr?.checks === "passing"}
         ></span>
         {#if editingId === ws.id}
           <!-- svelte-ignore a11y_autofocus -->

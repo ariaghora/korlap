@@ -141,22 +141,6 @@ export async function getDiff(
   return invoke<string>("get_diff", { workspaceId, filePath });
 }
 
-// ── Scripts ─────────────────────────────────────────────────────────
-
-export type ScriptEvent =
-  | { type: "output"; data: string }
-  | { type: "exit"; code: number | null };
-
-export async function runScript(
-  workspaceId: string,
-  command: string,
-  onEvent: (event: ScriptEvent) => void,
-): Promise<void> {
-  const channel = new Channel<ScriptEvent>();
-  channel.onmessage = onEvent;
-  return invoke("run_script", { workspaceId, command, onEvent: channel });
-}
-
 // ── Terminal ─────────────────────────────────────────────────────────
 
 export async function openTerminal(
@@ -186,7 +170,6 @@ export async function resizeTerminal(
 export async function closeTerminal(workspaceId: string): Promise<void> {
   return invoke("close_terminal", { workspaceId });
 }
-
 // ── Messages ────────────────────────────────────────────────────────
 
 export async function saveMessages(
@@ -210,7 +193,7 @@ export interface PrStatus {
   number: number;
   title: string;
   checks: "pending" | "passing" | "failing" | "none";
-  mergeable: boolean;
+  mergeable: "mergeable" | "conflicting" | "unknown";
   additions: number;
   deletions: number;
 }

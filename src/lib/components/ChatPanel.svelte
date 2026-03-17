@@ -77,7 +77,11 @@
         {@const prevRole = i > 0 ? messages[i - 1].role : null}
         {@const showLabel = msg.role === "assistant" && prevRole !== "assistant"}
 
-        {#if msg.role === "user"}
+        {#if msg.role === "action"}
+          <div class="action-msg">
+            <span class="action-indicator">{msg.actionLabel ?? "Action"}</span>
+          </div>
+        {:else if msg.role === "user"}
           <div class="user-msg">
             <div class="user-bubble">
               {#each msg.chunks as chunk}
@@ -182,6 +186,21 @@
   }
 
   /* ── User messages ─────────────────────────── */
+
+  .action-msg {
+    align-self: center;
+    margin: 0.5rem 0;
+  }
+
+  .action-indicator {
+    font-size: 0.72rem;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-weight: 500;
+  }
 
   .user-msg {
     align-self: flex-end;
