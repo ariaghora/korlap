@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getMessages, isSending, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
+  import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
 
   interface Props {
     workspaceId: string;
@@ -11,8 +11,8 @@
 
   let { workspaceId, creating = false, disabled, onSend, onStop }: Props = $props();
 
-  let messages = $derived(getMessages(workspaceId));
-  let sending = $derived(isSending(workspaceId));
+  let messages = $derived(messagesByWorkspace.get(workspaceId) ?? []);
+  let sending = $derived(sendingByWorkspace.get(workspaceId) ?? false);
 
   let userInput = $state("");
   let chatArea: HTMLDivElement | undefined = $state();

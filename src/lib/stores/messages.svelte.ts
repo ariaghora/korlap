@@ -1,4 +1,5 @@
 import { saveMessages, loadMessages } from "$lib/ipc";
+import { SvelteMap } from "svelte/reactivity";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -18,12 +19,8 @@ export interface Message {
 // Keyed by workspaceId → Message[]
 // Each mutation replaces the array reference so Svelte's Map proxy sees a real change.
 
-export const messagesByWorkspace = $state(
-  new Map<string, Message[]>(),
-);
-
-// Per-workspace sending flag — shared so ChatPanel can read it via $derived.
-export const sendingByWorkspace = $state(new Map<string, boolean>());
+export const messagesByWorkspace = new SvelteMap<string, Message[]>();
+export const sendingByWorkspace = new SvelteMap<string, boolean>();
 
 export function setSending(wsId: string, value: boolean) {
   sendingByWorkspace.set(wsId, value);
@@ -129,7 +126,7 @@ export async function loadPersistedMessages(
       lookup.set(msg.id, lookup.size);
     }
     messagesByWorkspace.set(workspaceId, raw);
-  } catch {
+    } catch {
     // No saved messages
   }
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
+  import { SvelteMap } from "svelte/reactivity";
   import {
     addRepo,
     removeRepo,
@@ -52,8 +53,8 @@
   let showSettings = $state(false);
   let creatingWsId = $state<string | null>(null);
   let repoSettings = $state<RepoSettings | null>(null);
-  let prStatusMap = $state(new Map<string, PrStatus>());
-  let changeCounts = $state(new Map<string, { additions: number; deletions: number }>());
+  let prStatusMap = new SvelteMap<string, PrStatus>();
+  let changeCounts = new SvelteMap<string, { additions: number; deletions: number }>();
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
@@ -182,7 +183,7 @@
       repos = repos.filter((r) => r.id !== repoId);
       workspaces = [];
       selectedWsId = null;
-      sendingMap.clear();
+      sendingByWorkspace.clear();
       prStatusMap.clear();
       changeCounts.clear();
       activeRepo = repos.length > 0 ? repos[0] : null;
