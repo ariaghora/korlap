@@ -96,11 +96,21 @@ export async function mockTauriWithRepo(
             };
           case "archive_workspace":
             return null;
+          case "save_messages":
+            return null;
+          case "load_messages":
+            return [];
           case "send_message": {
-            // Simulate agent response via channel
+            // Channel serializes as "__CHANNEL__:<id>" string
             const onEvent = args?.onEvent;
-            if (onEvent && typeof onEvent === "object" && onEvent.id != null) {
-              const cb = channelCallbacks.get(onEvent.id);
+            let channelId: number | null = null;
+            if (typeof onEvent === "string" && onEvent.startsWith("__CHANNEL__:")) {
+              channelId = parseInt(onEvent.split(":")[1], 10);
+            } else if (typeof onEvent === "object" && onEvent != null) {
+              channelId = onEvent.__tauriChannel ?? onEvent.id;
+            }
+            if (channelId != null) {
+              const cb = channelCallbacks.get(channelId);
               if (cb) {
                 setTimeout(() => {
                   cb({

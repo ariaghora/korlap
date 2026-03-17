@@ -265,11 +265,11 @@ fn spawn_agent(ws: &Workspace, app_handle: &AppHandle) -> Result<AgentHandle> {
 
 ### Performance Rules (non-negotiable)
 
-1. **PTY output never touches Svelte state.** xterm.js owns its buffer. Rust → Tauri event → xterm.js directly. No middleman.
-2. **Chat messages use a Map, not an array.** Replacing an array reference triggers a full list re-render. A Map lets you update a single message in isolation.
-3. **The message list is virtualized.** No exceptions. DOM nodes only exist for visible messages.
-4. **Tauri PTY events are batched at the source (Rust).** Emit at ~60fps max, not per read().
-5. **Active workspace switch is O(1).** Just swap `activeId`. No data fetching, no re-initialization. Each workspace's xterm instance stays alive in the background (detached from DOM, not destroyed).
+1. **Chat messages use `Map<string, Map<string, Message>>`.** Updating one message = one reactive cell, not the whole list. Never use arrays for collections that update frequently.
+2. **Keyed `{#each}` blocks everywhere.** Svelte diffs by key — without keys it re-renders the entire list.
+3. **Persistence is debounced.** Messages saved to disk every 500ms, not on every event. Fire-and-forget — never block the UI thread.
+4. **Active workspace switch is O(1).** Just toggle `display:none`. No data fetching, no re-initialization. Each workspace's chat panel stays alive in the DOM.
+5. **All app data in Tauri's app data dir.** Zero writes to the managed repo. No `.korlap/` folder, no gitignore entries.
 
 ---
 
@@ -422,47 +422,17 @@ xterm.js is a black box. We never read from it, only write to it. Its internal c
 <div bind:this={el} class="h-full w-full" />
 ```
 
-### Virtual Message List
+### Message List
 
-Don't reach for a library. The pattern is simple enough to own:
+**No fixed-height virtualization for chat.** Chat messages are variable-height (short replies, code blocks, tool use lists). A fixed `itemHeight` VirtualList breaks layout — `position: relative` + `transform: translateY` kills flexbox alignment needed for user/assistant message positioning.
 
-```svelte
-<!-- VirtualList.svelte — only renders visible rows -->
-<script lang="ts">
-  import { tick } from "svelte";
+The real performance wins for the message list are:
 
-  let { items, itemHeight = 80, renderItem }: {
-      items: Message[];
-      itemHeight: number;
-      renderItem: Snippet<[Message]>;
-  } = $props();
+1. **`Map<string, Message>` not arrays** — updating one message doesn't trigger a full list re-render. Already implemented in `stores/messages.svelte.ts`.
+2. **Keyed `{#each}` blocks** — Svelte only re-renders changed messages via `(msg.id)` keys.
+3. **Debounced persistence** — messages saved to disk at most every 500ms, not per-message.
 
-  let containerHeight = $state(0);
-  let scrollTop = $state(0);
-
-  const start = $derived(Math.max(0, Math.floor(scrollTop / itemHeight) - 5));
-  const end = $derived(Math.min(items.length, Math.ceil((scrollTop + containerHeight) / itemHeight) + 5));
-  const visible = $derived(items.slice(start, end));
-  const totalHeight = $derived(items.length * itemHeight);
-  const offsetY = $derived(start * itemHeight);
-</script>
-
-<div
-  class="overflow-y-auto h-full"
-  bind:clientHeight={containerHeight}
-  onscroll={e => scrollTop = (e.target as HTMLElement).scrollTop}
->
-  <div style="height: {totalHeight}px; position: relative;">
-    <div style="transform: translateY({offsetY}px)">
-      {#each visible as msg (msg.id)}
-        {@render renderItem(msg)}
-      {/each}
-    </div>
-  </div>
-</div>
-```
-
-Note: `itemHeight` being fixed is a simplification. For variable-height messages (code blocks, long text), you'll need a measured-height map. That's an M2 concern — start with a fixed estimate, measure real heights later.
+If message count becomes a bottleneck (hundreds per workspace), implement **measured-height virtualization** — render items, measure with ResizeObserver, cache heights in a Map, then calculate visible window. Not the naive fixed-height approach.
 
 ### Workspace Switching
 

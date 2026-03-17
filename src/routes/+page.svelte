@@ -11,18 +11,19 @@
     type RepoDetail,
     type WorkspaceInfo,
     type AgentEvent,
-    type ToolUseInfo,
   } from "$lib/ipc";
+  import {
+    addUserMessage,
+    addAssistantMessage,
+    getMessages,
+    loadPersistedMessages,
+  } from "$lib/stores/messages.svelte";
   import { onMount } from "svelte";
+  import TitleBar from "$lib/components/TitleBar.svelte";
+  import Sidebar from "$lib/components/Sidebar.svelte";
+  import ChatPanel from "$lib/components/ChatPanel.svelte";
 
-  // ── Types ──────────────────────────────────────────────
-
-  interface ChatMessage {
-    id: string;
-    role: "user" | "assistant";
-    text: string;
-    toolUses?: ToolUseInfo[];
-  }
+  type PanelTab = "chat" | "diff" | "terminal" | "scripts";
 
   // ── State ──────────────────────────────────────────────
 
@@ -31,18 +32,12 @@
   let activeRepo = $state<RepoDetail | null>(null);
   let selectedWsId = $state<string | null>(null);
   let error = $state("");
-  let userInput = $state("");
   let sending = $state(false);
-
-  // Messages per workspace
-  let messagesByWs = $state(new Map<string, ChatMessage[]>());
+  let activeTab = $state<PanelTab>("chat");
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
     workspaces.filter((w) => w.status !== "archived"),
-  );
-  let currentMessages = $derived(
-    selectedWsId ? messagesByWs.get(selectedWsId) ?? [] : [],
   );
 
   // ── Lifecycle ──────────────────────────────────────────
@@ -81,13 +76,6 @@
 
   // ── Handlers ───────────────────────────────────────────
 
-  function addMessage(wsId: string, msg: ChatMessage) {
-    const existing = messagesByWs.get(wsId) ?? [];
-    const updated = new Map(messagesByWs);
-    updated.set(wsId, [...existing, msg]);
-    messagesByWs = updated;
-  }
-
   async function handleOpenRepo() {
     error = "";
     try {
@@ -112,6 +100,12 @@
     error = "";
     try {
       workspaces = await listWorkspaces(repo.id);
+      // Load persisted messages for all non-archived workspaces
+      await Promise.all(
+        workspaces
+          .filter((w) => w.status !== "archived")
+          .map((ws) => loadPersistedMessages(ws.id)),
+      );
     } catch (e) {
       error = String(e);
     }
@@ -124,13 +118,10 @@
       const ws = await createWorkspace(activeRepo.id);
       workspaces = [...workspaces, ws];
       selectedWsId = ws.id;
+      activeTab = "chat";
     } catch (e) {
       error = String(e);
     }
-  }
-
-  function handleSelectWorkspace(wsId: string) {
-    selectedWsId = wsId;
   }
 
   async function handleArchive(wsId: string) {
@@ -146,53 +137,38 @@
     }
   }
 
-  async function handleSend() {
-    if (!selectedWsId || !userInput.trim() || sending) return;
+  async function handleSend(prompt: string) {
+    if (!selectedWsId || sending) return;
     const wsId = selectedWsId;
-    const prompt = userInput.trim();
-    userInput = "";
     error = "";
     sending = true;
 
-    // Add user message
-    addMessage(wsId, {
-      id: crypto.randomUUID(),
-      role: "user",
-      text: prompt,
-    });
+    addUserMessage(wsId, crypto.randomUUID(), prompt);
 
     try {
       await sendMessage(wsId, prompt, (event: AgentEvent) => {
         if (event.type === "assistant_message") {
-          addMessage(wsId, {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            text: event.text.trim(),
-            toolUses: event.tool_uses.length > 0 ? event.tool_uses : undefined,
-          });
+          const toolUses = event.tool_uses.map((t) => ({
+            name: t.name,
+            input: t.input_preview ?? "",
+          }));
+          addAssistantMessage(
+            wsId,
+            crypto.randomUUID(),
+            event.text.trim(),
+            toolUses,
+          );
+        } else if (event.type === "done") {
+          sending = false;
         } else if (event.type === "error") {
           error = event.message;
+          sending = false;
         }
-        // "done" is handled by agent-status event → sets sending = false
       });
     } catch (e) {
       error = String(e);
       sending = false;
     }
-  }
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  }
-
-  function formatToolUse(tool: ToolUseInfo): string {
-    if (tool.input_preview) {
-      return `${tool.name}: ${tool.input_preview}`;
-    }
-    return tool.name;
   }
 </script>
 
@@ -223,23 +199,13 @@
   </div>
 {:else}
   <div class="app">
-    <header class="titlebar" data-tauri-drag-region>
-      <div class="repo-tabs">
-        {#each repos as repo}
-          <button
-            class="repo-tab"
-            class:active={repo.id === activeRepo.id}
-            onclick={() => selectRepo(repo)}
-          >
-            {repo.display_name}
-          </button>
-        {/each}
-        <button class="repo-tab add-tab" onclick={handleOpenRepo}>+</button>
-      </div>
-      <div class="branch-info">
-        {activeRepo.default_branch}
-      </div>
-    </header>
+    <TitleBar
+      {repos}
+      {activeRepo}
+      {selectedWs}
+      onSelectRepo={selectRepo}
+      onAddRepo={handleOpenRepo}
+    />
 
     {#if error}
       <div class="error">
@@ -249,44 +215,36 @@
     {/if}
 
     <div class="main-layout">
-      <aside class="sidebar">
-        <div class="sidebar-header">
-          <span class="sidebar-label">Workspaces</span>
-        </div>
-        <div class="workspace-list">
-          {#each activeWorkspaces as ws}
-            <button
-              class="ws-item"
-              class:active={ws.id === selectedWsId}
-              onclick={() => handleSelectWorkspace(ws.id)}
-            >
-              <span
-                class="ws-dot"
-                class:running={ws.status === "running"}
-                class:waiting={ws.status === "waiting"}
-              ></span>
-              <span class="ws-name">{ws.name}</span>
-              {#if ws.status === "running"}
-                <span class="ws-status">running</span>
-              {/if}
-            </button>
-          {/each}
-        </div>
-        <button class="new-ws-btn" onclick={handleNewWorkspace}>
-          + New workspace
-        </button>
-      </aside>
+      <Sidebar
+        {workspaces}
+        {selectedWsId}
+        onSelect={(wsId) => (selectedWsId = wsId)}
+        onNewWorkspace={handleNewWorkspace}
+      />
 
       <main class="panel">
         {#if selectedWs}
-          <div class="panel-header">
-            <div class="panel-title">
-              <strong>{selectedWs.name}</strong>
-              <span class="panel-branch">{selectedWs.branch}</span>
+          <!-- Tab bar + status badge -->
+          <div class="tab-bar">
+            <div class="tabs">
+              {#each ["chat", "diff", "terminal", "scripts"] as tab}
+                <button
+                  class="tab"
+                  class:active={activeTab === tab}
+                  onclick={() => (activeTab = tab as PanelTab)}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              {/each}
             </div>
-            <div class="panel-actions">
+            <div class="tab-bar-right">
+              {#if selectedWs.status === "running"}
+                <span class="status-badge running">Running</span>
+              {:else if selectedWs.status === "waiting"}
+                <span class="status-badge waiting">Ready</span>
+              {/if}
               <button
-                class="action-btn archive-btn"
+                class="archive-btn"
                 onclick={() => handleArchive(selectedWs!.id)}
               >
                 Archive
@@ -294,55 +252,34 @@
             </div>
           </div>
 
-          <div class="chat-area">
-            {#if currentMessages.length === 0}
-              <div class="chat-empty">
-                <p>Send a message to start the agent.</p>
+          <!-- Tab content: display:none switching preserves scroll + state -->
+          <div class="tab-content">
+            <!-- Chat panels — one per workspace, toggled via display -->
+            {#each activeWorkspaces as ws (ws.id)}
+              <div
+                class="ws-chat-container"
+                style:display={activeTab === "chat" && ws.id === selectedWsId ? "flex" : "none"}
+              >
+                <ChatPanel
+                  messages={getMessages(ws.id)}
+                  sending={sending && ws.id === selectedWsId}
+                  disabled={ws.status === "archived"}
+                  onSend={handleSend}
+                />
               </div>
-            {:else}
-              {#each currentMessages as msg}
-                <div class="chat-msg" class:user={msg.role === "user"}>
-                  {#if msg.role === "assistant"}
-                    <div class="msg-label">Claude</div>
-                  {/if}
-                  {#if msg.text}
-                    <div class="msg-text">{msg.text}</div>
-                  {/if}
-                  {#if msg.toolUses && msg.toolUses.length > 0}
-                    <div class="tool-uses">
-                      {#each msg.toolUses as tool}
-                        <span class="tool-tag">{formatToolUse(tool)}</span>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              {/each}
-              {#if sending}
-                <div class="chat-msg">
-                  <div class="msg-label">Claude</div>
-                  <div class="msg-thinking">Thinking...</div>
-                </div>
-              {/if}
-            {/if}
-          </div>
+            {/each}
 
-          <form
-            class="input-row"
-            onsubmit={(e) => {
-              e.preventDefault();
-              handleSend();
-            }}
-          >
-            <input
-              bind:value={userInput}
-              onkeydown={handleKeydown}
-              placeholder="Ask to make changes, @mention files, run /commands"
-              disabled={selectedWs.status === "archived"}
-            />
-            <button type="submit" class="send-btn" disabled={sending || !userInput.trim()}
-              >Send</button
-            >
-          </form>
+            <!-- Placeholder tabs -->
+            <div class="tab-placeholder" style:display={activeTab === "diff" ? "flex" : "none"}>
+              <p>Diff viewer — coming in M3</p>
+            </div>
+            <div class="tab-placeholder" style:display={activeTab === "terminal" ? "flex" : "none"}>
+              <p>Terminal — coming in M3</p>
+            </div>
+            <div class="tab-placeholder" style:display={activeTab === "scripts" ? "flex" : "none"}>
+              <p>Scripts runner — coming in M3</p>
+            </div>
+          </div>
         {:else}
           <div class="panel-empty">
             <p>Create a workspace to start an agent.</p>
@@ -350,6 +287,7 @@
         {/if}
       </main>
     </div>
+
   </div>
 {/if}
 
@@ -475,171 +413,10 @@
     flex-direction: column;
   }
 
-  .titlebar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.4rem 0.75rem;
-    border-bottom: 1px solid #2a2520;
-    background: #1a1714;
-    -webkit-user-select: none;
-    user-select: none;
-  }
-
-  .repo-tabs {
-    display: flex;
-    gap: 0.25rem;
-    align-items: center;
-  }
-
-  .repo-tab {
-    padding: 0.3rem 0.6rem;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    color: #8a7e6a;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.8rem;
-  }
-
-  .repo-tab:hover {
-    color: #d4c5a9;
-    background: #2a2520;
-  }
-
-  .repo-tab.active {
-    color: #e8dcc8;
-    background: #2a2520;
-    border-color: #3a3530;
-  }
-
-  .add-tab {
-    font-size: 1rem;
-    padding: 0.2rem 0.5rem;
-    color: #6a6050;
-  }
-
-  .branch-info {
-    font-size: 0.75rem;
-    color: #6a6050;
-  }
-
   .main-layout {
     flex: 1;
     display: flex;
     min-height: 0;
-  }
-
-  /* ── Sidebar ─────────────────────────────────────── */
-
-  .sidebar {
-    width: 220px;
-    border-right: 1px solid #2a2520;
-    display: flex;
-    flex-direction: column;
-    background: #16140f;
-  }
-
-  .sidebar-header {
-    padding: 0.6rem 0.75rem 0.3rem;
-  }
-
-  .sidebar-label {
-    font-size: 0.7rem;
-    color: #6a6050;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .workspace-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.25rem;
-  }
-
-  .ws-item {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.45rem 0.5rem;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    color: #d4c5a9;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.82rem;
-    text-align: left;
-  }
-
-  .ws-item:hover {
-    background: #1e1b17;
-  }
-
-  .ws-item.active {
-    background: #2a2520;
-    border-color: #3a3530;
-  }
-
-  .ws-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: #3a3530;
-  }
-
-  .ws-dot.running {
-    background: #c8a97e;
-    box-shadow: 0 0 6px #c8a97e88;
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  .ws-dot.waiting {
-    background: #7e9e6b;
-  }
-
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
-  }
-
-  .ws-status {
-    font-size: 0.65rem;
-    color: #c8a97e;
-    margin-left: auto;
-  }
-
-  .ws-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .new-ws-btn {
-    margin: 0.5rem;
-    padding: 0.4rem;
-    background: transparent;
-    border: 1px dashed #3a3530;
-    border-radius: 4px;
-    color: #6a6050;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.8rem;
-  }
-
-  .new-ws-btn:hover {
-    color: #c8a97e;
-    border-color: #c8a97e;
-    background: #1e1b17;
   }
 
   /* ── Main panel ──────────────────────────────────── */
@@ -651,172 +428,6 @@
     min-width: 0;
   }
 
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid #2a2520;
-  }
-
-  .panel-title strong {
-    color: #e8dcc8;
-    font-size: 0.9rem;
-  }
-
-  .panel-branch {
-    margin-left: 0.5rem;
-    font-size: 0.75rem;
-    color: #6a6050;
-  }
-
-  .panel-actions {
-    display: flex;
-    gap: 0.35rem;
-  }
-
-  .action-btn {
-    padding: 0.25rem 0.6rem;
-    background: transparent;
-    border: 1px solid #3a3530;
-    border-radius: 4px;
-    color: #8a7e6a;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.78rem;
-  }
-
-  .action-btn:hover {
-    color: #d4c5a9;
-    background: #2a2520;
-  }
-
-  /* ── Chat area ──────────────────────────────────── */
-
-  .chat-area {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .chat-empty {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #6a6050;
-    font-size: 0.85rem;
-  }
-
-  .chat-msg {
-    max-width: 85%;
-  }
-
-  .chat-msg.user {
-    align-self: flex-end;
-  }
-
-  .chat-msg.user .msg-text {
-    background: #2a2520;
-    border: 1px solid #3a3530;
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-    color: #e8dcc8;
-  }
-
-  .msg-label {
-    font-size: 0.7rem;
-    color: #6a6050;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    margin-bottom: 0.25rem;
-  }
-
-  .msg-text {
-    font-size: 0.85rem;
-    line-height: 1.5;
-    color: #d4c5a9;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .msg-thinking {
-    font-size: 0.85rem;
-    color: #c8a97e;
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  .tool-uses {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    margin-top: 0.4rem;
-  }
-
-  .tool-tag {
-    display: inline-block;
-    padding: 0.2rem 0.5rem;
-    background: #1e1b17;
-    border: 1px solid #2e2a24;
-    border-radius: 4px;
-    font-size: 0.72rem;
-    color: #8a7e6a;
-    font-family: "SF Mono", "Fira Code", monospace;
-  }
-
-  /* ── Input row ──────────────────────────────────── */
-
-  .input-row {
-    display: flex;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    border-top: 1px solid #2a2520;
-  }
-
-  .input-row input {
-    flex: 1;
-    background: #1e1b17;
-    border: 1px solid #2e2a24;
-    color: #d4c5a9;
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
-    font-family: inherit;
-    font-size: 0.85rem;
-  }
-
-  .input-row input:focus {
-    outline: none;
-    border-color: #c8a97e;
-  }
-
-  .input-row input:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-
-  .send-btn {
-    padding: 0.5rem 1rem;
-    background: #2a2520;
-    border: 1px solid #3a3530;
-    color: #d4c5a9;
-    border-radius: 6px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.85rem;
-  }
-
-  .send-btn:hover:not(:disabled) {
-    background: #3a3530;
-  }
-
-  .send-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-
   .panel-empty {
     flex: 1;
     display: flex;
@@ -825,6 +436,122 @@
     color: #6a6050;
     font-size: 0.85rem;
   }
+
+  /* ── Tab bar ───────────────────────────────────── */
+
+  .tab-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0.75rem;
+    height: 36px;
+    border-bottom: 1px solid #2a2520;
+    background: #16140f;
+    flex-shrink: 0;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 0;
+  }
+
+  .tab {
+    padding: 0.4rem 0.75rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: #6a6050;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: color 0.15s;
+  }
+
+  .tab:hover {
+    color: #d4c5a9;
+  }
+
+  .tab.active {
+    color: #e8dcc8;
+    border-bottom-color: #c8a97e;
+  }
+
+  .tab-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .status-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+  }
+
+  .status-badge.running {
+    color: #c8a97e;
+    border: 1px solid #c8a97e44;
+    animation: badge-pulse 2s ease-in-out infinite;
+  }
+
+  .status-badge.waiting {
+    color: #7e9e6b;
+    border: 1px solid #7e9e6b44;
+  }
+
+  @keyframes badge-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.6;
+    }
+  }
+
+  .archive-btn {
+    padding: 0.2rem 0.5rem;
+    background: transparent;
+    border: 1px solid #3a3530;
+    border-radius: 4px;
+    color: #6a6050;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.72rem;
+  }
+
+  .archive-btn:hover {
+    color: #d4c5a9;
+    background: #2a2520;
+  }
+
+  /* ── Tab content ──────────────────────────────────── */
+
+  .tab-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .ws-chat-container {
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .tab-placeholder {
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    color: #4a4540;
+    font-size: 0.85rem;
+  }
+
+  /* ── Error ──────────────────────────────────────── */
 
   .error {
     background: #3a1a1a;

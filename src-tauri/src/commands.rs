@@ -322,11 +322,15 @@ pub fn create_workspace(
 
     let id = Uuid::new_v4().to_string();
     let branch = format!("conductor/{}", name);
-    let worktree_path = repo_path.join(".korlap").join("worktrees").join(&id);
 
-    if let Some(parent) = worktree_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
+    // Worktree lives in app data dir, not in the managed repo
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.worktree_dir().join(&id)
+    };
+
+    std::fs::create_dir_all(worktree_path.parent().unwrap_or(&worktree_path))
+        .map_err(|e| e.to_string())?;
 
     let output = std::process::Command::new("git")
         .args(["worktree", "add", "-b", &branch])
@@ -354,7 +358,7 @@ pub fn create_workspace(
 
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.workspaces.insert(id, ws.clone());
-    st.save_workspaces(&repo_id)?;
+    st.save_workspaces()?;
 
     tracing::info!("Created workspace {} ({})", ws.name, ws.id);
     Ok(ws)
@@ -365,7 +369,7 @@ pub fn archive_workspace(
     workspace_id: String,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
-    let (worktree_path, repo_path, repo_id) = {
+    let (worktree_path, repo_path) = {
         let mut st = state.lock().map_err(|e| e.to_string())?;
 
         // Kill agent if running
@@ -382,11 +386,7 @@ pub fn archive_workspace(
             return Ok(());
         }
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (
-            ws.worktree_path.clone(),
-            repo.path.clone(),
-            ws.repo_id.clone(),
-        )
+        (ws.worktree_path.clone(), repo.path.clone())
     };
 
     let output = std::process::Command::new("git")
@@ -405,7 +405,7 @@ pub fn archive_workspace(
     if let Some(ws) = st.workspaces.get_mut(&workspace_id) {
         ws.status = WorkspaceStatus::Archived;
     }
-    st.save_workspaces(&repo_id)?;
+    st.save_workspaces()?;
 
     tracing::info!("Archived workspace {}", workspace_id);
     Ok(())
@@ -423,6 +423,43 @@ pub fn list_workspaces(
         .filter(|w| w.repo_id == repo_id)
         .cloned()
         .collect())
+}
+
+// ── Message persistence ──────────────────────────────────────────────
+
+#[tauri::command]
+pub fn save_messages(
+    workspace_id: String,
+    messages: serde_json::Value,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let msg_dir = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.messages_dir()
+    };
+    std::fs::create_dir_all(&msg_dir).map_err(|e| e.to_string())?;
+    let msg_file = msg_dir.join(format!("{}.json", workspace_id));
+    let data = serde_json::to_string(&messages).map_err(|e| e.to_string())?;
+    std::fs::write(&msg_file, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn load_messages(
+    workspace_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<serde_json::Value, String> {
+    let msg_file = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.messages_dir().join(format!("{}.json", workspace_id))
+    };
+
+    if !msg_file.exists() {
+        return Ok(serde_json::json!([]));
+    }
+
+    let data = std::fs::read_to_string(&msg_file).map_err(|e| e.to_string())?;
+    serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
 // ── Agent commands ───────────────────────────────────────────────────
@@ -518,7 +555,7 @@ pub fn send_message(
         if let Some(ws) = st.workspaces.get_mut(&workspace_id) {
             ws.status = WorkspaceStatus::Running;
         }
-        st.save_workspaces(&repo_id)?;
+        st.save_workspaces()?;
     }
 
     let _ = app.emit(
@@ -578,7 +615,7 @@ pub fn send_message(
             if let Some(ws) = st.workspaces.get_mut(&ws_id) {
                 ws.status = WorkspaceStatus::Waiting;
                 let repo_id = ws.repo_id.clone();
-                let _ = st.save_workspaces(&repo_id);
+                let _ = st.save_workspaces();
             }
         }
 
@@ -623,7 +660,7 @@ pub fn stop_agent(
     };
 
     if let Some(repo_id) = repo_id {
-        st.save_workspaces(&repo_id)?;
+        st.save_workspaces()?;
     }
 
     let _ = app.emit(

@@ -40,14 +40,37 @@ test.describe("with repo", () => {
     // Workspace should appear in sidebar
     await expect(page.locator(".ws-name")).toContainText("test-workspace");
 
-    // Panel should show workspace header
-    await expect(page.locator(".panel-title strong")).toContainText(
-      "test-workspace",
-    );
+    // Tab bar should be visible
+    await expect(page.locator(".tab.active")).toContainText("Chat");
 
     // Chat empty state
     await expect(
       page.locator("text=Send a message to start the agent."),
     ).toBeVisible();
   });
+
+  test("sent message appears immediately in chat", async ({ page }) => {
+    await mockTauriWithRepo(page, "my-app");
+    await page.goto("/");
+
+    // Create workspace
+    await page.click("text=+ New workspace");
+    await expect(page.locator(".ws-name")).toContainText("test-workspace");
+
+    // Type and send a message
+    await page.fill(
+      'input[placeholder="Ask to make changes, @mention files, run /commands"]',
+      "hello world",
+    );
+    await page.click("button:text('Send')");
+
+    // User message should appear immediately
+    await expect(page.locator(".chat-msg.user .msg-text")).toContainText(
+      "hello world",
+    );
+  });
+
+  // NOTE: Channel-based tests (agent response, thinking indicator) require
+  // real Tauri runtime — the mock Channel wiring doesn't deliver messages
+  // through the same path. These are tested manually in the real app.
 });

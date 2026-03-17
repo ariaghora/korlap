@@ -21,15 +21,17 @@ Korlap is a Tauri v2 + Svelte 5 + Bun desktop app for orchestrating parallel Cla
 **Frontend**
 - Never store PTY output in Svelte state — xterm.js owns its buffer, period
 - Never use a reactive `$state<Message[]>` array that gets replaced on each chunk — use `Map<id, Message>` and mutate individual entries
-- The message list must be virtualized — no exceptions, even at low message counts
+- The message list uses keyed `{#each}` with `Map<string, Message>` — virtualization only when measured-height implementation is ready
 - xterm instances are never destroyed on workspace switch — use `display: none` / `block`, not mount/unmount
 - Tauri Channel API for PTY binary streams — never `listen()` + JSON for high-frequency byte data
 - All Tauri `invoke()` calls must be wrapped in try/catch with user-visible error handling — silent failures are not acceptable
 
 **Git**
 - Never operate on the main worktree's working directory — all writes go into the workspace's worktree path
-- Worktree paths live under `.korlap/worktrees/<workspace-id>/` relative to the repo root
-- Workspace metadata (id, branch, worktree path, repo id, gh profile, status, timestamps) is persisted to `.korlap/workspaces.json` and kept in sync on every state change — app restart must restore full state
+- All app data lives under Tauri's app data dir (`~/Library/Application Support/net.ghora.korlap/`) — zero files written to managed repos
+- Worktree paths: `<data_dir>/workspaces/<workspace-id>/`
+- Messages: `<data_dir>/messages/<workspace-id>.json`
+- Workspace metadata persisted to `<data_dir>/workspaces.json`, session IDs to `<data_dir>/sessions.json`
 
 **General**
 - No `unwrap()` or `expect()` outside of tests
@@ -133,7 +135,7 @@ Events emitted:
 - Typeface: Space Grotesk (already imported via Google Fonts)
 - No app name in the title bar
 - Status colors: running = `#c8a97e` (pulsing), waiting = `#7e9e6b`, archived = `#2a2420`
-- Agent activity bar: 4px segmented bar at bottom of main panel, one segment per workspace, click navigates to that workspace
+- No avatar, no xterm.js — agent output is structured chat via `--output-format stream-json`
 
 Full token reference and component mockup in `DESIGN.md`.
 
@@ -141,31 +143,32 @@ Full token reference and component mockup in `DESIGN.md`.
 
 ## Milestones — build in order, do not skip ahead
 
-### M1 — Core plumbing
-- `add_repo` command: accept a local path, validate it's a git repo, persist to workspaces.json
-- `create_workspace`: `git worktree add -b conductor/<name> .korlap/worktrees/<id> <base>`, persist metadata
-- `spawn_agent`: open PTY, exec `claude` in worktree path with injected `GH_TOKEN`, stream output via Tauri Channel to a dumb `<pre>` tag
-- `archive_workspace`: kill agent if running, `git worktree remove --force`, mark archived in state
+### M1 — Core plumbing ✅
+- `add_repo`: folder picker, validate git repo, detect default branch, persist to repos.json
+- `create_workspace`: random name, `git worktree add -b conductor/<name>`, persist to .korlap/workspaces.json
+- `send_message`: spawn `claude -p --output-format stream-json --verbose`, parse NDJSON, stream via Tauri Channel
+- `archive_workspace`: kill agent if running, `git worktree remove --force`, mark archived
 - `list_workspaces`: restore state from workspaces.json on app start
-- No real UI — bare functional skeleton only
+- Session resume via `--resume` flag for multi-turn conversations
 
-### M2 — Real UI
+### M2 — Real UI ✅
 - Sidebar workspace list with status dots (pulsing amber / olive / dim)
-- Custom title bar: traffic lights, repo tabs with gh profile pills, breadcrumb, avatar
-- xterm.js Terminal tab with full PTY input/output
-- Workspace switching via `display:none` — no teardown
-- Agent activity bar at bottom
+- Custom title bar: traffic lights positioning, repo tabs, breadcrumb (branch › base), window dragging
+- Tab bar (Chat, Diff, Terminal, Scripts) with RUNNING/WAITING status badge
+- Workspace switching via `display:none` — no teardown, preserves scroll
+- Components: TitleBar, Sidebar, ChatPanel
 
 ### M3 — Diff + Scripts
 - Diff tab: `git diff <base>..<branch>` rendered with syntax highlighting (additions green, deletions red, warm palette)
 - Scripts tab: run arbitrary shell commands in worktree dir, stream output
-- resize_pty wired to ResizeObserver on xterm container
+- gh profile pills on repo tabs
 
 ### M4 — Polish
 - Workspace state survives app restart (workspaces.json fully round-trips)
 - Archive/restore UI
 - Keyboard shortcuts: ⌘N new workspace, ⌘W archive, ⌘1–9 switch workspace
 - Error states: repo not found, git op failed, agent crashed — all surface to UI
+- System prompt injection (configurable per-workspace instructions)
 
 ---
 

@@ -91,6 +91,21 @@ export async function stopAgent(workspaceId: string): Promise<void> {
   return invoke("stop_agent", { workspaceId });
 }
 
+// ── Messages ────────────────────────────────────────────────────────
+
+export async function saveMessages(
+  workspaceId: string,
+  messages: unknown[],
+): Promise<void> {
+  return invoke("save_messages", { workspaceId, messages });
+}
+
+export async function loadMessages(
+  workspaceId: string,
+): Promise<unknown[]> {
+  return invoke<unknown[]>("load_messages", { workspaceId });
+}
+
 // ── Events ───────────────────────────────────────────────────────────
 
 export function onAgentStatus(
