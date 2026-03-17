@@ -15,28 +15,45 @@ export interface Message {
 }
 
 // ── State ──────────────────────────────────────────────────────────
-// Keyed by workspaceId → Map<messageId, Message>
-// Updating one message = one reactive cell, not the whole list.
+// Keyed by workspaceId → Message[]
+// Each mutation replaces the array reference so Svelte's Map proxy sees a real change.
 
 export const messagesByWorkspace = $state(
-  new Map<string, Map<string, Message>>(),
+  new Map<string, Message[]>(),
 );
+
+// Per-workspace sending flag — shared so ChatPanel can read it via $derived.
+export const sendingByWorkspace = $state(new Map<string, boolean>());
+
+export function setSending(wsId: string, value: boolean) {
+  sendingByWorkspace.set(wsId, value);
+}
+
+export function isSending(wsId: string): boolean {
+  return sendingByWorkspace.get(wsId) ?? false;
+}
+
+// Internal lookup maps for O(1) dedup/update (plain JS, not reactive).
+const _lookups = new Map<string, Map<string, number>>();
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function ensureWorkspace(workspaceId: string): Map<string, Message> {
-  let msgs = messagesByWorkspace.get(workspaceId);
-  if (!msgs) {
-    msgs = new Map<string, Message>();
-    messagesByWorkspace.set(workspaceId, msgs);
+function ensureLookup(workspaceId: string): Map<string, number> {
+  let lookup = _lookups.get(workspaceId);
+  if (!lookup) {
+    lookup = new Map();
+    _lookups.set(workspaceId, lookup);
   }
-  return msgs;
+  return lookup;
 }
 
-/** Notify Svelte that messages changed — only bumps the affected workspace's counter */
-function notifyChange(workspaceId: string, msgs: Map<string, Message>) {
-  messagesByWorkspace.set(workspaceId, msgs);
-  _versions.set(workspaceId, (_versions.get(workspaceId) ?? 0) + 1);
+/** Push a message and replace the array reference so the $state proxy signals a change. */
+function pushMessage(workspaceId: string, msg: Message) {
+  const arr = messagesByWorkspace.get(workspaceId) ?? [];
+  const lookup = ensureLookup(workspaceId);
+  const newArr = [...arr, msg];
+  lookup.set(msg.id, newArr.length - 1);
+  messagesByWorkspace.set(workspaceId, newArr);
 }
 
 /** Add a complete user message */
@@ -45,14 +62,12 @@ export function addUserMessage(
   id: string,
   text: string,
 ) {
-  const msgs = ensureWorkspace(workspaceId);
-  msgs.set(id, {
+  pushMessage(workspaceId, {
     id,
     role: "user",
     chunks: [{ type: "text", content: text }],
     done: true,
   });
-  notifyChange(workspaceId, msgs);
   persistMessages(workspaceId);
 }
 
@@ -62,15 +77,13 @@ export function addActionMessage(
   id: string,
   label: string,
 ) {
-  const msgs = ensureWorkspace(workspaceId);
-  msgs.set(id, {
+  pushMessage(workspaceId, {
     id,
     role: "action",
     chunks: [],
     done: true,
     actionLabel: label,
   });
-  notifyChange(workspaceId, msgs);
   persistMessages(workspaceId);
 }
 
@@ -81,7 +94,6 @@ export function addAssistantMessage(
   text: string,
   toolUses: { name: string; input: string; filePath?: string }[],
 ) {
-  const msgs = ensureWorkspace(workspaceId);
   const chunks: MessageChunk[] = [];
   if (text) {
     chunks.push({ type: "text", content: text });
@@ -89,36 +101,20 @@ export function addAssistantMessage(
   for (const tool of toolUses) {
     chunks.push({ type: "tool", name: tool.name, input: tool.input, filePath: tool.filePath });
   }
-  msgs.set(id, {
+  pushMessage(workspaceId, {
     id,
     role: "assistant",
     chunks,
     done: true,
   });
-  notifyChange(workspaceId, msgs);
   persistMessages(workspaceId);
 }
 
-/** Per-workspace reactive counters — only the affected workspace re-evaluates */
-const _versions = $state(new Map<string, number>());
-
-// Memoization cache (plain JS, not reactive).
-// Returns the same array reference when content hasn't changed,
-// so downstream components see no prop change and skip re-rendering.
-const _msgCache = new Map<string, { version: number; array: Message[] }>();
 const EMPTY_MESSAGES: Message[] = [];
 
-/** Get ordered messages for a workspace */
+/** Get messages for a workspace — reads directly from the $state Map. */
 export function getMessages(workspaceId: string): Message[] {
-  // Read this workspace's version counter to create a scoped reactive dependency.
-  const version = _versions.get(workspaceId) ?? 0;
-  const cached = _msgCache.get(workspaceId);
-  if (cached && cached.version === version) return cached.array;
-  const msgs = messagesByWorkspace.get(workspaceId);
-  if (!msgs || msgs.size === 0) return EMPTY_MESSAGES;
-  const array = [...msgs.values()];
-  _msgCache.set(workspaceId, { version, array });
-  return array;
+  return messagesByWorkspace.get(workspaceId) ?? EMPTY_MESSAGES;
 }
 
 /** Load persisted messages from disk */
@@ -128,11 +124,11 @@ export async function loadPersistedMessages(
   try {
     const raw = (await loadMessages(workspaceId)) as Message[];
     if (raw.length === 0) return;
-    const msgs = ensureWorkspace(workspaceId);
+    const lookup = ensureLookup(workspaceId);
     for (const msg of raw) {
-      msgs.set(msg.id, msg);
+      lookup.set(msg.id, lookup.size);
     }
-    notifyChange(workspaceId, msgs);
+    messagesByWorkspace.set(workspaceId, raw);
   } catch {
     // No saved messages
   }
@@ -151,8 +147,7 @@ function persistMessages(workspaceId: string) {
       pendingSaves.delete(workspaceId);
       const msgs = messagesByWorkspace.get(workspaceId);
       if (!msgs) return;
-      const arr = [...msgs.values()];
-      saveMessages(workspaceId, arr).catch(() => {});
+      saveMessages(workspaceId, msgs).catch(() => {});
     }, 500),
   );
 }
@@ -166,8 +161,7 @@ export function flushPersist(workspaceId: string) {
   }
   const msgs = messagesByWorkspace.get(workspaceId);
   if (!msgs) return;
-  const arr = [...msgs.values()];
-  saveMessages(workspaceId, arr).catch(() => {});
+  saveMessages(workspaceId, msgs).catch(() => {});
 }
 
 /** Remove all in-memory state for a workspace (call on archive) */
@@ -176,6 +170,5 @@ export function clearWorkspaceData(workspaceId: string) {
   if (pending) clearTimeout(pending);
   pendingSaves.delete(workspaceId);
   messagesByWorkspace.delete(workspaceId);
-  _versions.delete(workspaceId);
-  _msgCache.delete(workspaceId);
+  _lookups.delete(workspaceId);
 }

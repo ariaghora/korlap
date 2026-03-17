@@ -1,16 +1,18 @@
 <script lang="ts">
-  import type { Message, MessageChunk } from "$lib/stores/messages.svelte";
+  import { getMessages, isSending, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
 
   interface Props {
-    messages: Message[];
-    sending: boolean;
+    workspaceId: string;
     creating?: boolean;
     disabled: boolean;
     onSend: (prompt: string) => void;
     onStop: () => void;
   }
 
-  let { messages, sending, creating = false, disabled, onSend, onStop }: Props = $props();
+  let { workspaceId, creating = false, disabled, onSend, onStop }: Props = $props();
+
+  let messages = $derived(getMessages(workspaceId));
+  let sending = $derived(isSending(workspaceId));
 
   let userInput = $state("");
   let chatArea: HTMLDivElement | undefined = $state();
