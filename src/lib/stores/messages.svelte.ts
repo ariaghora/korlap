@@ -8,9 +8,10 @@ export type MessageChunk =
 
 export interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "action";
   chunks: MessageChunk[];
   done: boolean;
+  actionLabel?: string; // compact label for action messages (e.g. "Creating PR", "Merging")
 }
 
 // ── State ──────────────────────────────────────────────────────────
@@ -50,6 +51,24 @@ export function addUserMessage(
     role: "user",
     chunks: [{ type: "text", content: text }],
     done: true,
+  });
+  notifyChange(workspaceId, msgs);
+  persistMessages(workspaceId);
+}
+
+/** Add a system action message (displayed as compact indicator, not full bubble) */
+export function addActionMessage(
+  workspaceId: string,
+  id: string,
+  label: string,
+) {
+  const msgs = ensureWorkspace(workspaceId);
+  msgs.set(id, {
+    id,
+    role: "action",
+    chunks: [],
+    done: true,
+    actionLabel: label,
   });
   notifyChange(workspaceId, msgs);
   persistMessages(workspaceId);

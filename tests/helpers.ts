@@ -41,7 +41,7 @@ export async function mockTauri(
           case "save_repo_settings":
             return null;
           case "get_pr_status":
-            return { state: "none", url: "", number: 0, title: "", checks: "none", mergeable: false, additions: 0, deletions: 0 };
+            return { state: "none", url: "", number: 0, title: "", checks: "none", mergeable: "unknown", additions: 0, deletions: 0 };
           case "get_pr_template":
             return "";
           case "list_gh_profiles":
@@ -142,7 +142,7 @@ export async function mockTauriWithRepo(
           case "save_repo_settings":
             return null;
           case "get_pr_status":
-            return { state: "none", url: "", number: 0, title: "", checks: "none", mergeable: false, additions: 0, deletions: 0 };
+            return { state: "none", url: "", number: 0, title: "", checks: "none", mergeable: "unknown", additions: 0, deletions: 0 };
           case "get_pr_template":
             return "";
           case "list_gh_profiles":

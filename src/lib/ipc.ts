@@ -193,7 +193,7 @@ export interface PrStatus {
   number: number;
   title: string;
   checks: "pending" | "passing" | "failing" | "none";
-  mergeable: boolean;
+  mergeable: "mergeable" | "conflicting" | "unknown";
   additions: number;
   deletions: number;
 }
