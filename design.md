@@ -13,7 +13,7 @@
 | Token | Hex | Usage |
 |-------|-----|-------|
 | `bg-sidebar` | `#0f0d0a` | Sidebar, deepest layer |
-| `bg-base` | `#13110e` | Main panel background |
+| `bg-base` | `#12110e` | Main panel background, body |
 | `bg-titlebar` | `#1a1611` | Title bar, tab bar |
 | `bg-card` | `#1a1814` | Assistant message cards, input fields |
 | `bg-hover` | `#1e1b17` | Hover states |

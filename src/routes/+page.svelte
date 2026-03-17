@@ -317,7 +317,7 @@
 <style>
   :global(body) {
     margin: 0;
-    background: #13110e;
+    background: #12110e;
     color: #d4c5a9;
     font-family: "Space Grotesk", system-ui, sans-serif;
     font-size: 14px;
