@@ -73,7 +73,7 @@
     padding: 0 0.75rem;
     height: 40px;
     border-bottom: 1px solid #2a2520;
-    background: #1a1714;
+    background: #1a1611;
     -webkit-user-select: none;
     user-select: none;
     cursor: default;
