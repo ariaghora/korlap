@@ -30,6 +30,33 @@
     }
   });
 
+  // Files touched in the latest agent turn (after last user message)
+  let recentFiles = $derived.by(() => {
+    const files = new Map<string, { adds: number; dels: number }>();
+    // Walk backwards from end, collect tool chunks until we hit a user message
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "user") break;
+      for (const chunk of msg.chunks) {
+        if (chunk.type === "tool") {
+          // Extract file path from tool input
+          const input = chunk.input;
+          if (input) {
+            // Input is typically a file path or "command" — extract meaningful path
+            const path = input.replace(/^["']|["']$/g, "");
+            if (path && !path.includes(" ") && path.includes("/") || path.includes(".")) {
+              const name = path.split("/").pop() ?? path;
+              if (!files.has(name)) {
+                files.set(name, { adds: 0, dels: 0 });
+              }
+            }
+          }
+        }
+      }
+    }
+    return [...files.keys()];
+  });
+
   function handleSubmit() {
     if (!userInput.trim() || sending || disabled) return;
     const prompt = userInput.trim();
@@ -98,6 +125,14 @@
       {/if}
     {/if}
   </div>
+
+  {#if recentFiles.length > 0}
+    <div class="recent-files">
+      {#each recentFiles as file}
+        <span class="file-pill">{file}</span>
+      {/each}
+    </div>
+  {/if}
 
   <form
     class="input-row"
@@ -241,6 +276,29 @@
     50% {
       opacity: 0.5;
     }
+  }
+
+  /* ── Recent files ───────────────────────────── */
+
+  .recent-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0.4rem 1rem;
+    border-top: 1px solid #2a2520;
+  }
+
+  .file-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.55rem;
+    background: #1a1814;
+    border: 1px solid #2e2a24;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    color: #8a7e6a;
+    font-family: "SF Mono", "Fira Code", monospace;
   }
 
   /* ── Input ─────────────────────────────────── */
