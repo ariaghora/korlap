@@ -209,21 +209,25 @@
     });
   }
 
-  async function handleArchive(wsId: string) {
+  function handleArchive(wsId: string) {
     error = "";
-    try {
-      await archiveWorkspace(wsId);
-      const archIdx = workspaces.findIndex((w) => w.id === wsId);
-      if (archIdx >= 0) workspaces.splice(archIdx, 1);
-      if (selectedWsId === wsId) selectedWsId = null;
-      if (creatingWsId === wsId) creatingWsId = null;
-      clearWorkspaceData(wsId);
-      sendingMap.delete(wsId);
-      prStatusMap.delete(wsId);
-      changeCounts.delete(wsId);
-    } catch (e) {
+
+    // Optimistic: remove from UI immediately
+    const archIdx = workspaces.findIndex((w) => w.id === wsId);
+    const removed = archIdx >= 0 ? workspaces[archIdx] : null;
+    if (archIdx >= 0) workspaces.splice(archIdx, 1);
+    if (selectedWsId === wsId) selectedWsId = null;
+    if (creatingWsId === wsId) creatingWsId = null;
+    clearWorkspaceData(wsId);
+    sendingMap.delete(wsId);
+    prStatusMap.delete(wsId);
+    changeCounts.delete(wsId);
+
+    archiveWorkspace(wsId).catch((e) => {
+      // Restore on failure
+      if (removed) workspaces.push(removed);
       error = String(e);
-    }
+    });
   }
 
   async function sendPrompt(wsId: string, prompt: string, actionLabel?: string) {
