@@ -107,6 +107,18 @@
         {/if}
       {/each}
 
+      <!-- File pills after last assistant turn -->
+      {#if recentFiles.length > 0 && !sending}
+        <div class="file-pills-row">
+          {#each recentFiles as file}
+            <span class="file-pill">
+              <span class="file-pill-icon">∞</span>
+              {file}
+            </span>
+          {/each}
+        </div>
+      {/if}
+
       {#if sending}
         {@const lastRole = messages.length > 0 ? messages[messages.length - 1].role : null}
         {#if lastRole !== "assistant"}
@@ -118,14 +130,6 @@
       {/if}
     {/if}
   </div>
-
-  {#if recentFiles.length > 0}
-    <div class="recent-files">
-      {#each recentFiles as file}
-        <span class="file-pill">{file}</span>
-      {/each}
-    </div>
-  {/if}
 
   <form
     class="input-row"
@@ -271,27 +275,31 @@
     }
   }
 
-  /* ── Recent files ───────────────────────────── */
+  /* ── File pills (inline in chat) ─────────────── */
 
-  .recent-files {
+  .file-pills-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.3rem;
-    padding: 0.4rem 1rem;
-    border-top: 1px solid #2a2520;
+    gap: 0.35rem;
+    padding: 0.2rem 0;
   }
 
   .file-pill {
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.2rem 0.55rem;
+    gap: 0.3rem;
+    padding: 0.2rem 0.6rem;
     background: #1a1814;
     border: 1px solid #2e2a24;
-    border-radius: 12px;
-    font-size: 0.72rem;
+    border-radius: 14px;
+    font-size: 0.73rem;
     color: #8a7e6a;
     font-family: "SF Mono", "Fira Code", monospace;
+  }
+
+  .file-pill-icon {
+    font-size: 0.8rem;
+    opacity: 0.5;
   }
 
   /* ── Input ─────────────────────────────────── */
