@@ -175,11 +175,32 @@
     }
   }
 
+  // Track first prompt per workspace for auto-rename
+  const firstPrompts = new Map<string, string>();
+
+  function slugify(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .slice(0, 28);
+  }
+
+  function isRandomName(name: string): boolean {
+    return /^[a-z]+-[a-z]+$/.test(name);
+  }
+
   async function handleSend(prompt: string) {
     if (!selectedWsId || sendingMap.get(selectedWsId)) return;
     const wsId = selectedWsId;
     error = "";
     setSending(wsId, true);
+
+    // Remember first prompt for auto-rename
+    if (!firstPrompts.has(wsId)) {
+      firstPrompts.set(wsId, prompt);
+    }
 
     addUserMessage(wsId, crypto.randomUUID(), prompt);
 
@@ -203,6 +224,16 @@
         } else if (event.type === "done") {
           setSending(wsId, false);
           diffRefreshTrigger++;
+          // Auto-rename on first completion if workspace has a random name
+          const ws = workspaces.find((w) => w.id === wsId);
+          const firstPrompt = firstPrompts.get(wsId);
+          if (ws && isRandomName(ws.name) && firstPrompt) {
+            const slug = slugify(firstPrompt);
+            if (slug) {
+              handleRename(wsId, slug);
+              firstPrompts.delete(wsId);
+            }
+          }
         } else if (event.type === "error") {
           error = event.message;
           setSending(wsId, false);
