@@ -36,6 +36,7 @@
   let error = $state("");
   let sending = $state(false);
   let activeTab = $state<PanelTab>("chat");
+  let diffRefreshTrigger = $state(0);
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
@@ -161,6 +162,11 @@
             event.text.trim(),
             toolUses,
           );
+          // Refresh diff if any file-writing tools were used
+          const fileWriteTools = new Set(["Write", "Edit", "NotebookEdit", "Bash"]);
+          if (event.tool_uses.some((t) => fileWriteTools.has(t.name))) {
+            diffRefreshTrigger++;
+          }
         } else if (event.type === "done") {
           sending = false;
         } else if (event.type === "error") {
@@ -278,7 +284,7 @@
                 class="ws-tab-container"
                 style:display={activeTab === "diff" && ws.id === selectedWsId ? "flex" : "none"}
               >
-                <DiffViewer workspaceId={ws.id} />
+                <DiffViewer workspaceId={ws.id} refreshTrigger={diffRefreshTrigger} />
               </div>
             {/each}
 

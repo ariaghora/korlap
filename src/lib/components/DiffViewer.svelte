@@ -3,9 +3,10 @@
 
   interface Props {
     workspaceId: string;
+    refreshTrigger?: number;
   }
 
-  let { workspaceId }: Props = $props();
+  let { workspaceId, refreshTrigger = 0 }: Props = $props();
 
   let files = $state<ChangedFile[]>([]);
   let selectedFile = $state<string | null>(null);
@@ -18,12 +19,14 @@
     error = "";
     try {
       files = await getChangedFiles(workspaceId);
-      // Auto-select first file
       if (files.length > 0 && !selectedFile) {
         await selectFile(files[0].path);
       } else if (files.length === 0) {
         selectedFile = null;
         diff = "";
+      } else if (selectedFile) {
+        // Reload current file's diff
+        diff = await getDiff(workspaceId, selectedFile);
       }
     } catch (e) {
       error = String(e);
@@ -43,6 +46,7 @@
 
   $effect(() => {
     workspaceId;
+    refreshTrigger;
     loadFiles();
   });
 
