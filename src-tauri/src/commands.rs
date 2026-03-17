@@ -786,15 +786,14 @@ pub fn send_message(
         None
     };
 
-    // Write .mcp.json for the MCP server into the worktree
-    let mcp_api_port = {
+    // Prepare MCP config — written to app data dir, not the worktree
+    let (mcp_api_port, data_dir) = {
         let st = state.lock().map_err(|e| e.to_string())?;
-        st.mcp_api_port
+        (st.mcp_api_port, st.data_dir.clone())
     };
 
-    // Find the MCP server script path (relative to the repo root)
     let mcp_server_path = repo_path.join("src-mcp").join("server.ts");
-    if mcp_server_path.exists() {
+    let mcp_config_path = if mcp_server_path.exists() {
         let mcp_config = serde_json::json!({
             "mcpServers": {
                 "korlap": {
@@ -808,12 +807,17 @@ pub fn send_message(
                 }
             }
         });
-        let mcp_json_path = worktree_path.join(".mcp.json");
+        let config_dir = data_dir.join("mcp");
+        let _ = std::fs::create_dir_all(&config_dir);
+        let config_path = config_dir.join(format!("{}.json", workspace_id));
         let _ = std::fs::write(
-            &mcp_json_path,
-            serde_json::to_string_pretty(&mcp_config).unwrap_or_default(),
+            &config_path,
+            serde_json::to_string(&mcp_config).unwrap_or_default(),
         );
-    }
+        Some(config_path)
+    } else {
+        None
+    };
 
     // Build claude command
     let mut cmd = std::process::Command::new("claude");
@@ -844,9 +848,10 @@ pub fn send_message(
         cmd.arg("--system-prompt").arg(&system_prompt);
     }
 
-    // Pass MCP env vars so claude can discover the config
-    cmd.env("KORLAP_API_PORT", mcp_api_port.to_string());
-    cmd.env("KORLAP_WORKSPACE_ID", &workspace_id);
+    // Pass MCP config file to claude
+    if let Some(ref config_path) = mcp_config_path {
+        cmd.arg("--mcp-config").arg(config_path);
+    }
 
     cmd.current_dir(&worktree_path);
     cmd.stdout(std::process::Stdio::piped());
