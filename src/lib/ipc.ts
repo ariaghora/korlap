@@ -139,6 +139,36 @@ export async function runScript(
   return invoke("run_script", { workspaceId, command, onEvent: channel });
 }
 
+// ── Terminal ─────────────────────────────────────────────────────────
+
+export async function openTerminal(
+  workspaceId: string,
+  onData: (data: number[]) => void,
+): Promise<void> {
+  const channel = new Channel<number[]>();
+  channel.onmessage = onData;
+  return invoke("open_terminal", { workspaceId, onData: channel });
+}
+
+export async function writeTerminal(
+  workspaceId: string,
+  data: number[],
+): Promise<void> {
+  return invoke("write_terminal", { workspaceId, data });
+}
+
+export async function resizeTerminal(
+  workspaceId: string,
+  rows: number,
+  cols: number,
+): Promise<void> {
+  return invoke("resize_terminal", { workspaceId, rows, cols });
+}
+
+export async function closeTerminal(workspaceId: string): Promise<void> {
+  return invoke("close_terminal", { workspaceId });
+}
+
 // ── Messages ────────────────────────────────────────────────────────
 
 export async function saveMessages(

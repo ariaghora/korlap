@@ -33,6 +33,12 @@ pub struct AgentHandle {
     pub child: std::process::Child,
 }
 
+pub struct TerminalHandle {
+    pub writer: Box<dyn std::io::Write + Send>,
+    pub child: Box<dyn portable_pty::Child + Send>,
+    pub master: Box<dyn portable_pty::MasterPty + Send>,
+}
+
 /// All persistent state lives under Tauri's app data dir.
 /// Zero files are written to the user's managed repos.
 ///
@@ -50,6 +56,7 @@ pub struct AppState {
     pub session_ids: HashMap<String, String>,
     pub data_dir: PathBuf,
     pub mcp_api_port: u16,
+    pub terminals: HashMap<String, TerminalHandle>,
 }
 
 impl AppState {

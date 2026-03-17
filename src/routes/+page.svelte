@@ -26,6 +26,7 @@
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
   import ScriptRunner from "$lib/components/ScriptRunner.svelte";
+  import TerminalView from "$lib/components/Terminal.svelte";
 
   type PanelTab = "chat" | "diff" | "terminal" | "scripts";
 
@@ -358,9 +359,14 @@
               </div>
             {/each}
 
-            <div class="tab-placeholder" style:display={activeTab === "terminal" ? "flex" : "none"}>
-              <p>Terminal — coming soon</p>
-            </div>
+            {#each activeWorkspaces as ws (ws.id)}
+              <div
+                class="ws-tab-container"
+                style:display={activeTab === "terminal" && ws.id === selectedWsId ? "flex" : "none"}
+              >
+                <TerminalView workspaceId={ws.id} />
+              </div>
+            {/each}
           </div>
         {:else}
           <div class="panel-empty">
