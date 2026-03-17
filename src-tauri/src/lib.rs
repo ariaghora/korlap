@@ -1,4 +1,5 @@
 mod commands;
+mod mcp_api;
 mod state;
 #[cfg(target_os = "macos")]
 mod traffic;
@@ -35,14 +36,22 @@ pub fn run() {
                 workspaces: HashMap::new(),
                 agents: HashMap::new(),
                 session_ids: HashMap::new(),
+                repo_settings: HashMap::new(),
                 data_dir,
+                mcp_api_port: 0,
+                terminals: HashMap::new(),
             };
 
             if let Err(e) = app_state.load() {
                 tracing::warn!("Failed to load persisted state: {}", e);
             }
 
-            app.manage(Mutex::new(app_state));
+            let state = std::sync::Arc::new(Mutex::new(app_state));
+            let port = mcp_api::start_api(app.handle().clone(), state.clone());
+            state.lock().unwrap().mcp_api_port = port;
+
+            // Tauri commands use State<'_, Arc<Mutex<AppState>>>
+            app.manage(state);
 
             #[cfg(target_os = "macos")]
             {
@@ -72,6 +81,14 @@ pub fn run() {
             commands::load_messages,
             commands::send_message,
             commands::stop_agent,
+            commands::open_terminal,
+            commands::write_terminal,
+            commands::resize_terminal,
+            commands::close_terminal,
+            commands::get_pr_status,
+            commands::get_pr_template,
+            commands::get_repo_settings,
+            commands::save_repo_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

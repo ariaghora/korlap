@@ -123,6 +123,35 @@ export async function getDiff(
   return invoke<string>("get_diff", { workspaceId, filePath });
 }
 
+// ── Terminal ─────────────────────────────────────────────────────────
+
+export async function openTerminal(
+  workspaceId: string,
+  onData: (data: number[]) => void,
+): Promise<void> {
+  const channel = new Channel<number[]>();
+  channel.onmessage = onData;
+  return invoke("open_terminal", { workspaceId, onData: channel });
+}
+
+export async function writeTerminal(
+  workspaceId: string,
+  data: number[],
+): Promise<void> {
+  return invoke("write_terminal", { workspaceId, data });
+}
+
+export async function resizeTerminal(
+  workspaceId: string,
+  rows: number,
+  cols: number,
+): Promise<void> {
+  return invoke("resize_terminal", { workspaceId, rows, cols });
+}
+
+export async function closeTerminal(workspaceId: string): Promise<void> {
+  return invoke("close_terminal", { workspaceId });
+}
 // ── Messages ────────────────────────────────────────────────────────
 
 export async function saveMessages(
@@ -136,6 +165,46 @@ export async function loadMessages(
   workspaceId: string,
 ): Promise<unknown[]> {
   return invoke<unknown[]>("load_messages", { workspaceId });
+}
+
+// ── PR Status ────────────────────────────────────────────────────────
+
+export interface PrStatus {
+  state: "none" | "open" | "merged" | "closed";
+  url: string;
+  number: number;
+  title: string;
+  checks: "pending" | "passing" | "failing" | "none";
+  mergeable: boolean;
+  additions: number;
+  deletions: number;
+}
+
+export async function getPrStatus(workspaceId: string): Promise<PrStatus> {
+  return invoke<PrStatus>("get_pr_status", { workspaceId });
+}
+
+export async function getPrTemplate(repoId: string): Promise<string> {
+  return invoke<string>("get_pr_template", { repoId });
+}
+
+// ── Repo Settings ────────────────────────────────────────────────────
+
+export interface RepoSettings {
+  setup_script: string;
+  run_script: string;
+  archive_script: string;
+}
+
+export async function getRepoSettings(repoId: string): Promise<RepoSettings> {
+  return invoke<RepoSettings>("get_repo_settings", { repoId });
+}
+
+export async function saveRepoSettings(
+  repoId: string,
+  settings: RepoSettings,
+): Promise<void> {
+  return invoke("save_repo_settings", { repoId, settings });
 }
 
 // ── Events ───────────────────────────────────────────────────────────

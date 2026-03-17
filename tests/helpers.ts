@@ -36,6 +36,14 @@ export async function mockTauri(
             return 0;
           case "plugin:event|unlisten":
             return null;
+          case "get_repo_settings":
+            return { setup_script: "", run_script: "", archive_script: "" };
+          case "save_repo_settings":
+            return null;
+          case "get_pr_status":
+            return { state: "none", url: "", number: 0, title: "", checks: "none", mergeable: false, additions: 0, deletions: 0 };
+          case "get_pr_template":
+            return "";
           default:
             console.warn(`[mock] unhandled invoke: ${cmd}`, args);
             return null;
@@ -117,6 +125,22 @@ export async function mockTauriWithRepo(
             return "";
           case "run_script":
             return null;
+          case "open_terminal":
+            return null;
+          case "write_terminal":
+            return null;
+          case "resize_terminal":
+            return null;
+          case "close_terminal":
+            return null;
+          case "get_repo_settings":
+            return { setup_script: "", run_script: "", archive_script: "" };
+          case "save_repo_settings":
+            return null;
+          case "get_pr_status":
+            return { state: "none", url: "", number: 0, title: "", checks: "none", mergeable: false, additions: 0, deletions: 0 };
+          case "get_pr_template":
+            return "";
           case "send_message": {
             // Channel serializes as "__CHANNEL__:<id>" string
             const onEvent = args?.onEvent;

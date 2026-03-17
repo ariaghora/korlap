@@ -1,7 +1,7 @@
 use crate::state::{AgentHandle, AppState, RepoInfo, WorkspaceInfo, WorkspaceStatus};
 use std::io::BufRead;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -224,7 +224,7 @@ pub struct RepoDetail {
 }
 
 #[tauri::command]
-pub fn add_repo(path: String, state: State<'_, Mutex<AppState>>) -> Result<RepoDetail, String> {
+pub fn add_repo(path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<RepoDetail, String> {
     let path = std::path::PathBuf::from(&path);
     let path = path
         .canonicalize()
@@ -264,7 +264,7 @@ pub fn add_repo(path: String, state: State<'_, Mutex<AppState>>) -> Result<RepoD
 }
 
 #[tauri::command]
-pub fn remove_repo(repo_id: String, state: State<'_, Mutex<AppState>>) -> Result<(), String> {
+pub fn remove_repo(repo_id: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
     let mut state = state.lock().map_err(|e| e.to_string())?;
     state.repos.remove(&repo_id).ok_or("Repo not found")?;
     state.workspaces.retain(|_, w| w.repo_id != repo_id);
@@ -273,7 +273,7 @@ pub fn remove_repo(repo_id: String, state: State<'_, Mutex<AppState>>) -> Result
 }
 
 #[tauri::command]
-pub fn list_repos(state: State<'_, Mutex<AppState>>) -> Result<Vec<RepoDetail>, String> {
+pub fn list_repos(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<RepoDetail>, String> {
     let state = state.lock().map_err(|e| e.to_string())?;
     let mut details = Vec::new();
     for repo in state.repos.values() {
@@ -293,7 +293,7 @@ pub fn list_repos(state: State<'_, Mutex<AppState>>) -> Result<Vec<RepoDetail>, 
 #[tauri::command]
 pub fn create_workspace(
     repo_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {
     let (repo_path, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -306,7 +306,7 @@ pub fn create_workspace(
     // Generate a unique name (retry if branch already exists)
     let mut name = random_workspace_name();
     for attempt in 0..10 {
-        let branch = format!("conductor/{}", name);
+        let branch = format!("korlap/{}", name);
         let check = std::process::Command::new("git")
             .args(["rev-parse", "--verify", &branch])
             .current_dir(&repo_path)
@@ -329,7 +329,7 @@ pub fn create_workspace(
     }
 
     let id = Uuid::new_v4().to_string();
-    let branch = format!("conductor/{}", name);
+    let branch = format!("korlap/{}", name);
 
     // Worktree lives in app data dir, not in the managed repo
     let worktree_path = {
@@ -357,12 +357,40 @@ pub fn create_workspace(
         id: id.clone(),
         name,
         branch,
-        worktree_path,
+        worktree_path: worktree_path.clone(),
         repo_id: repo_id.clone(),
         gh_profile,
         status: WorkspaceStatus::Waiting,
         created_at: now_unix(),
     };
+
+    // Check if there's a setup script to run
+    let setup_script = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.repo_settings
+            .get(&repo_id)
+            .map(|s| s.setup_script.clone())
+            .unwrap_or_default()
+    };
+
+    if !setup_script.trim().is_empty() {
+        tracing::info!("Running setup script for workspace {}", ws.name);
+        let output = std::process::Command::new("zsh")
+            .args(["-c", &setup_script])
+            .current_dir(&worktree_path)
+            .env("KORLAP_WORKSPACE_NAME", &ws.name)
+            .env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string())
+            .env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string())
+            .env("KORLAP_DEFAULT_BRANCH", &base_branch)
+            .output()
+            .map_err(|e| format!("Setup script failed to start: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("Setup script failed: {}", stderr.trim());
+            // Don't fail workspace creation — just log the warning
+        }
+    }
 
     let mut st = state.lock().map_err(|e| e.to_string())?;
     st.workspaces.insert(id, ws.clone());
@@ -372,18 +400,50 @@ pub fn create_workspace(
     Ok(ws)
 }
 
+// ── Repo Settings ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_repo_settings(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<crate::state::RepoSettings, String> {
+    let st = state.lock().map_err(|e| e.to_string())?;
+    Ok(st
+        .repo_settings
+        .get(&repo_id)
+        .cloned()
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_repo_settings(
+    repo_id: String,
+    settings: crate::state::RepoSettings,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    st.repo_settings.insert(repo_id, settings);
+    st.save_repo_settings()?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn archive_workspace(
     workspace_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
-    let (worktree_path, repo_path) = {
+    let (worktree_path, repo_path, ws_name, repo_id) = {
         let mut st = state.lock().map_err(|e| e.to_string())?;
 
         // Kill agent if running
         if let Some(mut handle) = st.agents.remove(&workspace_id) {
             let _ = handle.child.kill();
             let _ = handle.child.wait();
+        }
+
+        // Kill terminal if running
+        if let Some(mut term) = st.terminals.remove(&workspace_id) {
+            let _ = term.child.kill();
         }
 
         let ws = st
@@ -394,8 +454,25 @@ pub fn archive_workspace(
             return Ok(());
         }
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (ws.worktree_path.clone(), repo.path.clone())
+        (ws.worktree_path.clone(), repo.path.clone(), ws.name.clone(), ws.repo_id.clone())
     };
+
+    // Run archive script if configured
+    {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        if let Some(settings) = st.repo_settings.get(&repo_id) {
+            if !settings.archive_script.trim().is_empty() {
+                tracing::info!("Running archive script for workspace {}", ws_name);
+                let _ = std::process::Command::new("zsh")
+                    .args(["-c", &settings.archive_script])
+                    .current_dir(&worktree_path)
+                    .env("KORLAP_WORKSPACE_NAME", &ws_name)
+                    .env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string())
+                    .env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string())
+                    .output();
+            }
+        }
+    }
 
     let output = std::process::Command::new("git")
         .args(["worktree", "remove", "--force"])
@@ -422,7 +499,7 @@ pub fn archive_workspace(
 #[tauri::command]
 pub fn list_workspaces(
     repo_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<WorkspaceInfo>, String> {
     let state = state.lock().map_err(|e| e.to_string())?;
     Ok(state
@@ -439,7 +516,7 @@ pub fn list_workspaces(
 pub fn rename_branch(
     workspace_id: String,
     new_name: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
     let ws = st
@@ -452,7 +529,8 @@ pub fn rename_branch(
     }
 
     let old_branch = ws.branch.clone();
-    let new_branch = format!("conductor/{}", new_name);
+    // No prefix — user provides the full branch name (e.g. feat/fix-auth)
+    let new_branch = new_name.clone();
     let worktree_path = ws.worktree_path.clone();
 
     let output = std::process::Command::new("git")
@@ -492,7 +570,7 @@ pub struct ChangedFile {
 #[tauri::command]
 pub fn get_changed_files(
     workspace_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<ChangedFile>, String> {
     let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -572,7 +650,7 @@ pub fn get_changed_files(
 pub fn get_diff(
     workspace_id: String,
     file_path: Option<String>,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<String, String> {
     let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -623,6 +701,136 @@ pub fn get_diff(
     Ok(diff_text)
 }
 
+// ── PR commands ──────────────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct PrStatus {
+    pub state: String,         // "none", "open", "merged", "closed"
+    pub url: String,
+    pub number: i64,
+    pub title: String,
+    pub checks: String,        // "pending", "passing", "failing", "none"
+    pub mergeable: bool,
+    pub additions: i64,
+    pub deletions: i64,
+}
+
+#[tauri::command]
+pub fn get_pr_status(
+    workspace_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<PrStatus, String> {
+    let (worktree_path, branch) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        (ws.worktree_path.clone(), ws.branch.clone())
+    };
+
+    let output = std::process::Command::new("gh")
+        .args([
+            "pr", "view", &branch,
+            "--json", "state,url,number,title,statusCheckRollup,mergeable,additions,deletions",
+        ])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("Failed to run gh: {}", e))?;
+
+    if !output.status.success() {
+        // No PR exists for this branch
+        return Ok(PrStatus {
+            state: "none".into(),
+            url: String::new(),
+            number: 0,
+            title: String::new(),
+            checks: "none".into(),
+            mergeable: false,
+            additions: 0,
+            deletions: 0,
+        });
+    }
+
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse gh output: {}", e))?;
+
+    let pr_state = v.get("state").and_then(|s| s.as_str()).unwrap_or("OPEN").to_lowercase();
+    let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let number = v.get("number").and_then(|n| n.as_i64()).unwrap_or(0);
+    let title = v.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let additions = v.get("additions").and_then(|n| n.as_i64()).unwrap_or(0);
+    let deletions = v.get("deletions").and_then(|n| n.as_i64()).unwrap_or(0);
+    let mergeable = v.get("mergeable").and_then(|s| s.as_str()).unwrap_or("") == "MERGEABLE";
+
+    // Parse check status from statusCheckRollup
+    let checks = if let Some(checks_arr) = v.get("statusCheckRollup").and_then(|c| c.as_array()) {
+        if checks_arr.is_empty() {
+            "none".to_string()
+        } else {
+            let any_failing = checks_arr.iter().any(|c| {
+                let conclusion = c.get("conclusion").and_then(|s| s.as_str()).unwrap_or("");
+                conclusion == "FAILURE" || conclusion == "ERROR" || conclusion == "TIMED_OUT"
+            });
+            let all_done = checks_arr.iter().all(|c| {
+                let status = c.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                status == "COMPLETED"
+            });
+            if any_failing {
+                "failing".to_string()
+            } else if all_done {
+                "passing".to_string()
+            } else {
+                "pending".to_string()
+            }
+        }
+    } else {
+        "none".to_string()
+    };
+
+    Ok(PrStatus {
+        state: pr_state,
+        url,
+        number,
+        title,
+        checks,
+        mergeable,
+        additions,
+        deletions,
+    })
+}
+
+#[tauri::command]
+pub fn get_pr_template(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let repo_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st.repos.get(&repo_id).ok_or("Repo not found")?;
+        repo.path.clone()
+    };
+
+    // Check common PR template locations
+    let candidates = [
+        ".github/pull_request_template.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        "docs/pull_request_template.md",
+        "PULL_REQUEST_TEMPLATE.md",
+    ];
+
+    for candidate in candidates {
+        let path = repo_path.join(candidate);
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                return Ok(content);
+            }
+        }
+    }
+
+    Ok(String::new()) // No template found
+}
+
 // ── Script commands ──────────────────────────────────────────────────
 
 #[derive(Clone, serde::Serialize)]
@@ -639,7 +847,7 @@ pub fn run_script(
     workspace_id: String,
     command: String,
     on_event: Channel<ScriptEvent>,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -698,7 +906,7 @@ pub fn run_script(
 pub fn save_messages(
     workspace_id: String,
     messages: serde_json::Value,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let msg_dir = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -714,7 +922,7 @@ pub fn save_messages(
 #[tauri::command]
 pub fn load_messages(
     workspace_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<serde_json::Value, String> {
     let msg_file = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -736,7 +944,7 @@ pub fn send_message(
     workspace_id: String,
     prompt: String,
     on_event: Channel<AgentEvent>,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
     app: AppHandle,
 ) -> Result<(), String> {
     let (worktree_path, gh_profile, repo_id, ws_branch, repo_path) = {
@@ -785,6 +993,39 @@ pub fn send_message(
         None
     };
 
+    // Prepare MCP config — written to app data dir, not the worktree
+    let (mcp_api_port, data_dir) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        (st.mcp_api_port, st.data_dir.clone())
+    };
+
+    let mcp_server_path = repo_path.join("src-mcp").join("server.ts");
+    let mcp_config_path = if mcp_server_path.exists() {
+        let mcp_config = serde_json::json!({
+            "mcpServers": {
+                "korlap": {
+                    "type": "stdio",
+                    "command": "bun",
+                    "args": ["run", mcp_server_path.to_string_lossy()],
+                    "env": {
+                        "KORLAP_API_PORT": mcp_api_port.to_string(),
+                        "KORLAP_WORKSPACE_ID": workspace_id.clone()
+                    }
+                }
+            }
+        });
+        let config_dir = data_dir.join("mcp");
+        let _ = std::fs::create_dir_all(&config_dir);
+        let config_path = config_dir.join(format!("{}.json", workspace_id));
+        let _ = std::fs::write(
+            &config_path,
+            serde_json::to_string(&mcp_config).unwrap_or_default(),
+        );
+        Some(config_path)
+    } else {
+        None
+    };
+
     // Build claude command
     let mut cmd = std::process::Command::new("claude");
     cmd.arg("-p").arg(&prompt);
@@ -802,12 +1043,21 @@ pub fn send_message(
              Your work takes place in: {}\n\
              Target branch: {}\n\
              Base branch: {}\n\
+             You have access to Korlap tools via MCP. Use the rename_branch tool to give your \
+             branch a meaningful name once you understand the task. Use conventional prefixes: \
+             feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
+             If the task scope changes mid-conversation, rename the branch again to reflect the new direction.\n\
              Keep all changes on the target branch. Do not modify other branches.",
             worktree_path.display(),
             ws_branch,
             base_branch,
         );
         cmd.arg("--system-prompt").arg(&system_prompt);
+    }
+
+    // Pass MCP config file to claude
+    if let Some(ref config_path) = mcp_config_path {
+        cmd.arg("--mcp-config").arg(config_path);
     }
 
     cmd.current_dir(&worktree_path);
@@ -884,7 +1134,7 @@ pub fn send_message(
         }
 
         // Clean up state
-        let state: State<'_, Mutex<AppState>> = app_clone.state();
+        let state: State<'_, Arc<Mutex<AppState>>> = app_clone.state();
         if let Ok(mut st) = state.lock() {
             // Wait for child to finish
             if let Some(mut handle) = st.agents.remove(&ws_id) {
@@ -922,7 +1172,7 @@ pub fn send_message(
 #[tauri::command]
 pub fn stop_agent(
     workspace_id: String,
-    state: State<'_, Mutex<AppState>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
     app: AppHandle,
 ) -> Result<(), String> {
     let mut st = state.lock().map_err(|e| e.to_string())?;
@@ -947,6 +1197,149 @@ pub fn stop_agent(
     );
 
     tracing::info!("Stopped agent for workspace {}", workspace_id);
+    Ok(())
+}
+
+// ── Terminal commands ────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn open_terminal(
+    workspace_id: String,
+    on_data: Channel<Vec<u8>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        if st.terminals.contains_key(&workspace_id) {
+            return Ok(()); // Already open
+        }
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("Failed to open PTY: {}", e))?;
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let mut cmd = CommandBuilder::new(&shell);
+    cmd.cwd(&worktree_path);
+
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("Failed to spawn shell: {}", e))?;
+
+    // Drop slave — parent only needs the master
+    drop(pair.slave);
+
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
+
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("Failed to get PTY reader: {}", e))?;
+
+    // Store handle
+    {
+        let mut st = state.lock().map_err(|e| e.to_string())?;
+        st.terminals.insert(
+            workspace_id.clone(),
+            crate::state::TerminalHandle {
+                writer,
+                child,
+                master: pair.master,
+            },
+        );
+    }
+
+    // Stream PTY output to frontend via Channel
+    let ws_id = workspace_id.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match std::io::Read::read(&mut reader, &mut buf) {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    let _ = on_data.send(buf[..n].to_vec());
+                }
+                Err(_) => break,
+            }
+        }
+        tracing::info!("Terminal reader exited for {}", ws_id);
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn write_terminal(
+    workspace_id: String,
+    data: Vec<u8>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    let handle = st
+        .terminals
+        .get_mut(&workspace_id)
+        .ok_or("No terminal open for this workspace")?;
+
+    std::io::Write::write_all(&mut handle.writer, &data)
+        .map_err(|e| format!("Failed to write to PTY: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn resize_terminal(
+    workspace_id: String,
+    rows: u16,
+    cols: u16,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    let handle = st
+        .terminals
+        .get_mut(&workspace_id)
+        .ok_or("No terminal open for this workspace")?;
+
+    handle
+        .master
+        .resize(portable_pty::PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("Failed to resize PTY: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_terminal(
+    workspace_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    if let Some(mut handle) = st.terminals.remove(&workspace_id) {
+        let _ = handle.child.kill();
+        let _ = handle.child.wait();
+    }
     Ok(())
 }
 

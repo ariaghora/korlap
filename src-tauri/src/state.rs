@@ -33,6 +33,22 @@ pub struct AgentHandle {
     pub child: std::process::Child,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RepoSettings {
+    #[serde(default)]
+    pub setup_script: String,
+    #[serde(default)]
+    pub run_script: String,
+    #[serde(default)]
+    pub archive_script: String,
+}
+
+pub struct TerminalHandle {
+    pub writer: Box<dyn std::io::Write + Send>,
+    pub child: Box<dyn portable_pty::Child + Send>,
+    pub master: Box<dyn portable_pty::MasterPty + Send>,
+}
+
 /// All persistent state lives under Tauri's app data dir.
 /// Zero files are written to the user's managed repos.
 ///
@@ -48,7 +64,10 @@ pub struct AppState {
     pub workspaces: HashMap<String, WorkspaceInfo>,
     pub agents: HashMap<String, AgentHandle>,
     pub session_ids: HashMap<String, String>,
+    pub repo_settings: HashMap<String, RepoSettings>,
     pub data_dir: PathBuf,
+    pub mcp_api_port: u16,
+    pub terminals: HashMap<String, TerminalHandle>,
 }
 
 impl AppState {
@@ -95,6 +114,18 @@ impl AppState {
             }
         }
 
+        // Load repo settings
+        let settings_path = self.data_dir.join("repo_settings.json");
+        if settings_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&settings_path) {
+                if let Ok(settings) =
+                    serde_json::from_str::<HashMap<String, RepoSettings>>(&data)
+                {
+                    self.repo_settings.extend(settings);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -119,6 +150,14 @@ impl AppState {
                 .map_err(|e| e.to_string())?;
         }
 
+        Ok(())
+    }
+
+    pub fn save_repo_settings(&self) -> Result<(), String> {
+        let data =
+            serde_json::to_string_pretty(&self.repo_settings).map_err(|e| e.to_string())?;
+        std::fs::write(self.data_dir.join("repo_settings.json"), data)
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
