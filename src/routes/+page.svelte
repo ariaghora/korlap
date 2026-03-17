@@ -438,6 +438,8 @@
                 {:else}
                   <button class="status-badge mergeable" onclick={handlePrAction}>Merge #{wsPr.number}</button>
                 {/if}
+              {:else if wsPr && wsPr.state === "merged"}
+                <span class="status-badge merged">Done</span>
               {:else if selectedWs.status === "waiting"}
                 <span class="status-badge waiting">Ready</span>
               {/if}
@@ -735,6 +737,11 @@
   .status-badge.waiting {
     color: var(--status-ok);
     border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
+  }
+
+  .status-badge.merged {
+    color: var(--text-dim);
+    border-color: var(--border-light);
   }
 
   .status-badge.pr-open {
