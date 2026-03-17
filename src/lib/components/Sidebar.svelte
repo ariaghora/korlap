@@ -49,7 +49,7 @@
     border-right: 1px solid #2a2520;
     display: flex;
     flex-direction: column;
-    background: #16140f;
+    background: #0f0d0a;
     flex-shrink: 0;
   }
 

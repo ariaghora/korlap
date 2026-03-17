@@ -7,7 +7,29 @@
 
 **Name:** Korlap (from Indonesian "koordinator lapangan" — field coordinator, the person who orchestrates parallel operations on the ground)
 
-**Design direction:** Warm dark. `#13110e` base — all blacks tinted amber, not cold gray. Single accent color: `#c8a97e` (muted gold). Used for running agent state, active branch in breadcrumb, and interactive elements. Nothing else competes with it.
+**Design direction:** Warm dark. All blacks tinted amber, not cold gray. Single accent color: `#c8a97e` (muted gold). Nothing else competes with it.
+
+**Color hierarchy** (darkest → lightest):
+| Token | Hex | Usage |
+|-------|-----|-------|
+| `bg-sidebar` | `#0f0d0a` | Sidebar, deepest layer |
+| `bg-base` | `#13110e` | Main panel background |
+| `bg-titlebar` | `#1a1714` | Title bar, tab bar |
+| `bg-card` | `#1a1814` | Assistant message cards, input fields |
+| `bg-hover` | `#1e1b17` | Hover states |
+| `bg-active` | `#2a2520` | Selected items, user bubbles, active tab |
+| `border` | `#2a2520` | Primary borders |
+| `border-light` | `#3a3530` | Active item borders, button borders |
+| `text-muted` | `#4a4540` | Placeholders, separators |
+| `text-dim` | `#6a6050` | Labels, breadcrumb base, secondary text |
+| `text-secondary` | `#8a7e6a` | Tool tags, inactive tabs, button text |
+| `text-primary` | `#d4c5a9` | Body text, input text |
+| `text-bright` | `#e8dcc8` | Headings, active items, user message text |
+| `accent` | `#c8a97e` | Running state, active branch, focus ring |
+| `status-ok` | `#7e9e6b` | Waiting/ready state |
+| `diff-add` | `#7e9e6b` / bg `#1a2a1a` | Diff additions |
+| `diff-del` | `#c87e7e` / bg `#2a1a1a` | Diff deletions |
+| `error` | `#e88` / bg `#3a1a1a` | Error states |
 
 **Typeface:** Space Grotesk. Geometric, purposeful, slightly idiosyncratic. Not Inter.
 
