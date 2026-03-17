@@ -58,6 +58,24 @@ export async function listRepos(): Promise<RepoDetail[]> {
   return invoke<RepoDetail[]>("list_repos");
 }
 
+// ── GitHub Profiles ──────────────────────────────────────────────────
+
+export interface GhProfile {
+  login: string;
+  active: boolean;
+}
+
+export async function listGhProfiles(): Promise<GhProfile[]> {
+  return invoke<GhProfile[]>("list_gh_profiles");
+}
+
+export async function setRepoProfile(
+  repoId: string,
+  profile: string | null,
+): Promise<void> {
+  return invoke("set_repo_profile", { repoId, profile });
+}
+
 // ── Workspace ────────────────────────────────────────────────────────
 
 export async function createWorkspace(

@@ -85,6 +85,8 @@ pub fn run() {
             commands::write_terminal,
             commands::resize_terminal,
             commands::close_terminal,
+            commands::list_gh_profiles,
+            commands::set_repo_profile,
             commands::get_pr_status,
             commands::get_pr_template,
             commands::get_repo_settings,

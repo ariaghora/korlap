@@ -179,6 +179,7 @@ fn parse_stream_line(
     line: &str,
     on_event: &Channel<AgentEvent>,
     session_id: &mut Option<String>,
+    worktree_path: &str,
 ) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
@@ -222,19 +223,31 @@ fn parse_stream_line(
                             .get("input")
                             .and_then(|input| input.get("file_path"))
                             .and_then(|f| f.as_str())
-                            .map(|s| s.to_string());
+                            .map(|s| s.replace(worktree_path, "."));
 
                         let input_preview = block.get("input").and_then(|input| {
+                            let strip = |s: &str| -> String {
+                                s.replace(worktree_path, ".")
+                            };
                             if let Some(fp) = input.get("file_path").and_then(|f| f.as_str()) {
-                                Some(fp.to_string())
+                                Some(strip(fp))
                             } else if let Some(cmd) =
                                 input.get("command").and_then(|c| c.as_str())
                             {
-                                Some(cmd.chars().take(80).collect())
+                                // Strip worktree path AND collapse "cd <path> && " prefix
+                                let cleaned = strip(cmd);
+                                let cleaned = if cleaned.starts_with("cd . && ") {
+                                    cleaned[8..].to_string()
+                                } else if cleaned.starts_with("cd . ; ") {
+                                    cleaned[7..].to_string()
+                                } else {
+                                    cleaned
+                                };
+                                Some(cleaned.chars().take(120).collect())
                             } else if let Some(pattern) =
                                 input.get("pattern").and_then(|p| p.as_str())
                             {
-                                Some(pattern.to_string())
+                                Some(strip(pattern))
                             } else {
                                 None
                             }
@@ -302,6 +315,7 @@ pub fn add_repo(path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<
         id: Uuid::new_v4().to_string(),
         path,
         gh_profile: None,
+        default_branch: Some(default_branch.clone()),
     };
 
     state.repos.insert(repo.id.clone(), repo.clone());
@@ -326,18 +340,89 @@ pub fn remove_repo(repo_id: String, state: State<'_, Arc<Mutex<AppState>>>) -> R
 
 #[tauri::command]
 pub fn list_repos(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<RepoDetail>, String> {
-    let state = state.lock().map_err(|e| e.to_string())?;
+    let mut state = state.lock().map_err(|e| e.to_string())?;
     let mut details = Vec::new();
-    for repo in state.repos.values() {
-        let default_branch = detect_default_branch(&repo.path).unwrap_or_default();
-        let display_name = repo_display_name(&repo.path);
+    let mut needs_save = false;
+    let repo_ids: Vec<String> = state.repos.keys().cloned().collect();
+    for id in &repo_ids {
+        let repo = state.repos.get(id).unwrap();
+        let default_branch = if let Some(ref branch) = repo.default_branch {
+            branch.clone()
+        } else {
+            // Backfill cache for repos saved before caching was added
+            let branch = detect_default_branch(&repo.path).unwrap_or_default();
+            let repo_mut = state.repos.get_mut(id).unwrap();
+            repo_mut.default_branch = Some(branch.clone());
+            needs_save = true;
+            branch
+        };
+        let display_name = repo_display_name(&state.repos[id].path);
         details.push(RepoDetail {
-            info: repo.clone(),
+            info: state.repos[id].clone(),
             display_name,
             default_branch,
         });
     }
+    if needs_save {
+        let _ = state.save_repos();
+    }
     Ok(details)
+}
+
+// ── GitHub profile commands ──────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct GhProfile {
+    pub login: String,
+    pub active: bool,
+}
+
+#[tauri::command]
+pub fn list_gh_profiles() -> Result<Vec<GhProfile>, String> {
+    let mut cmd = std::process::Command::new("gh");
+    cmd.args(["auth", "status", "--json", "hosts"]);
+    inject_shell_env(&mut cmd);
+    let output = cmd.output()
+        .map_err(|e| format!("Failed to run gh: {}", e))?;
+
+    if !output.status.success() {
+        return Ok(vec![]); // gh not installed or not logged in
+    }
+
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse gh output: {}", e))?;
+
+    let mut profiles = Vec::new();
+    if let Some(hosts) = v.get("hosts").and_then(|h| h.as_object()) {
+        for accounts in hosts.values() {
+            if let Some(arr) = accounts.as_array() {
+                for account in arr {
+                    if let Some(login) = account.get("login").and_then(|l| l.as_str()) {
+                        let active = account.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+                        profiles.push(GhProfile {
+                            login: login.to_string(),
+                            active,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(profiles)
+}
+
+#[tauri::command]
+pub fn set_repo_profile(
+    repo_id: String,
+    profile: Option<String>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    let repo = st.repos.get_mut(&repo_id).ok_or("Repo not found")?;
+    repo.gh_profile = profile;
+    st.save_repos()?;
+    Ok(())
 }
 
 // ── Workspace commands ───────────────────────────────────────────────
@@ -623,7 +708,7 @@ pub struct ChangedFile {
 }
 
 #[tauri::command]
-pub fn get_changed_files(
+pub async fn get_changed_files(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<ChangedFile>, String> {
@@ -636,73 +721,72 @@ pub fn get_changed_files(
         ws.worktree_path.clone()
     };
 
-    // Show all changes in the worktree: staged + unstaged against HEAD
-    let output = std::process::Command::new("git")
-        .args(["diff", "--numstat", "HEAD"])
-        .current_dir(&worktree_path)
-        .output()
-        .map_err(|e| format!("Failed to run git diff: {}", e))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = std::process::Command::new("git")
+            .args(["diff", "--numstat", "HEAD"])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to run git diff: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git diff --numstat failed: {}", stderr.trim()));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut files = Vec::new();
-
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 3 {
-            let additions = parts[0].parse::<i32>().unwrap_or(0);
-            let deletions = parts[1].parse::<i32>().unwrap_or(0);
-            let path = parts[2].to_string();
-            let status = if additions > 0 && deletions > 0 {
-                "M"
-            } else if additions > 0 {
-                "A"
-            } else {
-                "D"
-            };
-            files.push(ChangedFile {
-                path,
-                status: status.to_string(),
-                additions,
-                deletions,
-            });
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git diff --numstat failed: {}", stderr.trim()));
         }
-    }
 
-    // Also pick up untracked files (new files the agent created)
-    let untracked = std::process::Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(&worktree_path)
-        .output()
-        .map_err(|e| format!("Failed to list untracked files: {}", e))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut files = Vec::new();
 
-    if untracked.status.success() {
-        for line in String::from_utf8_lossy(&untracked.stdout).lines() {
-            let path = line.trim().to_string();
-            if !path.is_empty() {
-                // Count lines for stat
-                let line_count = std::fs::read_to_string(worktree_path.join(&path))
-                    .map(|c| c.lines().count() as i32)
-                    .unwrap_or(0);
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                let additions = parts[0].parse::<i32>().unwrap_or(0);
+                let deletions = parts[1].parse::<i32>().unwrap_or(0);
+                let path = parts[2].to_string();
+                let status = if additions > 0 && deletions > 0 {
+                    "M"
+                } else if additions > 0 {
+                    "A"
+                } else {
+                    "D"
+                };
                 files.push(ChangedFile {
                     path,
-                    status: "A".to_string(),
-                    additions: line_count,
-                    deletions: 0,
+                    status: status.to_string(),
+                    additions,
+                    deletions,
                 });
             }
         }
-    }
 
-    Ok(files)
+        let untracked = std::process::Command::new("git")
+            .args(["ls-files", "--others", "--exclude-standard"])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to list untracked files: {}", e))?;
+
+        if untracked.status.success() {
+            for line in String::from_utf8_lossy(&untracked.stdout).lines() {
+                let path = line.trim().to_string();
+                if !path.is_empty() {
+                    let line_count = std::fs::read_to_string(worktree_path.join(&path))
+                        .map(|c| c.lines().count() as i32)
+                        .unwrap_or(0);
+                    files.push(ChangedFile {
+                        path,
+                        status: "A".to_string(),
+                        additions: line_count,
+                        deletions: 0,
+                    });
+                }
+            }
+        }
+
+        Ok(files)
+    }).await.map_err(|e| format!("Task failed: {}", e))?
 }
 
 #[tauri::command]
-pub fn get_diff(
+pub async fn get_diff(
     workspace_id: String,
     file_path: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
@@ -716,44 +800,44 @@ pub fn get_diff(
         ws.worktree_path.clone()
     };
 
-    // Diff worktree working state against HEAD — shows what the agent changed
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(["diff", "HEAD"]);
-    if let Some(ref fp) = file_path {
-        cmd.arg("--").arg(fp);
-    }
-    cmd.current_dir(&worktree_path);
-
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to run git diff: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git diff failed: {}", stderr.trim()));
-    }
-
-    let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
-
-    // If diff is empty and a file_path was given, it might be untracked — show as new file
-    if diff_text.trim().is_empty() {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["diff", "HEAD"]);
         if let Some(ref fp) = file_path {
-            let full_path = worktree_path.join(fp);
-            if full_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&full_path) {
-                    let mut result = format!("--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n", fp, content.lines().count());
-                    for line in content.lines() {
-                        result.push('+');
-                        result.push_str(line);
-                        result.push('\n');
+            cmd.arg("--").arg(fp);
+        }
+        cmd.current_dir(&worktree_path);
+
+        let output = cmd
+            .output()
+            .map_err(|e| format!("Failed to run git diff: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git diff failed: {}", stderr.trim()));
+        }
+
+        let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+
+        if diff_text.trim().is_empty() {
+            if let Some(ref fp) = file_path {
+                let full_path = worktree_path.join(fp);
+                if full_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&full_path) {
+                        let mut result = format!("--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n", fp, content.lines().count());
+                        for line in content.lines() {
+                            result.push('+');
+                            result.push_str(line);
+                            result.push('\n');
+                        }
+                        return Ok(result);
                     }
-                    return Ok(result);
                 }
             }
         }
-    }
 
-    Ok(diff_text)
+        Ok(diff_text)
+    }).await.map_err(|e| format!("Task failed: {}", e))?
 }
 
 // ── PR commands ──────────────────────────────────────────────────────
@@ -771,7 +855,7 @@ pub struct PrStatus {
 }
 
 #[tauri::command]
-pub fn get_pr_status(
+pub async fn get_pr_status(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<PrStatus, String> {
@@ -784,76 +868,77 @@ pub fn get_pr_status(
         (ws.worktree_path.clone(), ws.branch.clone())
     };
 
-    let mut gh_cmd = std::process::Command::new("gh");
-    gh_cmd.args([
-        "pr", "view", &branch,
-        "--json", "state,url,number,title,statusCheckRollup,mergeable,additions,deletions",
-    ]);
-    gh_cmd.current_dir(&worktree_path);
-    inject_shell_env(&mut gh_cmd);
-    let output = gh_cmd.output()
-        .map_err(|e| format!("Failed to run gh: {}", e))?;
+    // Run gh in a blocking thread so it doesn't hold up the IPC queue
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut gh_cmd = std::process::Command::new("gh");
+        gh_cmd.args([
+            "pr", "view", &branch,
+            "--json", "state,url,number,title,statusCheckRollup,mergeable,additions,deletions",
+        ]);
+        gh_cmd.current_dir(&worktree_path);
+        inject_shell_env(&mut gh_cmd);
+        let output = gh_cmd.output()
+            .map_err(|e| format!("Failed to run gh: {}", e))?;
 
-    if !output.status.success() {
-        // No PR exists for this branch
-        return Ok(PrStatus {
-            state: "none".into(),
-            url: String::new(),
-            number: 0,
-            title: String::new(),
-            checks: "none".into(),
-            mergeable: false,
-            additions: 0,
-            deletions: 0,
-        });
-    }
-
-    let v: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("Failed to parse gh output: {}", e))?;
-
-    let pr_state = v.get("state").and_then(|s| s.as_str()).unwrap_or("OPEN").to_lowercase();
-    let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("").to_string();
-    let number = v.get("number").and_then(|n| n.as_i64()).unwrap_or(0);
-    let title = v.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string();
-    let additions = v.get("additions").and_then(|n| n.as_i64()).unwrap_or(0);
-    let deletions = v.get("deletions").and_then(|n| n.as_i64()).unwrap_or(0);
-    let mergeable = v.get("mergeable").and_then(|s| s.as_str()).unwrap_or("") == "MERGEABLE";
-
-    // Parse check status from statusCheckRollup
-    let checks = if let Some(checks_arr) = v.get("statusCheckRollup").and_then(|c| c.as_array()) {
-        if checks_arr.is_empty() {
-            "none".to_string()
-        } else {
-            let any_failing = checks_arr.iter().any(|c| {
-                let conclusion = c.get("conclusion").and_then(|s| s.as_str()).unwrap_or("");
-                conclusion == "FAILURE" || conclusion == "ERROR" || conclusion == "TIMED_OUT"
+        if !output.status.success() {
+            return Ok(PrStatus {
+                state: "none".into(),
+                url: String::new(),
+                number: 0,
+                title: String::new(),
+                checks: "none".into(),
+                mergeable: false,
+                additions: 0,
+                deletions: 0,
             });
-            let all_done = checks_arr.iter().all(|c| {
-                let status = c.get("status").and_then(|s| s.as_str()).unwrap_or("");
-                status == "COMPLETED"
-            });
-            if any_failing {
-                "failing".to_string()
-            } else if all_done {
-                "passing".to_string()
-            } else {
-                "pending".to_string()
-            }
         }
+
+        let v: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|e| format!("Failed to parse gh output: {}", e))?;
+
+        let pr_state = v.get("state").and_then(|s| s.as_str()).unwrap_or("OPEN").to_lowercase();
+        let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        let number = v.get("number").and_then(|n| n.as_i64()).unwrap_or(0);
+        let title = v.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        let additions = v.get("additions").and_then(|n| n.as_i64()).unwrap_or(0);
+        let deletions = v.get("deletions").and_then(|n| n.as_i64()).unwrap_or(0);
+        let mergeable = v.get("mergeable").and_then(|s| s.as_str()).unwrap_or("") == "MERGEABLE";
+
+        let checks = if let Some(checks_arr) = v.get("statusCheckRollup").and_then(|c| c.as_array()) {
+            if checks_arr.is_empty() {
+                "none".to_string()
+            } else {
+                let any_failing = checks_arr.iter().any(|c| {
+                    let conclusion = c.get("conclusion").and_then(|s| s.as_str()).unwrap_or("");
+                    conclusion == "FAILURE" || conclusion == "ERROR" || conclusion == "TIMED_OUT"
+                });
+                let all_done = checks_arr.iter().all(|c| {
+                    let status = c.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    status == "COMPLETED"
+                });
+                if any_failing {
+                    "failing".to_string()
+                } else if all_done {
+                    "passing".to_string()
+                } else {
+                    "pending".to_string()
+                }
+            }
     } else {
         "none".to_string()
     };
 
-    Ok(PrStatus {
-        state: pr_state,
-        url,
-        number,
-        title,
-        checks,
-        mergeable,
-        additions,
-        deletions,
-    })
+        Ok(PrStatus {
+            state: pr_state,
+            url,
+            number,
+            title,
+            checks,
+            mergeable,
+            additions,
+            deletions,
+        })
+    }).await.map_err(|e| format!("Task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -1021,7 +1106,7 @@ pub fn send_message(
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
         (
             ws.worktree_path.clone(),
-            ws.gh_profile.clone(),
+            repo.gh_profile.clone(), // Always use repo's current profile, not stale workspace snapshot
             ws.repo_id.clone(),
             ws.branch.clone(),
             repo.path.clone(),
@@ -1100,7 +1185,7 @@ pub fn send_message(
             .unwrap_or_else(|_| "main".to_string());
         let system_prompt = format!(
             "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
-             Your work takes place in: {}\n\
+             Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
              Target branch: {}\n\
              Base branch: {}\n\
              You have access to Korlap tools via MCP. Use the rename_branch tool to give your \
@@ -1108,7 +1193,6 @@ pub fn send_message(
              feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
              If the task scope changes mid-conversation, rename the branch again to reflect the new direction.\n\
              Keep all changes on the target branch. Do not modify other branches.",
-            worktree_path.display(),
             ws_branch,
             base_branch,
         );
@@ -1127,8 +1211,17 @@ pub fn send_message(
     // Forward SSH agent and common env for git operations
     inject_shell_env(&mut cmd);
 
-    if let Some(token) = gh_token {
+    if let Some(ref token) = gh_token {
         cmd.env("GH_TOKEN", token);
+        // Rewrite SSH git URLs to HTTPS with token auth so git push works
+        // without needing the right SSH key for this specific account
+        cmd.env(
+            "GIT_CONFIG_PARAMETERS",
+            format!(
+                "'url.https://oauth2:{}@github.com/.insteadOf=git@github.com:'",
+                token
+            ),
+        );
     }
 
     let mut child = cmd
@@ -1167,6 +1260,7 @@ pub fn send_message(
     // Read stdout in background thread
     let ws_id = workspace_id.clone();
     let app_clone = app.clone();
+    let wt_path_str = worktree_path.to_string_lossy().to_string();
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
         let mut new_session_id: Option<String> = None;
@@ -1174,7 +1268,7 @@ pub fn send_message(
         for line in reader.lines() {
             match line {
                 Ok(line) if !line.is_empty() => {
-                    parse_stream_line(&line, &on_event, &mut new_session_id);
+                    parse_stream_line(&line, &on_event, &mut new_session_id, &wt_path_str);
                 }
                 Ok(_) => {} // empty line, skip
                 Err(e) => {
