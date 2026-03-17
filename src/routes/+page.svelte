@@ -25,9 +25,7 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
-  import ScriptRunner from "$lib/components/ScriptRunner.svelte";
-
-  type PanelTab = "chat" | "diff" | "terminal" | "scripts";
+  type PanelTab = "chat" | "diff" | "terminal";
 
   // ── State ──────────────────────────────────────────────
 
@@ -293,7 +291,7 @@
         {#if selectedWs}
           <div class="tab-bar">
             <div class="tabs">
-              {#each ["chat", "diff", "terminal", "scripts"] as tab}
+              {#each ["chat", "diff", "terminal"] as tab}
                 <button
                   class="tab"
                   class:active={activeTab === tab}
@@ -343,16 +341,7 @@
               </div>
             {/each}
 
-            {#each activeWorkspaces as ws (ws.id)}
-              <div
-                class="ws-tab-container"
-                style:display={activeTab === "scripts" && ws.id === selectedWsId ? "flex" : "none"}
-              >
-                <ScriptRunner workspaceId={ws.id} />
-              </div>
-            {/each}
-
-            <div class="tab-placeholder" style:display={activeTab === "terminal" ? "flex" : "none"}>
+<div class="tab-placeholder" style:display={activeTab === "terminal" ? "flex" : "none"}>
               <p>Terminal — coming soon</p>
             </div>
           </div>
