@@ -440,6 +440,22 @@ pub fn create_workspace(
 
     let base_branch = detect_default_branch(&repo_path)?;
 
+    // Fetch origin so we branch from the latest remote state
+    let fetch_output = std::process::Command::new("git")
+        .args(["fetch", "origin", &base_branch])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run git fetch: {}", e))?;
+
+    if !fetch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+        tracing::warn!("git fetch origin {} failed: {}", base_branch, stderr.trim());
+        // Don't fail workspace creation — offline/no-remote is acceptable,
+        // we'll just branch from whatever origin/<base> we already have.
+    }
+
+    let start_point = format!("origin/{}", base_branch);
+
     // Generate a unique name (retry if branch already exists)
     let mut name = random_workspace_name();
     for attempt in 0..10 {
@@ -480,7 +496,7 @@ pub fn create_workspace(
     let output = std::process::Command::new("git")
         .args(["worktree", "add", "-b", &branch])
         .arg(&worktree_path)
-        .arg(&base_branch)
+        .arg(&start_point)
         .current_dir(&repo_path)
         .output()
         .map_err(|e| format!("Failed to run git worktree add: {}", e))?;
