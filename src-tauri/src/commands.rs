@@ -440,22 +440,18 @@ pub fn get_changed_files(
     workspace_id: String,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<ChangedFile>, String> {
-    let (worktree_path, repo_path) = {
+    let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
-        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (ws.worktree_path.clone(), repo.path.clone())
+        ws.worktree_path.clone()
     };
 
-    let base_branch = detect_default_branch(&repo_path)?;
-
-    // Compare worktree working state against base branch
-    // This shows both committed branch changes AND uncommitted edits
+    // Show all changes in the worktree: staged + unstaged against HEAD
     let output = std::process::Command::new("git")
-        .args(["diff", "--numstat", &base_branch])
+        .args(["diff", "--numstat", "HEAD"])
         .current_dir(&worktree_path)
         .output()
         .map_err(|e| format!("Failed to run git diff: {}", e))?;
@@ -520,21 +516,18 @@ pub fn get_diff(
     file_path: Option<String>,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<String, String> {
-    let (worktree_path, repo_path) = {
+    let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
-        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (ws.worktree_path.clone(), repo.path.clone())
+        ws.worktree_path.clone()
     };
 
-    let base_branch = detect_default_branch(&repo_path)?;
-
-    // Diff worktree working state against base — shows everything the agent changed
+    // Diff worktree working state against HEAD — shows what the agent changed
     let mut cmd = std::process::Command::new("git");
-    cmd.args(["diff", &base_branch]);
+    cmd.args(["diff", "HEAD"]);
     if let Some(ref fp) = file_path {
         cmd.arg("--").arg(fp);
     }
