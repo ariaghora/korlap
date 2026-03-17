@@ -630,16 +630,28 @@ pub async fn archive_workspace(
         }
     }
 
-    let output = std::process::Command::new("git")
-        .args(["worktree", "remove", "--force"])
-        .arg(&worktree_path)
-        .current_dir(&repo_path)
-        .output()
-        .map_err(|e| format!("Failed to remove worktree: {}", e))?;
+    // Only try to remove if the worktree path still exists
+    if worktree_path.exists() {
+        let output = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&worktree_path)
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("Failed to remove worktree: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git worktree remove failed: {}", stderr.trim()));
+        if !output.status.success() {
+            // Try git worktree prune as fallback (cleans stale entries)
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "prune"])
+                .current_dir(&repo_path)
+                .output();
+        }
+    } else {
+        // Worktree already gone — prune stale git references
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "prune"])
+            .current_dir(&repo_path)
+            .output();
     }
 
     let mut st = state.lock().map_err(|e| e.to_string())?;
