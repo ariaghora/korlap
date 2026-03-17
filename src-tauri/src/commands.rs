@@ -64,6 +64,58 @@ fn repo_display_name(repo_path: &Path) -> String {
         .unwrap_or_else(|| repo_path.display().to_string())
 }
 
+/// Cached shell env values (resolved once on first call).
+fn get_shell_env() -> &'static ShellEnv {
+    use std::sync::OnceLock;
+    static ENV: OnceLock<ShellEnv> = OnceLock::new();
+    ENV.get_or_init(|| {
+        let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok().or_else(|| {
+            std::process::Command::new("launchctl")
+                .args(["getenv", "SSH_AUTH_SOCK"])
+                .output()
+                .ok()
+                .and_then(|o| {
+                    let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if s.is_empty() { None } else { Some(s) }
+                })
+        });
+
+        let home = std::env::var("HOME").ok();
+
+        let path = std::process::Command::new("zsh")
+            .args(["-l", "-c", "echo $PATH"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if s.is_empty() { None } else { Some(s) }
+            });
+
+        ShellEnv { ssh_auth_sock, home, path }
+    })
+}
+
+struct ShellEnv {
+    ssh_auth_sock: Option<String>,
+    home: Option<String>,
+    path: Option<String>,
+}
+
+/// Inject essential shell environment vars that Tauri apps launched from
+/// Finder/Dock don't inherit (SSH agent, PATH, HOME, etc.)
+fn inject_shell_env(cmd: &mut std::process::Command) {
+    let env = get_shell_env();
+    if let Some(ref sock) = env.ssh_auth_sock {
+        cmd.env("SSH_AUTH_SOCK", sock);
+    }
+    if let Some(ref home) = env.home {
+        cmd.env("HOME", home);
+    }
+    if let Some(ref path) = env.path {
+        cmd.env("PATH", path);
+    }
+}
+
 // ── Random workspace names ───────────────────────────────────────────
 
 const ADJECTIVES: &[&str] = &[
@@ -375,13 +427,15 @@ pub fn create_workspace(
 
     if !setup_script.trim().is_empty() {
         tracing::info!("Running setup script for workspace {}", ws.name);
-        let output = std::process::Command::new("zsh")
-            .args(["-c", &setup_script])
-            .current_dir(&worktree_path)
-            .env("KORLAP_WORKSPACE_NAME", &ws.name)
-            .env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string())
-            .env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string())
-            .env("KORLAP_DEFAULT_BRANCH", &base_branch)
+        let mut setup_cmd = std::process::Command::new("zsh");
+        setup_cmd.args(["-c", &setup_script]);
+        setup_cmd.current_dir(&worktree_path);
+        setup_cmd.env("KORLAP_WORKSPACE_NAME", &ws.name);
+        setup_cmd.env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string());
+        setup_cmd.env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string());
+        setup_cmd.env("KORLAP_DEFAULT_BRANCH", &base_branch);
+        inject_shell_env(&mut setup_cmd);
+        let output = setup_cmd
             .output()
             .map_err(|e| format!("Setup script failed to start: {}", e))?;
 
@@ -463,13 +517,14 @@ pub fn archive_workspace(
         if let Some(settings) = st.repo_settings.get(&repo_id) {
             if !settings.archive_script.trim().is_empty() {
                 tracing::info!("Running archive script for workspace {}", ws_name);
-                let _ = std::process::Command::new("zsh")
-                    .args(["-c", &settings.archive_script])
-                    .current_dir(&worktree_path)
-                    .env("KORLAP_WORKSPACE_NAME", &ws_name)
-                    .env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string())
-                    .env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string())
-                    .output();
+                let mut archive_cmd = std::process::Command::new("zsh");
+                archive_cmd.args(["-c", &settings.archive_script]);
+                archive_cmd.current_dir(&worktree_path);
+                archive_cmd.env("KORLAP_WORKSPACE_NAME", &ws_name);
+                archive_cmd.env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string());
+                archive_cmd.env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string());
+                inject_shell_env(&mut archive_cmd);
+                let _ = archive_cmd.output();
             }
         }
     }
@@ -729,13 +784,14 @@ pub fn get_pr_status(
         (ws.worktree_path.clone(), ws.branch.clone())
     };
 
-    let output = std::process::Command::new("gh")
-        .args([
-            "pr", "view", &branch,
-            "--json", "state,url,number,title,statusCheckRollup,mergeable,additions,deletions",
-        ])
-        .current_dir(&worktree_path)
-        .output()
+    let mut gh_cmd = std::process::Command::new("gh");
+    gh_cmd.args([
+        "pr", "view", &branch,
+        "--json", "state,url,number,title,statusCheckRollup,mergeable,additions,deletions",
+    ]);
+    gh_cmd.current_dir(&worktree_path);
+    inject_shell_env(&mut gh_cmd);
+    let output = gh_cmd.output()
         .map_err(|e| format!("Failed to run gh: {}", e))?;
 
     if !output.status.success() {
@@ -858,11 +914,14 @@ pub fn run_script(
         ws.worktree_path.clone()
     };
 
-    let mut child = std::process::Command::new("sh")
-        .args(["-c", &command])
-        .current_dir(&worktree_path)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+    let mut cmd = std::process::Command::new("zsh");
+    cmd.args(["-c", &command]);
+    cmd.current_dir(&worktree_path);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    inject_shell_env(&mut cmd);
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to run script: {}", e))?;
 
@@ -977,9 +1036,10 @@ pub fn send_message(
 
     // Get GH token per-profile (never switch global auth)
     let gh_token = if let Some(ref profile) = gh_profile {
-        let output = std::process::Command::new("gh")
-            .args(["auth", "token", "--user", profile])
-            .output();
+        let mut gh_auth_cmd = std::process::Command::new("gh");
+        gh_auth_cmd.args(["auth", "token", "--user", profile]);
+        inject_shell_env(&mut gh_auth_cmd);
+        let output = gh_auth_cmd.output();
         match output {
             Ok(o) if o.status.success() => {
                 Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -1063,6 +1123,9 @@ pub fn send_message(
     cmd.current_dir(&worktree_path);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+
+    // Forward SSH agent and common env for git operations
+    inject_shell_env(&mut cmd);
 
     if let Some(token) = gh_token {
         cmd.env("GH_TOKEN", token);
@@ -1235,6 +1298,31 @@ pub fn open_terminal(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut cmd = CommandBuilder::new(&shell);
     cmd.cwd(&worktree_path);
+
+    // Inject shell env for SSH, PATH, etc.
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        cmd.env("SSH_AUTH_SOCK", sock);
+    } else if let Ok(output) = std::process::Command::new("launchctl")
+        .args(["getenv", "SSH_AUTH_SOCK"])
+        .output()
+    {
+        let sock = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !sock.is_empty() {
+            cmd.env("SSH_AUTH_SOCK", sock);
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        cmd.env("HOME", home);
+    }
+    if let Ok(output) = std::process::Command::new("zsh")
+        .args(["-l", "-c", "echo $PATH"])
+        .output()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            cmd.env("PATH", path);
+        }
+    }
 
     let child = pair
         .slave
