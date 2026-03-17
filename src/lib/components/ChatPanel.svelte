@@ -58,6 +58,9 @@
     if (!userInput.trim() || sending || disabled || creating) return;
     const prompt = userInput.trim();
     userInput = "";
+    // Reset textarea height after clearing
+    const ta = document.querySelector(".input-row textarea") as HTMLTextAreaElement | null;
+    if (ta) ta.style.height = "auto";
     onSend(prompt);
   }
 
@@ -66,6 +69,12 @@
       e.preventDefault();
       handleSubmit();
     }
+  }
+
+  function autoResize(e: Event) {
+    const el = e.target as HTMLTextAreaElement;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }
 </script>
 
@@ -151,12 +160,14 @@
       handleSubmit();
     }}
   >
-    <input
+    <textarea
       bind:value={userInput}
       onkeydown={handleKeydown}
+      oninput={autoResize}
       placeholder="Ask to make changes, @mention files, run /commands"
       disabled={disabled || creating}
-    />
+      rows="1"
+    ></textarea>
     {#if sending}
       <button type="button" class="stop-btn" onclick={onStop}>Stop</button>
     {:else}
@@ -358,12 +369,13 @@
 
   .input-row {
     display: flex;
+    align-items: flex-end;
     gap: 0.5rem;
     padding: 0.6rem 1rem;
     border-top: 1px solid var(--border);
   }
 
-  .input-row input {
+  .input-row textarea {
     flex: 1;
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -372,14 +384,18 @@
     border-radius: 8px;
     font-family: inherit;
     font-size: 0.85rem;
+    resize: none;
+    overflow-y: auto;
+    line-height: 1.4;
+    max-height: 160px;
   }
 
-  .input-row input:focus {
+  .input-row textarea:focus {
     outline: none;
     border-color: color-mix(in srgb, var(--accent) 33%, transparent);
   }
 
-  .input-row input:disabled {
+  .input-row textarea:disabled {
     opacity: 0.4;
     cursor: default;
   }
