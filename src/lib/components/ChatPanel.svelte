@@ -20,7 +20,6 @@
     userScrolledUp = !atBottom;
   }
 
-  // Auto-scroll to bottom on new messages (unless user scrolled up)
   $effect(() => {
     messages.length;
     sending;
@@ -44,12 +43,6 @@
       handleSubmit();
     }
   }
-
-  function formatChunk(chunk: MessageChunk): string {
-    if (chunk.type === "text") return chunk.content;
-    if (chunk.input) return `${chunk.name}: ${chunk.input}`;
-    return chunk.name;
-  }
 </script>
 
 <div class="chat-panel">
@@ -62,26 +55,45 @@
       {#each messages as msg, i (msg.id)}
         {@const prevRole = i > 0 ? messages[i - 1].role : null}
         {@const showLabel = msg.role === "assistant" && prevRole !== "assistant"}
-        <div class="chat-msg" class:user={msg.role === "user"} class:consecutive={msg.role === "assistant" && !showLabel}>
+
+        {#if msg.role === "user"}
+          <div class="user-msg">
+            <div class="user-bubble">
+              {#each msg.chunks as chunk}
+                {#if chunk.type === "text"}{chunk.content}{/if}
+              {/each}
+            </div>
+          </div>
+        {:else}
           {#if showLabel}
-            <div class="msg-label">Claude</div>
+            <div class="assistant-label">Claude</div>
           {/if}
-          {#each msg.chunks as chunk}
-            {#if chunk.type === "text"}
-              <div class="msg-text">{chunk.content}</div>
-            {:else}
-              <span class="tool-tag">{formatChunk(chunk)}</span>
-            {/if}
-          {/each}
-        </div>
+          <div class="assistant-msg">
+            {#each msg.chunks as chunk}
+              {#if chunk.type === "text"}
+                <div class="assistant-card">
+                  <p class="assistant-text">{chunk.content}</p>
+                </div>
+              {:else}
+                <div class="tool-pills">
+                  <span class="tool-pill">
+                    <span class="tool-icon">⚙</span>
+                    {chunk.name}{#if chunk.input}: {chunk.input}{/if}
+                  </span>
+                </div>
+              {/if}
+            {/each}
+          </div>
+        {/if}
       {/each}
+
       {#if sending}
         {@const lastRole = messages.length > 0 ? messages[messages.length - 1].role : null}
-        <div class="chat-msg" class:consecutive={lastRole === "assistant"}>
-          {#if lastRole !== "assistant"}
-            <div class="msg-label">Claude</div>
-          {/if}
-          <div class="msg-thinking">Thinking...</div>
+        {#if lastRole !== "assistant"}
+          <div class="assistant-label">Claude</div>
+        {/if}
+        <div class="assistant-msg">
+          <div class="thinking">Thinking...</div>
         </div>
       {/if}
     {/if}
@@ -117,10 +129,10 @@
   .chat-area {
     flex: 1;
     overflow-y: auto;
-    padding: 0.75rem;
+    padding: 1rem 1.25rem;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.6rem;
   }
 
   .chat-empty {
@@ -132,45 +144,92 @@
     font-size: 0.85rem;
   }
 
-  .chat-msg {
-    max-width: 85%;
-  }
+  /* ── User messages ─────────────────────────── */
 
-  .chat-msg.user {
+  .user-msg {
     align-self: flex-end;
+    max-width: 75%;
   }
 
-  .chat-msg.consecutive {
-    margin-top: -0.4rem;
-  }
-
-  .chat-msg.user .msg-text {
+  .user-bubble {
     background: #2a2520;
     border: 1px solid #3a3530;
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
+    border-radius: 10px;
+    padding: 0.5rem 0.85rem;
     color: #e8dcc8;
-  }
-
-  .msg-label {
-    font-size: 0.7rem;
-    color: #6a6050;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    margin-bottom: 0.25rem;
-  }
-
-  .msg-text {
     font-size: 0.85rem;
     line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ── Assistant messages ────────────────────── */
+
+  .assistant-label {
+    font-size: 0.68rem;
+    color: #6a6050;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 0.5rem;
+    margin-bottom: 0.15rem;
+  }
+
+  .assistant-msg {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-width: 90%;
+  }
+
+  .assistant-card {
+    background: #1a1814;
+    border: 1px solid #2a2520;
+    border-radius: 8px;
+    padding: 0.6rem 0.85rem;
+  }
+
+  .assistant-text {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.55;
     color: #d4c5a9;
     white-space: pre-wrap;
     word-break: break-word;
   }
 
-  .msg-thinking {
+  /* ── Tool use pills ────────────────────────── */
+
+  .tool-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .tool-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.6rem;
+    background: #1a1814;
+    border: 1px solid #2e2a24;
+    border-radius: 14px;
+    font-size: 0.75rem;
+    color: #8a7e6a;
+    font-family: "SF Mono", "Fira Code", monospace;
+    letter-spacing: -0.01em;
+  }
+
+  .tool-icon {
+    font-size: 0.65rem;
+    opacity: 0.6;
+  }
+
+  /* ── Thinking ──────────────────────────────── */
+
+  .thinking {
     font-size: 0.85rem;
     color: #c8a97e;
+    padding: 0.3rem 0;
     animation: pulse 2s ease-in-out infinite;
   }
 
@@ -184,39 +243,29 @@
     }
   }
 
-  .tool-tag {
-    display: inline-block;
-    padding: 0.2rem 0.5rem;
-    background: #1e1b17;
-    border: 1px solid #2e2a24;
-    border-radius: 4px;
-    font-size: 0.72rem;
-    color: #8a7e6a;
-    font-family: "SF Mono", "Fira Code", monospace;
-    margin-top: 0.3rem;
-  }
+  /* ── Input ─────────────────────────────────── */
 
   .input-row {
     display: flex;
     gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
+    padding: 0.6rem 1rem;
     border-top: 1px solid #2a2520;
   }
 
   .input-row input {
     flex: 1;
-    background: #1e1b17;
+    background: #1a1814;
     border: 1px solid #2e2a24;
     color: #d4c5a9;
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
+    padding: 0.55rem 0.85rem;
+    border-radius: 8px;
     font-family: inherit;
     font-size: 0.85rem;
   }
 
   .input-row input:focus {
     outline: none;
-    border-color: #c8a97e;
+    border-color: #c8a97e55;
   }
 
   .input-row input:disabled {
@@ -225,11 +274,11 @@
   }
 
   .send-btn {
-    padding: 0.5rem 1rem;
+    padding: 0.55rem 1rem;
     background: #2a2520;
     border: 1px solid #3a3530;
     color: #d4c5a9;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     font-family: inherit;
     font-size: 0.85rem;

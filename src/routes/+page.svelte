@@ -443,37 +443,37 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 0.75rem;
-    height: 36px;
+    padding: 0 1rem;
+    height: 38px;
     border-bottom: 1px solid #2a2520;
-    background: #16140f;
     flex-shrink: 0;
   }
 
   .tabs {
     display: flex;
-    gap: 0;
+    gap: 0.15rem;
   }
 
   .tab {
-    padding: 0.4rem 0.75rem;
+    padding: 0.35rem 0.65rem;
     background: transparent;
     border: none;
-    border-bottom: 2px solid transparent;
+    border-radius: 5px;
     color: #6a6050;
     cursor: pointer;
     font-family: inherit;
-    font-size: 0.8rem;
-    transition: color 0.15s;
+    font-size: 0.82rem;
+    font-weight: 500;
   }
 
   .tab:hover {
     color: #d4c5a9;
+    background: #1e1b17;
   }
 
   .tab.active {
     color: #e8dcc8;
-    border-bottom-color: #c8a97e;
+    background: #2a2520;
   }
 
   .tab-bar-right {
@@ -483,17 +483,19 @@
   }
 
   .status-badge {
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    padding: 0.15rem 0.5rem;
-    border-radius: 3px;
+    padding: 0.2rem 0.55rem;
+    border-radius: 4px;
+    border: 1px solid;
   }
 
   .status-badge.running {
     color: #c8a97e;
-    border: 1px solid #c8a97e44;
+    border-color: #c8a97e66;
+    background: #c8a97e11;
     animation: badge-pulse 2s ease-in-out infinite;
   }
 

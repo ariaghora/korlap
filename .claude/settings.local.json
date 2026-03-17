@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(bun run:*)",
+      "Bash(bun add:*)",
+      "Bash(bun install:*)",
+      "Bash(claude -p --output-format json)",
+      "Bash(claude --version)"
+    ]
+  }
+}

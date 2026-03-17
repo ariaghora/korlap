@@ -65,9 +65,7 @@ test.describe("with repo", () => {
     await page.click("button:text('Send')");
 
     // User message should appear immediately
-    await expect(page.locator(".chat-msg.user .msg-text")).toContainText(
-      "hello world",
-    );
+    await expect(page.locator(".user-bubble")).toContainText("hello world");
   });
 
   // NOTE: Channel-based tests (agent response, thinking indicator) require
