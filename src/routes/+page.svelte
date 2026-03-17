@@ -2,6 +2,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import {
     addRepo,
+    removeRepo,
     listRepos,
     createWorkspace,
     archiveWorkspace,
@@ -168,6 +169,27 @@
     }).catch((e) => { error = String(e); });
 
     getRepoSettings(repo.id).then((s) => { repoSettings = s; }).catch(() => {});
+  }
+
+  async function handleRemoveRepo() {
+    if (!activeRepo) return;
+    const repoId = activeRepo.id;
+    error = "";
+
+    try {
+      await removeRepo(repoId);
+      showSettings = false;
+      repos = repos.filter((r) => r.id !== repoId);
+      workspaces = [];
+      selectedWsId = null;
+      sendingMap.clear();
+      prStatusMap.clear();
+      changeCounts.clear();
+      activeRepo = repos.length > 0 ? repos[0] : null;
+      if (activeRepo) selectRepo(activeRepo);
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   function handleNewWorkspace() {
@@ -572,7 +594,9 @@
       <RepoSettingsPanel
         repoId={activeRepo.id}
         repoName={activeRepo.display_name}
+        repoPath={activeRepo.path}
         currentProfile={activeRepo.gh_profile ?? null}
+        onRemoveRepo={handleRemoveRepo}
         onClose={() => {
           showSettings = false;
           if (activeRepo) {
