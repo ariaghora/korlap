@@ -345,6 +345,8 @@
         sendPrompt(wsId, `PR #${pr.number} has merge conflicts with ${baseBranch}.\n\nResolve them:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n5. Push\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving conflicts on PR #${pr.number}`);
       } else if (pr.checks === "failing") {
         sendPrompt(wsId, `PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`, `Fixing checks on PR #${pr.number}`);
+      } else if (pr.ahead_by > 0) {
+        sendPrompt(wsId, `Push local commits to origin. Run \`git push\`. Only say "Pushed successfully" on success. If it fails, explain why.`, `Pushing to PR #${pr.number}`);
       } else {
         sendPrompt(wsId, `Merge PR #${pr.number} using \`gh pr merge ${pr.number} --squash --delete-branch=false\`. Only say "PR #${pr.number} merged successfully" on success. If it fails, explain why.`, `Merging PR #${pr.number}`);
       }
@@ -416,7 +418,8 @@
         prev.number === pr.number &&
         prev.additions === pr.additions &&
         prev.deletions === pr.deletions &&
-        prev.title === pr.title
+        prev.title === pr.title &&
+        prev.ahead_by === pr.ahead_by
       ) {
         return; // No change — skip reactive update
       }
@@ -521,6 +524,8 @@
                   <button class="status-badge checks-fail" onclick={handlePrAction}>Fix issues</button>
                 {:else if prStatusMap.get(selectedWs.id)?.checks === "pending"}
                   <span class="status-badge checks-pending">PR #{prStatusMap.get(selectedWs.id)?.number} · Checks</span>
+                {:else if (prStatusMap.get(selectedWs.id)?.ahead_by ?? 0) > 0}
+                  <button class="status-badge push-needed" onclick={handlePrAction}>Push</button>
                 {:else}
                   <button class="status-badge mergeable" onclick={handlePrAction}>Merge #{prStatusMap.get(selectedWs.id)?.number}</button>
                 {/if}
@@ -861,6 +866,18 @@
     border-color: color-mix(in srgb, var(--diff-del) 40%, transparent);
     background: color-mix(in srgb, var(--diff-del) 7%, transparent);
     text-transform: none;
+  }
+
+  .status-badge.push-needed {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    cursor: pointer;
+    text-transform: none;
+  }
+
+  .status-badge.push-needed:hover {
+    filter: brightness(1.2);
   }
 
   .status-badge.mergeable {
