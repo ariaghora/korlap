@@ -765,7 +765,7 @@ No need to mention in your report whether or not you used one of the fallback st
             review.currentTask = formatToolTask(last.name, last.input_preview);
           }
           if (event.text.trim()) {
-            review.resultMarkdown += event.text.trim();
+            review.resultMarkdown += (review.resultMarkdown ? "\n\n" : "") + event.text.trim();
           }
           reviewByWorkspace.set(wsId, { ...review });
         } else if (event.type === "done") {
@@ -962,7 +962,7 @@ No need to mention in your report whether or not you used one of the fallback st
                     onCancel={() => {
                       const wasRunning = reviewByWorkspace.get(ws.id)?.status === "running";
                       reviewByWorkspace.delete(ws.id);
-                      if (wasRunning) stopAgent(ws.id).catch(() => {});
+                      if (wasRunning) stopAgent(ws.id).catch((e) => { error = String(e); });
                     }}
                     onSendToChat={(markdown) => {
                       reviewByWorkspace.delete(ws.id);
