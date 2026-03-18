@@ -159,6 +159,10 @@ pub struct ToolUseInfo {
     pub input_preview: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_string: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_string: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -253,10 +257,29 @@ fn parse_stream_line(
                             }
                         });
 
+                        // Extract old_string/new_string for Edit tool calls
+                        let (old_string, new_string) = if name == "Edit" || name == "edit" {
+                            let old = block
+                                .get("input")
+                                .and_then(|input| input.get("old_string"))
+                                .and_then(|s| s.as_str())
+                                .map(|s| s.to_string());
+                            let new = block
+                                .get("input")
+                                .and_then(|input| input.get("new_string"))
+                                .and_then(|s| s.as_str())
+                                .map(|s| s.to_string());
+                            (old, new)
+                        } else {
+                            (None, None)
+                        };
+
                         tool_uses.push(ToolUseInfo {
                             name,
                             input_preview,
                             file_path,
+                            old_string,
+                            new_string,
                         });
                     }
                     _ => {}
