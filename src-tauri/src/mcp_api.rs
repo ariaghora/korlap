@@ -72,7 +72,7 @@ fn handle_request(
     let path = parts.get(1).unwrap_or(&"");
 
     let (status, response_body) = match (*method, *path) {
-        ("POST", "/rename-branch") => handle_rename_branch(&body, state),
+        ("POST", "/rename-branch") => handle_rename_branch(&body, state, app),
         ("GET", "/workspace-info") => handle_workspace_info(&request_line, state),
         ("POST", "/notify") => handle_notify(&body, app),
         _ => ("404 Not Found".to_string(), r#"{"error":"not found"}"#.to_string()),
@@ -94,6 +94,7 @@ fn handle_request(
 fn handle_rename_branch(
     body: &[u8],
     state: &Arc<Mutex<AppState>>,
+    app: &AppHandle,
 ) -> (String, String) {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
         return ("400 Bad Request".into(), r#"{"error":"invalid json"}"#.into());
@@ -147,6 +148,11 @@ fn handle_rename_branch(
         ws.branch = new_branch.clone();
         ws.name = new_name.clone();
         let _ = st.save_workspaces();
+    }
+
+    // Emit event so the frontend updates immediately
+    if let Some(ws) = st.workspaces.get(&workspace_id) {
+        let _ = app.emit("workspace-updated", ws.clone());
     }
 
     (
