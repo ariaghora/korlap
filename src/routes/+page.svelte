@@ -274,6 +274,7 @@
             crypto.randomUUID(),
             event.text.trim(),
             toolUses,
+            event.thinking,
           );
           if (event.tool_uses.length > 0) {
             diffRefreshTrigger++;
