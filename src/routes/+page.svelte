@@ -375,6 +375,8 @@
             name: t.name,
             input: t.input_preview ?? "",
             filePath: t.file_path,
+            oldString: t.old_string,
+            newString: t.new_string,
           }));
           addAssistantMessage(
             wsId,
