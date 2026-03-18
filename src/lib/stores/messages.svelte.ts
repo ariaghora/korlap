@@ -14,6 +14,7 @@ export interface Message {
   chunks: MessageChunk[];
   done: boolean;
   actionLabel?: string; // compact label for action messages (e.g. "Creating PR", "Merging")
+  imageDataUrls?: string[]; // data URLs for attached image thumbnails (user messages only)
 }
 
 // ── State ──────────────────────────────────────────────────────────
@@ -59,12 +60,14 @@ export function addUserMessage(
   workspaceId: string,
   id: string,
   text: string,
+  imageDataUrls?: string[],
 ) {
   pushMessage(workspaceId, {
     id,
     role: "user",
-    chunks: [{ type: "text", content: text }],
+    chunks: text ? [{ type: "text", content: text }] : [],
     done: true,
+    imageDataUrls: imageDataUrls && imageDataUrls.length > 0 ? imageDataUrls : undefined,
   });
   persistMessages(workspaceId);
 }

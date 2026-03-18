@@ -94,6 +94,16 @@ export async function listWorkspaces(
   return invoke<WorkspaceInfo[]>("list_workspaces", { repoId });
 }
 
+// ── Images ──────────────────────────────────────────────────────────
+
+export async function saveImage(
+  workspaceId: string,
+  data: string,
+  extension: string,
+): Promise<string> {
+  return invoke<string>("save_image", { workspaceId, data, extension });
+}
+
 // ── Agent ────────────────────────────────────────────────────────────
 
 export async function sendMessage(
