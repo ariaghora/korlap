@@ -4,12 +4,9 @@
   interface Props {
     workspaceId: string;
     refreshTrigger?: number;
-    prState?: string;
-    onCreatePr?: () => void;
-    disabled?: boolean;
   }
 
-  let { workspaceId, refreshTrigger = 0, prState, onCreatePr, disabled = false }: Props = $props();
+  let { workspaceId, refreshTrigger = 0 }: Props = $props();
 
   let files = $state<ChangedFile[]>([]);
   let selectedFile = $state<string | null>(null);
@@ -129,11 +126,6 @@
           </span>
           <button class="refresh-btn-sm" onclick={loadFiles} title="Refresh">↻</button>
         </div>
-        {#if onCreatePr && (!prState || prState === "none") && files.length > 0}
-          <button class="create-pr-btn" onclick={onCreatePr} disabled={disabled}>
-            Push & Create PR
-          </button>
-        {/if}
         <div class="file-list">
           {#each files as file}
             <button
@@ -257,29 +249,6 @@
 
   .refresh-btn-sm:hover {
     color: var(--text-primary);
-  }
-
-  .create-pr-btn {
-    margin: 0.4rem 0.5rem;
-    padding: 0.35rem 0;
-    background: transparent;
-    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-    border-radius: 5px;
-    color: var(--accent);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-align: center;
-  }
-
-  .create-pr-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-
-  .create-pr-btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
   }
 
   .file-list {
