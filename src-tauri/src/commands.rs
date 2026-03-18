@@ -255,8 +255,30 @@ fn parse_stream_line(
                                 input.get("pattern").and_then(|p| p.as_str())
                             {
                                 Some(strip(pattern))
+                            } else if let Some(query) =
+                                input.get("query").and_then(|q| q.as_str())
+                            {
+                                Some(strip(query).chars().take(120).collect())
+                            } else if let Some(desc) =
+                                input.get("description").and_then(|d| d.as_str())
+                            {
+                                Some(strip(desc).chars().take(120).collect())
+                            } else if let Some(skill) =
+                                input.get("skill").and_then(|s| s.as_str())
+                            {
+                                Some(strip(skill))
+                            } else if let Some(url) =
+                                input.get("url").and_then(|u| u.as_str())
+                            {
+                                Some(url.chars().take(120).collect())
                             } else {
-                                None
+                                // Fallback: use first short string value from input
+                                input.as_object().and_then(|obj| {
+                                    obj.values()
+                                        .filter_map(|v| v.as_str())
+                                        .find(|s| !s.is_empty() && s.len() < 200)
+                                        .map(|s| strip(s).chars().take(120).collect())
+                                })
                             }
                         });
 
