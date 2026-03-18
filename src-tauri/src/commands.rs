@@ -498,20 +498,87 @@ pub async fn create_workspace(
         (repo.path.clone(), repo.gh_profile.clone())
     };
 
+    // Resolve GH token early — if a profile is configured but the token can't be
+    // obtained, fail immediately rather than silently branching off stale data.
+    let gh_token = if let Some(ref profile) = gh_profile {
+        let mut gh_auth_cmd = std::process::Command::new("gh");
+        gh_auth_cmd.args(["auth", "token", "--user", profile]);
+        inject_shell_env(&mut gh_auth_cmd);
+        let output = gh_auth_cmd
+            .output()
+            .map_err(|e| format!("Failed to run gh: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "Cannot authenticate as GitHub profile '{}'. \
+                 Fix your gh auth or change the repo's profile.\n{}",
+                profile,
+                stderr.trim()
+            ));
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    };
+
     let base_branch = detect_default_branch(&repo_path)?;
 
-    // Fetch origin so we branch from the latest remote state
-    let fetch_output = std::process::Command::new("git")
+    // Fetch origin so we branch from the latest remote state.
+    // When a gh_profile is set, rewrite SSH URLs to HTTPS with the token so
+    // git authenticates as the selected profile, not the ambient SSH key.
+    let mut fetch_cmd = std::process::Command::new("git");
+    if let Some(ref token) = gh_token {
+        fetch_cmd.args([
+            "-c",
+            &format!(
+                "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
+                token
+            ),
+            "-c",
+            &format!(
+                "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
+                token
+            ),
+        ]);
+    }
+    fetch_cmd
         .args(["fetch", "origin", &base_branch])
-        .current_dir(&repo_path)
+        .current_dir(&repo_path);
+    inject_shell_env(&mut fetch_cmd);
+    let fetch_output = fetch_cmd
         .output()
         .map_err(|e| format!("Failed to run git fetch: {}", e))?;
 
     if !fetch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-        tracing::warn!("git fetch origin {} failed: {}", base_branch, stderr.trim());
-        // Don't fail workspace creation — offline/no-remote is acceptable,
-        // we'll just branch from whatever origin/<base> we already have.
+        let stderr = String::from_utf8_lossy(&fetch_output.stderr).to_string();
+        let lower = stderr.to_lowercase();
+
+        let hint = if lower.contains("repository not found") || lower.contains("could not read from remote") {
+            if gh_profile.is_some() {
+                "The configured GitHub profile may not have access to this repo. \
+                 Try changing the profile in repo settings."
+            } else {
+                "No GitHub profile is set for this repo. \
+                 Set one in repo settings so Korlap can authenticate."
+            }
+        } else if lower.contains("could not resolve host") {
+            "Check your internet connection and try again."
+        } else if lower.contains("permission denied") || lower.contains("authentication failed") {
+            if gh_profile.is_some() {
+                "Authentication failed. The token for this profile may be expired. \
+                 Run `gh auth refresh` or change the profile in repo settings."
+            } else {
+                "Authentication failed. Set a GitHub profile in repo settings."
+            }
+        } else {
+            "Check your git remote configuration and network connection."
+        };
+
+        return Err(format!(
+            "Could not fetch from origin.\n{}\n\n{}",
+            hint,
+            stderr.trim()
+        ));
     }
 
     let start_point = format!("origin/{}", base_branch);
