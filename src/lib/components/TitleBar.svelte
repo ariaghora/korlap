@@ -10,12 +10,14 @@
     activeRepo: RepoDetail;
     selectedWs: WorkspaceInfo | undefined;
     prStatus: PrStatus | undefined;
+    wsChanges: { additions: number; deletions: number } | undefined;
     onSelectRepo: (repo: RepoDetail) => void;
     onAddRepo: () => void;
     onSettings: () => void;
+    onPrAction: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, prStatus, onSelectRepo, onAddRepo, onSettings }: Props =
+  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction }: Props =
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
@@ -79,6 +81,9 @@
         <span>Add repository</span>
       </button>
     </Dropdown>
+    <button class="settings-btn" onclick={onSettings} title="Repository settings">
+      <Settings size={14} />
+    </button>
   </div>
 
   <div class="titlebar-right">
@@ -105,14 +110,29 @@
         <span class="breadcrumb-sep">›</span>
         <span class="breadcrumb-base">{activeRepo.default_branch}</span>
       </span>
+
+      {#if prStatus?.state === "open"}
+        {#if prStatus.mergeable === "conflicting"}
+          <button class="action-badge conflicts" onclick={onPrAction}>Conflicts</button>
+        {:else if prStatus.checks === "failing"}
+          <button class="action-badge checks-fail" onclick={onPrAction}>Fix issues</button>
+        {:else if prStatus.checks === "pending"}
+          <span class="status-label checks-pending"><Loader size={10} class="status-icon spinning" /> PR #{prStatus.number} · Checks</span>
+        {:else if (prStatus.ahead_by ?? 0) > 0}
+          <button class="action-badge push-needed" onclick={onPrAction}>Push</button>
+        {:else}
+          <button class="action-badge mergeable" onclick={onPrAction}>Merge #{prStatus.number}</button>
+        {/if}
+      {:else if prStatus?.state === "merged"}
+        <span class="status-label merged"><Check size={10} class="status-icon" /> Done</span>
+      {:else if wsChanges && (wsChanges.additions > 0 || wsChanges.deletions > 0)}
+        <button class="action-badge create-pr" onclick={onPrAction} disabled={selectedWs.status === "running"}>Push & create PR</button>
+      {/if}
     {:else}
       <span class="breadcrumb">
         <span class="breadcrumb-base">{activeRepo.default_branch}</span>
       </span>
     {/if}
-    <button class="settings-btn" onclick={onSettings} title="Repository settings">
-      <Settings size={14} />
-    </button>
   </div>
 </header>
 
@@ -288,5 +308,107 @@
   .settings-btn:hover {
     color: var(--text-primary);
     background: var(--border);
+  }
+
+  /* ── Action badges (clickable) ─────────────────── */
+
+  .action-badge {
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.2rem 0.55rem;
+    border-radius: 4px;
+    border: 1px solid;
+    cursor: pointer;
+    font-family: inherit;
+    background: transparent;
+    margin-left: 0.25rem;
+  }
+
+  .action-badge.create-pr {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+
+  .action-badge.create-pr:hover:not(:disabled) {
+    filter: brightness(1.2);
+  }
+
+  .action-badge.create-pr:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .action-badge.push-needed {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+
+  .action-badge.push-needed:hover {
+    filter: brightness(1.2);
+  }
+
+  .action-badge.mergeable {
+    color: var(--status-ok);
+    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
+    background: color-mix(in srgb, var(--status-ok) 7%, transparent);
+  }
+
+  .action-badge.mergeable:hover {
+    filter: brightness(1.2);
+  }
+
+  .action-badge.checks-fail {
+    color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 40%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 7%, transparent);
+  }
+
+  .action-badge.checks-fail:hover {
+    filter: brightness(1.2);
+  }
+
+  .action-badge.conflicts {
+    color: #c87e7e;
+    border-color: color-mix(in srgb, #c87e7e 40%, transparent);
+    background: color-mix(in srgb, #c87e7e 7%, transparent);
+  }
+
+  .action-badge.conflicts:hover {
+    filter: brightness(1.2);
+  }
+
+  /* ── Status labels (non-interactive, no bg/border) */
+
+  .status-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-left: 0.25rem;
+  }
+
+  .status-label.merged {
+    color: var(--status-ok);
+  }
+
+  .status-label.checks-pending {
+    animation: badge-pulse 2s ease-in-out infinite;
+  }
+
+  .status-label :global(.status-icon) {
+    flex-shrink: 0;
+  }
+
+  .status-label :global(.status-icon.spinning) {
+    animation: spin 1.5s linear infinite;
+  }
+
+  @keyframes badge-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
   }
 </style>
