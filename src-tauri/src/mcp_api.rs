@@ -124,28 +124,15 @@ fn handle_rename_branch(
         return ("400 Bad Request".into(), r#"{"error":"cannot rename archived workspace"}"#.into());
     }
 
-    let old_branch = ws.branch.clone();
-    let new_branch = new_name.clone();
     let worktree_path = ws.worktree_path.clone();
+    let fallback_branch = ws.branch.clone();
 
-    let output = std::process::Command::new("git")
-        .args(["branch", "-m", &old_branch, &new_branch])
-        .current_dir(&worktree_path)
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {}
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            return ("500 Internal Server Error".into(), format!(r#"{{"error":"git branch -m failed: {}"}}"#, stderr.trim()));
-        }
-        Err(e) => {
-            return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e));
-        }
+    if let Err(e) = crate::state::rename_git_branch(&worktree_path, &new_name, &fallback_branch) {
+        return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e));
     }
 
     if let Some(ws) = st.workspaces.get_mut(&workspace_id) {
-        ws.branch = new_branch.clone();
+        ws.branch = new_name.clone();
         ws.name = new_name.clone();
         let _ = st.save_workspaces();
     }
@@ -157,7 +144,7 @@ fn handle_rename_branch(
 
     (
         "200 OK".into(),
-        format!(r#"{{"ok":true,"branch":"{}","name":"{}"}}"#, new_branch, new_name),
+        format!(r#"{{"ok":true,"branch":"{}","name":"{}"}}"#, new_name, new_name),
     )
 }
 
