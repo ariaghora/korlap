@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { RepoDetail, WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { Settings, ExternalLink, Check, X, Loader, Plus, GitPullRequestCreate, GitMerge, ArrowUp, AlertTriangle, Wrench } from "lucide-svelte";
+  import { Settings, ExternalLink, Check, X, Loader, Plus, GitPullRequestCreate, GitMerge, ArrowUp, AlertTriangle, Wrench, Eye } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Dropdown from "./Dropdown.svelte";
 
@@ -15,9 +15,11 @@
     onAddRepo: () => void;
     onSettings: () => void;
     onPrAction: () => void;
+    onReview: () => void;
+    reviewRunning: boolean;
   }
 
-  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction }: Props =
+  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning }: Props =
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
@@ -108,6 +110,9 @@
         <div class="btn-group">
           <button class="pr-link-btn" onclick={() => openUrl(prStatus!.url)} title="Open PR #{prStatus.number} in browser">
             <ExternalLink size={12} />
+          </button>
+          <button class="action-badge review" onclick={onReview} disabled={selectedWs.status === "running" || reviewRunning}>
+            <Eye size={11} /> Review
           </button>
           {#if prStatus.mergeable === "conflicting"}
             <button class="action-badge conflicts" onclick={onPrAction}><AlertTriangle size={11} /> Conflicts</button>
@@ -387,6 +392,25 @@
 
   .action-badge.checks-fail:hover {
     filter: brightness(1.2);
+  }
+
+  .action-badge.review {
+    color: var(--text-secondary);
+    border-color: var(--border-light);
+    background: var(--bg-card);
+    border-left: none;
+    border-right: 1px solid var(--border-light);
+    border-radius: 0;
+  }
+
+  .action-badge.review:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--border);
+  }
+
+  .action-badge.review:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   .action-badge.conflicts {

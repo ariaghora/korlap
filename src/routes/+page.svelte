@@ -44,6 +44,7 @@
   import TerminalView from "$lib/components/Terminal.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
   import SearchModal from "$lib/components/SearchModal.svelte";
+  import ReviewPill, { type ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi } from "$lib/components/ChatPanel.svelte";
 
   type PanelTab = "chat" | "diff" | "files" | "terminal";
@@ -67,6 +68,7 @@
   let fileNavigatePath = $state<string | null>(null);
   let showSearchModal = $state(false);
   let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
+  let reviewByWorkspace = new SvelteMap<string, ReviewState>();
 
   // ── Message queue ──────────────────────────────────────
   interface QueuedMessage {
@@ -605,6 +607,86 @@
     }
   }
 
+  function formatToolTask(toolName: string, inputPreview?: string): string {
+    const verbs: Record<string, string> = {
+      Read: "Reading",
+      Grep: "Searching",
+      Glob: "Finding files",
+      Bash: "Running command",
+      Edit: "Editing",
+      Write: "Writing",
+      Agent: "Delegating",
+    };
+    const verb = verbs[toolName] ?? `Using ${toolName}`;
+    return inputPreview ? `${verb} ${inputPreview}` : `${verb}...`;
+  }
+
+  async function handleReview() {
+    if (!selectedWsId || !activeRepo) return;
+    const wsId = selectedWsId;
+
+    if (sendingByWorkspace.get(wsId)) return;
+    const pr = prStatusMap.get(wsId);
+    if (!pr || pr.state !== "open") return;
+
+    const baseBranch = activeRepo.default_branch;
+
+    reviewByWorkspace.set(wsId, {
+      status: "running",
+      workspaceId: wsId,
+      currentTask: "Starting review...",
+      resultMarkdown: "",
+    });
+
+    setSending(wsId, true);
+
+    try {
+      await sendMessage(wsId, `Review the code changes on this branch compared to ${baseBranch}.
+
+Run \`git diff origin/${baseBranch}...HEAD\` to see the changes, then provide a thorough code review.
+
+Focus on:
+- Bugs, logic errors, edge cases
+- Security concerns
+- Performance issues
+- Code style and readability
+- Missing error handling
+
+Format your review as markdown with clear sections. Be specific — reference file names and line ranges. Keep it concise but actionable.`, (event: AgentEvent) => {
+        const review = reviewByWorkspace.get(wsId);
+        if (!review) return;
+
+        if (event.type === "assistant_message") {
+          if (event.tool_uses.length > 0) {
+            const last = event.tool_uses[event.tool_uses.length - 1];
+            review.currentTask = formatToolTask(last.name, last.input_preview);
+          }
+          if (event.text.trim()) {
+            review.resultMarkdown += (review.resultMarkdown ? "\n\n" : "") + event.text.trim();
+          }
+          reviewByWorkspace.set(wsId, { ...review });
+        } else if (event.type === "done") {
+          setSending(wsId, false);
+          review.status = "complete";
+          reviewByWorkspace.set(wsId, { ...review });
+        } else if (event.type === "error") {
+          setSending(wsId, false);
+          review.status = "complete";
+          review.resultMarkdown = `**Review failed:** ${event.message}`;
+          reviewByWorkspace.set(wsId, { ...review });
+        }
+      });
+    } catch (e) {
+      setSending(wsId, false);
+      const review = reviewByWorkspace.get(wsId);
+      if (review) {
+        review.status = "complete";
+        review.resultMarkdown = `**Review failed:** ${e}`;
+        reviewByWorkspace.set(wsId, { ...review });
+      }
+    }
+  }
+
   // Refresh change counts (fast, local git only)
   async function refreshChangeCounts(wsId: string) {
     try {
@@ -690,6 +772,8 @@
       onAddRepo={handleOpenRepo}
       onSettings={() => (showSettings = true)}
       onPrAction={handlePrAction}
+      onReview={handleReview}
+      reviewRunning={selectedWsId ? reviewByWorkspace.get(selectedWsId)?.status === "running" : false}
     />
 
     {#if error}
@@ -771,6 +855,24 @@
                   onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
                   onReady={(api) => chatPanelApis.set(ws.id, api)}
                 />
+                {#if reviewByWorkspace.has(ws.id)}
+                  <ReviewPill
+                    state={reviewByWorkspace.get(ws.id)!}
+                    onCancel={() => {
+                      if (sendingByWorkspace.get(ws.id)) {
+                        stopAgent(ws.id).catch(() => {});
+                        setSending(ws.id, false);
+                      }
+                      reviewByWorkspace.delete(ws.id);
+                    }}
+                    onSendToChat={(markdown) => {
+                      reviewByWorkspace.delete(ws.id);
+                      addActionMessage(ws.id, crypto.randomUUID(), "Code review");
+                      sendPrompt(ws.id, `Address all issues from this code review:\n\n${markdown}`);
+                      activeTab = "chat";
+                    }}
+                  />
+                {/if}
               </div>
             {/each}
 
