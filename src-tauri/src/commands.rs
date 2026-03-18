@@ -1134,6 +1134,66 @@ pub fn load_messages(
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
+// ── Image commands ───────────────────────────────────────────────────
+
+/// Save base64-encoded image data to a file in the workspace directory.
+/// Returns the absolute path to the saved image.
+#[tauri::command]
+pub fn save_image(
+    workspace_id: String,
+    data: String,
+    extension: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    // Decode base64
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&data)
+        .map_err(|e| format!("Invalid base64 data: {}", e))?;
+
+    // Save to .korlap-images/ inside the worktree (gitignored by convention)
+    let images_dir = worktree_path.join(".korlap-images");
+    std::fs::create_dir_all(&images_dir)
+        .map_err(|e| format!("Failed to create images dir: {}", e))?;
+
+    // Ensure .korlap-images is gitignored
+    let gitignore_path = worktree_path.join(".gitignore");
+    let needs_entry = if gitignore_path.exists() {
+        let content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+        !content.lines().any(|l| l.trim() == ".korlap-images/")
+    } else {
+        true
+    };
+    if needs_entry {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&gitignore_path)
+            .map_err(|e| format!("Failed to update .gitignore: {}", e))?;
+        use std::io::Write;
+        writeln!(file, "\n.korlap-images/")
+            .map_err(|e| format!("Failed to write .gitignore: {}", e))?;
+    }
+
+    let ext = if extension.is_empty() { "png" } else { &extension };
+    let filename = format!("{}.{}", Uuid::new_v4(), ext);
+    let file_path = images_dir.join(&filename);
+
+    std::fs::write(&file_path, &bytes)
+        .map_err(|e| format!("Failed to save image: {}", e))?;
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
 // ── Agent commands ───────────────────────────────────────────────────
 
 #[tauri::command]

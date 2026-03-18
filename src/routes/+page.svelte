@@ -9,6 +9,7 @@
     archiveWorkspace,
     listWorkspaces,
     sendMessage,
+    saveImage,
     onAgentStatus,
     stopAgent,
     renameBranch,
@@ -34,7 +35,7 @@
   import { onMount } from "svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import ChatPanel from "$lib/components/ChatPanel.svelte";
+  import ChatPanel, { type PastedImage } from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
@@ -317,9 +318,93 @@
     }
   }
 
-  function handleSend(prompt: string) {
+  async function handleSend(prompt: string, images: PastedImage[] = []) {
     if (!selectedWsId) return;
-    sendPrompt(selectedWsId, prompt);
+    const wsId = selectedWsId;
+
+    // Save images to workspace dir, collect file paths
+    let imagePaths: string[] = [];
+    if (images.length > 0) {
+      try {
+        imagePaths = await Promise.all(
+          images.map((img) => saveImage(wsId, img.base64, img.extension)),
+        );
+      } catch (e) {
+        error = `Failed to save images: ${e}`;
+        return;
+      }
+    }
+
+    // Build prompt with image references
+    let fullPrompt = prompt;
+    if (imagePaths.length > 0) {
+      const refs = imagePaths.map((p) => p).join("\n");
+      const imageInstructions =
+        imagePaths.length === 1
+          ? `I've attached an image. Read it using the Read tool:\n${refs}`
+          : `I've attached ${imagePaths.length} images. Read each using the Read tool:\n${refs}`;
+      fullPrompt = fullPrompt
+        ? `${imageInstructions}\n\n${fullPrompt}`
+        : imageInstructions;
+    }
+
+    // Add to message store with image paths for display
+    if (sendingByWorkspace.get(wsId)) return;
+    error = "";
+    setSending(wsId, true);
+    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", imagePaths.length > 0 ? imagePaths : undefined);
+
+    try {
+      await sendMessage(wsId, fullPrompt, (event: AgentEvent) => {
+        if (event.type === "assistant_message") {
+          const toolUses = event.tool_uses.map((t) => ({
+            name: t.name,
+            input: t.input_preview ?? "",
+            filePath: t.file_path,
+          }));
+          addAssistantMessage(
+            wsId,
+            crypto.randomUUID(),
+            event.text.trim(),
+            toolUses,
+          );
+          if (event.tool_uses.length > 0) {
+            diffRefreshTrigger++;
+          }
+        } else if (event.type === "done") {
+          setSending(wsId, false);
+          diffRefreshTrigger++;
+          refreshChangeCounts(wsId);
+          refreshPrStatus(wsId);
+          if (activeRepo) {
+            listWorkspaces(activeRepo.id)
+              .then((fresh) => {
+                const freshIds = new Set(fresh.map((w) => w.id));
+                for (const fw of fresh) {
+                  const idx = workspaces.findIndex((w) => w.id === fw.id);
+                  if (idx >= 0) {
+                    workspaces[idx] = fw;
+                  } else {
+                    workspaces.push(fw);
+                  }
+                }
+                for (let i = workspaces.length - 1; i >= 0; i--) {
+                  if (!freshIds.has(workspaces[i].id) && workspaces[i].id !== creatingWsId) {
+                    workspaces.splice(i, 1);
+                  }
+                }
+              })
+              .catch(() => {});
+          }
+        } else if (event.type === "error") {
+          error = event.message;
+          setSending(wsId, false);
+        }
+      });
+    } catch (e) {
+      error = String(e);
+      setSending(wsId, false);
+    }
   }
 
   async function handleRename(wsId: string, newName: string) {

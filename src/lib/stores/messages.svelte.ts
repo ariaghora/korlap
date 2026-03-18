@@ -13,6 +13,7 @@ export interface Message {
   chunks: MessageChunk[];
   done: boolean;
   actionLabel?: string; // compact label for action messages (e.g. "Creating PR", "Merging")
+  imagePaths?: string[]; // absolute paths to attached images (user messages only)
 }
 
 // ── State ──────────────────────────────────────────────────────────
@@ -58,12 +59,14 @@ export function addUserMessage(
   workspaceId: string,
   id: string,
   text: string,
+  imagePaths?: string[],
 ) {
   pushMessage(workspaceId, {
     id,
     role: "user",
-    chunks: [{ type: "text", content: text }],
+    chunks: text ? [{ type: "text", content: text }] : [],
     done: true,
+    imagePaths: imagePaths && imagePaths.length > 0 ? imagePaths : undefined,
   });
   persistMessages(workspaceId);
 }

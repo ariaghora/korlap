@@ -1,11 +1,19 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
+  import { convertFileSrc } from "@tauri-apps/api/core";
+
+  export interface PastedImage {
+    id: string;
+    dataUrl: string;    // for thumbnail preview
+    base64: string;     // raw base64 data (no prefix)
+    extension: string;  // png, jpg, etc.
+  }
 
   interface Props {
     workspaceId: string;
     creating?: boolean;
     disabled: boolean;
-    onSend: (prompt: string) => void;
+    onSend: (prompt: string, images: PastedImage[]) => void;
     onStop: () => void;
   }
 
@@ -15,6 +23,7 @@
   let sending = $derived(sendingByWorkspace.get(workspaceId) ?? false);
 
   let userInput = $state("");
+  let pastedImages = $state<PastedImage[]>([]);
   let chatArea: HTMLDivElement | undefined = $state();
   let userScrolledUp = $state(false);
 
@@ -55,13 +64,15 @@
   });
 
   function handleSubmit() {
-    if (!userInput.trim() || sending || disabled || creating) return;
+    if ((!userInput.trim() && pastedImages.length === 0) || sending || disabled || creating) return;
     const prompt = userInput.trim();
+    const images = [...pastedImages];
     userInput = "";
+    pastedImages = [];
     // Reset textarea height after clearing
     const ta = document.querySelector(".input-row textarea") as HTMLTextAreaElement | null;
     if (ta) ta.style.height = "auto";
-    onSend(prompt);
+    onSend(prompt, images);
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -69,6 +80,36 @@
       e.preventDefault();
       handleSubmit();
     }
+  }
+
+  function handlePaste(e: ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (!item.type.startsWith("image/")) continue;
+
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (!file) continue;
+
+      const ext = item.type.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        // Extract base64 after the data:image/...;base64, prefix
+        const base64 = dataUrl.split(",")[1] ?? "";
+        pastedImages = [
+          ...pastedImages,
+          { id: crypto.randomUUID(), dataUrl, base64, extension: ext },
+        ];
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function removeImage(id: string) {
+    pastedImages = pastedImages.filter((img) => img.id !== id);
   }
 
   function autoResize(e: Event) {
@@ -100,6 +141,15 @@
           </div>
         {:else if msg.role === "user"}
           <div class="user-msg">
+            {#if msg.imagePaths && msg.imagePaths.length > 0}
+              <div class="user-images">
+                {#each msg.imagePaths as imgPath}
+                  <div class="user-image-thumb">
+                    <img src={convertFileSrc(imgPath)} alt="Attached" />
+                  </div>
+                {/each}
+              </div>
+            {/if}
             <div class="user-bubble">
               {#each msg.chunks as chunk}
                 {#if chunk.type === "text"}{chunk.content}{/if}
@@ -154,27 +204,46 @@
   </div>
 
   <form
-    class="input-row"
+    class="input-form"
     onsubmit={(e) => {
       e.preventDefault();
       handleSubmit();
     }}
   >
-    <textarea
-      bind:value={userInput}
-      onkeydown={handleKeydown}
-      oninput={autoResize}
-      placeholder="Ask to make changes, @mention files, run /commands"
-      disabled={disabled || creating}
-      rows="1"
-    ></textarea>
+    {#if pastedImages.length > 0}
+      <div class="image-preview-strip">
+        {#each pastedImages as img (img.id)}
+          <div class="image-preview">
+            <img src={img.dataUrl} alt="Pasted" />
+            <button
+              type="button"
+              class="image-remove-btn"
+              onclick={() => removeImage(img.id)}
+            >
+              &times;
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <div class="input-row">
+      <textarea
+        bind:value={userInput}
+        onkeydown={handleKeydown}
+        oninput={autoResize}
+        onpaste={handlePaste}
+        placeholder="Ask to make changes, @mention files, run /commands"
+        disabled={disabled || creating}
+        rows="1"
+      ></textarea>
     {#if sending}
       <button type="button" class="stop-btn" onclick={onStop}>Stop</button>
     {:else}
-      <button type="submit" class="send-btn" disabled={!userInput.trim() || disabled}
+      <button type="submit" class="send-btn" disabled={!userInput.trim() && pastedImages.length === 0 || disabled}
         >Send</button
       >
     {/if}
+    </div>
   </form>
 </div>
 
@@ -365,14 +434,91 @@
     opacity: 0.5;
   }
 
+  /* ── User attached images (in chat history) ── */
+
+  .user-images {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-bottom: 0.3rem;
+  }
+
+  .user-image-thumb {
+    width: 64px;
+    height: 64px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border-light);
+  }
+
+  .user-image-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
   /* ── Input ─────────────────────────────────── */
+
+  .input-form {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+  }
+
+  .image-preview-strip {
+    display: flex;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem 0;
+    flex-wrap: wrap;
+  }
+
+  .image-preview {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border-radius: 6px;
+    overflow: visible;
+    flex-shrink: 0;
+  }
+
+  .image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--border-light);
+  }
+
+  .image-remove-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .image-remove-btn:hover {
+    background: var(--border);
+    color: var(--text-bright);
+  }
 
   .input-row {
     display: flex;
     align-items: flex-end;
     gap: 0.5rem;
     padding: 0.6rem 1rem;
-    border-top: 1px solid var(--border);
   }
 
   .input-row textarea {
