@@ -80,6 +80,7 @@ pub fn run() {
             commands::get_changed_files,
             commands::get_diff,
             commands::search_workspace_files,
+            commands::grep_workspace,
             commands::read_workspace_file,
             commands::run_script,
             commands::save_messages,

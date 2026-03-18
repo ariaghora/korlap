@@ -43,6 +43,8 @@
   import FileBrowser from "$lib/components/FileBrowser.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
+  import SearchModal from "$lib/components/SearchModal.svelte";
+  import type { ChatPanelApi } from "$lib/components/ChatPanel.svelte";
 
   type PanelTab = "chat" | "diff" | "files" | "terminal";
 
@@ -63,6 +65,8 @@
   let planModeByWorkspace = new SvelteMap<string, boolean>();
   let thinkingModeByWorkspace = new SvelteMap<string, boolean>();
   let fileNavigatePath = $state<string | null>(null);
+  let showSearchModal = $state(false);
+  let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
@@ -119,6 +123,12 @@
         case "w":
           e.preventDefault();
           if (selectedWsId) handleRemove(selectedWsId);
+          break;
+        case "f":
+          if (e.shiftKey && selectedWsId) {
+            e.preventDefault();
+            showSearchModal = true;
+          }
           break;
         default:
           if (!inInput && e.key >= "1" && e.key <= "9") {
@@ -373,7 +383,8 @@
         try {
           const content = await readWorkspaceFile(wsId, mention.path);
           const lines = content.split("\n").length;
-          contextBlocks.push(`<file path="${mention.path}" lines="${lines}" source="mention">\n${content}\n</file>`);
+          const focusAttr = mention.lineNumber ? ` focus_line="${mention.lineNumber}"` : "";
+          contextBlocks.push(`<file path="${mention.path}" lines="${lines}"${focusAttr} source="mention">\n${content}\n</file>`);
         } catch {
           // File unreadable (binary, too large, etc.) — just reference the path
           contextBlocks.push(`<file path="${mention.path}" source="mention">(could not read file — use Read tool to access)</file>`);
@@ -706,6 +717,7 @@
                     sendPrompt(ws.id, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
                   }}
                   onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
+                  onReady={(api) => chatPanelApis.set(ws.id, api)}
                 />
               </div>
             {/each}
@@ -748,6 +760,23 @@
         {/if}
       </main>
     </div>
+
+    {#if showSearchModal && selectedWsId}
+      <SearchModal
+        workspaceId={selectedWsId}
+        onClose={() => { showSearchModal = false; }}
+        onAddToContext={(path, displayName, lineNumber) => {
+          showSearchModal = false;
+          chatPanelApis.get(selectedWsId!)?.addMention({ type: "file", path, displayName, lineNumber });
+          activeTab = "chat";
+        }}
+        onOpenInFiles={(path) => {
+          showSearchModal = false;
+          fileNavigatePath = path;
+          activeTab = "files";
+        }}
+      />
+    {/if}
 
     {#if showSettings}
       <RepoSettingsPanel

@@ -125,6 +125,34 @@ export async function searchWorkspaceFiles(
   });
 }
 
+// ── Content Search (Grep) ───────────────────────────────────────
+
+export interface GrepMatch {
+  path: string;
+  line_number: number;
+  column: number;
+  line_content: string;
+}
+
+export interface GrepResult {
+  matches: GrepMatch[];
+  truncated: boolean;
+}
+
+export async function grepWorkspace(
+  workspaceId: string,
+  pattern: string,
+  isRegex: boolean = false,
+  caseSensitive: boolean = false,
+): Promise<GrepResult> {
+  return invoke<GrepResult>("grep_workspace", {
+    workspaceId,
+    pattern,
+    isRegex,
+    caseSensitive,
+  });
+}
+
 export async function readWorkspaceFile(
   workspaceId: string,
   filePath: string,

@@ -28,6 +28,10 @@
     extension: string;  // png, jpg, etc.
   }
 
+  export interface ChatPanelApi {
+    addMention: (mention: Mention) => void;
+  }
+
   interface Props {
     workspaceId: string;
     creating?: boolean;
@@ -39,9 +43,10 @@
     onThinkingModeChange?: (enabled: boolean) => void;
     onExecutePlan?: () => void;
     onMentionClick?: (path: string) => void;
+    onReady?: (api: ChatPanelApi) => void;
   }
 
-  let { workspaceId, creating = false, planMode = false, thinkingMode = false, onSend, onStop, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick }: Props = $props();
+  let { workspaceId, creating = false, planMode = false, thinkingMode = false, onSend, onStop, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
 
   /** Split text into segments, replacing @displayName with mention references. */
   type TextSegment = { kind: "text"; value: string } | { kind: "mention"; mention: MessageMention };
@@ -86,6 +91,18 @@
 
   // Mention input + autocomplete state
   let mentionInputApi: MentionInputApi | undefined = $state();
+
+  // Expose ChatPanelApi via callback
+  $effect(() => {
+    if (mentionInputApi && onReady) {
+      onReady({
+        addMention: (mention: Mention) => {
+          mentionInputApi?.appendMention(mention);
+          mentionInputApi?.focus();
+        },
+      });
+    }
+  });
   let autocompleteApi: MentionAutocompleteApi | undefined = $state();
   let autocompleteVisible = $state(false);
   let autocompleteResults = $state<FileSearchResult[]>([]);
