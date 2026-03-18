@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { open, confirm } from "@tauri-apps/plugin-dialog";
   import { SvelteMap } from "svelte/reactivity";
   import {
     addRepo,
     removeRepo,
     listRepos,
     createWorkspace,
-    archiveWorkspace,
+    removeWorkspace,
     listWorkspaces,
     sendMessage,
     saveImage,
@@ -64,9 +64,7 @@
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
-    workspaces
-      .filter((w) => w.status !== "archived")
-      .sort((a, b) => a.created_at - b.created_at),
+    [...workspaces].sort((a, b) => a.created_at - b.created_at),
   );
 
   // ── Lifecycle ──────────────────────────────────────────
@@ -118,7 +116,7 @@
           break;
         case "w":
           e.preventDefault();
-          if (selectedWsId) handleArchive(selectedWsId);
+          if (selectedWsId) handleRemove(selectedWsId);
           break;
         default:
           if (!inInput && e.key >= "1" && e.key <= "9") {
@@ -177,9 +175,8 @@
 
     listWorkspaces(repo.id).then((ws) => {
       workspaces = ws;
-      const active = ws.filter((w) => w.status !== "archived");
-      active.forEach((w) => loadPersistedMessages(w.id));
-      active.forEach((w) => {
+      ws.forEach((w) => loadPersistedMessages(w.id));
+      ws.forEach((w) => {
         refreshChangeCounts(w.id);
         refreshPrStatus(w.id);
       });
@@ -245,13 +242,22 @@
     });
   }
 
-  function handleArchive(wsId: string) {
+  async function handleRemove(wsId: string) {
+    const ws = workspaces.find((w) => w.id === wsId);
+    const name = ws?.name ?? wsId;
+
+    const confirmed = await confirm(
+      `This will permanently remove "${name}" — its worktree, messages, and session data will be deleted.`,
+      { title: "Remove workspace?", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" },
+    );
+    if (!confirmed) return;
+
     error = "";
 
     // Optimistic: remove from UI immediately
-    const archIdx = workspaces.findIndex((w) => w.id === wsId);
-    const removed = archIdx >= 0 ? workspaces[archIdx] : null;
-    if (archIdx >= 0) workspaces.splice(archIdx, 1);
+    const idx = workspaces.findIndex((w) => w.id === wsId);
+    const removed = idx >= 0 ? workspaces[idx] : null;
+    if (idx >= 0) workspaces.splice(idx, 1);
     if (selectedWsId === wsId) selectedWsId = null;
     if (creatingWsId === wsId) creatingWsId = null;
     clearWorkspaceData(wsId);
@@ -259,7 +265,7 @@
     prStatusMap.delete(wsId);
     changeCounts.delete(wsId);
 
-    archiveWorkspace(wsId).catch((e) => {
+    removeWorkspace(wsId).catch((e) => {
       // Restore on failure
       if (removed) workspaces.push(removed);
       error = String(e);
@@ -316,7 +322,7 @@
                     workspaces.push(fw);
                   }
                 }
-                // Remove stale entries (archived externally), but keep the placeholder
+                // Remove stale entries (removed externally), but keep the placeholder
                 for (let i = workspaces.length - 1; i >= 0; i--) {
                   if (!freshIds.has(workspaces[i].id) && workspaces[i].id !== creatingWsId) {
                     workspaces.splice(i, 1);
@@ -618,7 +624,7 @@
         onSelect={selectWorkspace}
         onNewWorkspace={handleNewWorkspace}
         onRename={handleRename}
-        onArchive={handleArchive}
+        onRemove={handleRemove}
       />
 
       <main class="panel">
@@ -680,7 +686,6 @@
                 <ChatPanel
                   workspaceId={ws.id}
                   creating={ws.id === creatingWsId}
-                  disabled={ws.status === "archived"}
                   onSend={(prompt, images, mentions) => handleSend(prompt, images, mentions)}
                   onStop={handleStop}
                   onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}

@@ -24,7 +24,7 @@ export interface WorkspaceInfo {
   worktree_path: string;
   repo_id: string;
   gh_profile: string | null;
-  status: "running" | "waiting" | "archived";
+  status: "running" | "waiting";
   created_at: number;
 }
 
@@ -86,8 +86,8 @@ export async function createWorkspace(
   return invoke<WorkspaceInfo>("create_workspace", { repoId });
 }
 
-export async function archiveWorkspace(workspaceId: string): Promise<void> {
-  return invoke("archive_workspace", { workspaceId });
+export async function removeWorkspace(workspaceId: string): Promise<void> {
+  return invoke("remove_workspace", { workspaceId });
 }
 
 export async function listWorkspaces(
@@ -284,7 +284,7 @@ export async function getPrTemplate(repoId: string): Promise<string> {
 export interface RepoSettings {
   setup_script: string;
   run_script: string;
-  archive_script: string;
+  remove_script: string;
 }
 
 export async function getRepoSettings(repoId: string): Promise<RepoSettings> {

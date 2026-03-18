@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 pub enum WorkspaceStatus {
     Running,
     Waiting,
-    Archived,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,8 +40,8 @@ pub struct RepoSettings {
     pub setup_script: String,
     #[serde(default)]
     pub run_script: String,
-    #[serde(default)]
-    pub archive_script: String,
+    #[serde(default, alias = "archive_script")]
+    pub remove_script: String,
 }
 
 pub struct TerminalHandle {
@@ -89,13 +88,26 @@ impl AppState {
             }
         }
 
-        // Load workspaces
+        // Load workspaces — migrate old "archived" entries by deleting their data
         let ws_path = self.data_dir.join("workspaces.json");
         if ws_path.exists() {
             let data = std::fs::read_to_string(&ws_path).map_err(|e| e.to_string())?;
-            let workspaces: Vec<WorkspaceInfo> =
+            // Use Value to handle the old "archived" status that no longer deserializes
+            let raw: Vec<serde_json::Value> =
                 serde_json::from_str(&data).map_err(|e| e.to_string())?;
-            for mut ws in workspaces {
+            for entry in raw {
+                let status = entry.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                if status == "archived" {
+                    // Migration: clean up leftover data from old archived workspaces
+                    if let Some(id) = entry.get("id").and_then(|s| s.as_str()) {
+                        tracing::info!("Migrating archived workspace {}: removing leftover data", id);
+                        let _ = std::fs::remove_file(self.messages_dir().join(format!("{}.json", id)));
+                        self.session_ids.remove(id);
+                    }
+                    continue; // Don't load archived workspaces
+                }
+                let mut ws: WorkspaceInfo =
+                    serde_json::from_value(entry).map_err(|e| e.to_string())?;
                 // Reset running → waiting on restart (agent is dead)
                 if ws.status == WorkspaceStatus::Running {
                     ws.status = WorkspaceStatus::Waiting;
@@ -171,6 +183,13 @@ impl AppState {
     /// Path where messages are stored
     pub fn messages_dir(&self) -> PathBuf {
         self.data_dir.join("messages")
+    }
+
+    /// Delete all persisted data for a workspace (messages file, session entry).
+    /// Call this when permanently removing a workspace.
+    pub fn delete_workspace_data(&mut self, workspace_id: &str) {
+        let _ = std::fs::remove_file(self.messages_dir().join(format!("{}.json", workspace_id)));
+        self.session_ids.remove(workspace_id);
     }
 
     pub fn is_git_repo(path: &Path) -> Result<(), String> {

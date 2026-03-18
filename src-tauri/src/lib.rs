@@ -71,7 +71,7 @@ pub fn run() {
             commands::remove_repo,
             commands::list_repos,
             commands::create_workspace,
-            commands::archive_workspace,
+            commands::remove_workspace,
             commands::list_workspaces,
             commands::rename_branch,
             commands::list_directory,

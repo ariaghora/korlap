@@ -2,7 +2,7 @@
 /// Listens on localhost with a random port. The port is stored in AppState
 /// so it can be passed to the MCP server via environment variable.
 
-use crate::state::{AppState, WorkspaceStatus};
+use crate::state::AppState;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -119,10 +119,6 @@ fn handle_rename_branch(
         Some(ws) => ws,
         None => return ("404 Not Found".into(), r#"{"error":"workspace not found"}"#.into()),
     };
-
-    if ws.status == WorkspaceStatus::Archived {
-        return ("400 Bad Request".into(), r#"{"error":"cannot rename archived workspace"}"#.into());
-    }
 
     let worktree_path = ws.worktree_path.clone();
     let fallback_branch = ws.branch.clone();
