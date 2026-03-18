@@ -37,7 +37,7 @@ export interface ToolUseInfo {
 }
 
 export type AgentEvent =
-  | { type: "assistant_message"; text: string; tool_uses: ToolUseInfo[] }
+  | { type: "assistant_message"; text: string; tool_uses: ToolUseInfo[]; thinking?: string }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -94,6 +94,16 @@ export async function listWorkspaces(
   repoId: string,
 ): Promise<WorkspaceInfo[]> {
   return invoke<WorkspaceInfo[]>("list_workspaces", { repoId });
+}
+
+// ── Images ──────────────────────────────────────────────────────────
+
+export async function saveImage(
+  workspaceId: string,
+  data: string,
+  extension: string,
+): Promise<string> {
+  return invoke<string>("save_image", { workspaceId, data, extension });
 }
 
 // ── Agent ────────────────────────────────────────────────────────────
@@ -198,6 +208,7 @@ export interface PrStatus {
   mergeable: "mergeable" | "conflicting" | "unknown";
   additions: number;
   deletions: number;
+  ahead_by: number;
 }
 
 export async function getPrStatus(workspaceId: string): Promise<PrStatus> {
@@ -233,4 +244,10 @@ export function onAgentStatus(
   callback: (event: AgentStatusEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<AgentStatusEvent>("agent-status", (e) => callback(e.payload));
+}
+
+export function onWorkspaceUpdated(
+  callback: (ws: WorkspaceInfo) => void,
+): Promise<UnlistenFn> {
+  return listen<WorkspaceInfo>("workspace-updated", (e) => callback(e.payload));
 }

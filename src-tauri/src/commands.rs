@@ -172,6 +172,8 @@ pub enum AgentEvent {
     AssistantMessage {
         text: String,
         tool_uses: Vec<ToolUseInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thinking: Option<String>,
     },
     #[serde(rename = "done")]
     Done,
@@ -208,6 +210,7 @@ fn parse_stream_line(
 
             let mut text_parts = Vec::new();
             let mut tool_uses = Vec::new();
+            let mut thinking_parts = Vec::new();
 
             for block in content {
                 match block.get("type").and_then(|t| t.as_str()) {
@@ -282,13 +285,25 @@ fn parse_stream_line(
                             new_string,
                         });
                     }
+                    Some("thinking") => {
+                        if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
+                            if !t.is_empty() {
+                                thinking_parts.push(t.to_string());
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
 
             let text = text_parts.join("\n");
-            if !text.is_empty() || !tool_uses.is_empty() {
-                let _ = on_event.send(AgentEvent::AssistantMessage { text, tool_uses });
+            let thinking = if thinking_parts.is_empty() {
+                None
+            } else {
+                Some(thinking_parts.join("\n"))
+            };
+            if !text.is_empty() || !tool_uses.is_empty() || thinking.is_some() {
+                let _ = on_event.send(AgentEvent::AssistantMessage { text, tool_uses, thinking });
             }
         }
         "result" => {
@@ -928,6 +943,7 @@ pub struct PrStatus {
     pub mergeable: String,       // "mergeable", "conflicting", "unknown"
     pub additions: i64,
     pub deletions: i64,
+    pub ahead_by: i64,         // commits ahead of remote (unpushed)
 }
 
 #[tauri::command]
@@ -966,6 +982,7 @@ pub async fn get_pr_status(
                 mergeable: "unknown".into(),
                 additions: 0,
                 deletions: 0,
+                ahead_by: 0,
             });
         }
 
@@ -1004,6 +1021,20 @@ pub async fn get_pr_status(
         "none".to_string()
     };
 
+        // Count unpushed commits: how far local branch is ahead of remote
+        let ahead_by = {
+            let rev_output = std::process::Command::new("git")
+                .args(["rev-list", "--count", &format!("origin/{}..{}", branch, branch)])
+                .current_dir(&worktree_path)
+                .output();
+            match rev_output {
+                Ok(o) if o.status.success() => {
+                    String::from_utf8_lossy(&o.stdout).trim().parse::<i64>().unwrap_or(0)
+                }
+                _ => 0,
+            }
+        };
+
         Ok(PrStatus {
             state: pr_state,
             url,
@@ -1013,6 +1044,7 @@ pub async fn get_pr_status(
             mergeable,
             additions,
             deletions,
+            ahead_by,
         })
     }).await.map_err(|e| format!("Task failed: {}", e))?
 }
@@ -1155,6 +1187,66 @@ pub fn load_messages(
 
     let data = std::fs::read_to_string(&msg_file).map_err(|e| e.to_string())?;
     serde_json::from_str(&data).map_err(|e| e.to_string())
+}
+
+// ── Image commands ───────────────────────────────────────────────────
+
+/// Save base64-encoded image data to a file in the workspace directory.
+/// Returns the absolute path to the saved image.
+#[tauri::command]
+pub fn save_image(
+    workspace_id: String,
+    data: String,
+    extension: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    // Decode base64
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&data)
+        .map_err(|e| format!("Invalid base64 data: {}", e))?;
+
+    // Save to .korlap-images/ inside the worktree (gitignored by convention)
+    let images_dir = worktree_path.join(".korlap-images");
+    std::fs::create_dir_all(&images_dir)
+        .map_err(|e| format!("Failed to create images dir: {}", e))?;
+
+    // Ensure .korlap-images is gitignored
+    let gitignore_path = worktree_path.join(".gitignore");
+    let needs_entry = if gitignore_path.exists() {
+        let content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+        !content.lines().any(|l| l.trim() == ".korlap-images/")
+    } else {
+        true
+    };
+    if needs_entry {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&gitignore_path)
+            .map_err(|e| format!("Failed to update .gitignore: {}", e))?;
+        use std::io::Write;
+        writeln!(file, "\n.korlap-images/")
+            .map_err(|e| format!("Failed to write .gitignore: {}", e))?;
+    }
+
+    let ext = if extension.is_empty() { "png" } else { &extension };
+    let filename = format!("{}.{}", Uuid::new_v4(), ext);
+    let file_path = images_dir.join(&filename);
+
+    std::fs::write(&file_path, &bytes)
+        .map_err(|e| format!("Failed to save image: {}", e))?;
+
+    Ok(file_path.to_string_lossy().to_string())
 }
 
 // ── Agent commands ───────────────────────────────────────────────────

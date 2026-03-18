@@ -9,7 +9,9 @@
     archiveWorkspace,
     listWorkspaces,
     sendMessage,
+    saveImage,
     onAgentStatus,
+    onWorkspaceUpdated,
     stopAgent,
     renameBranch,
     getRepoSettings,
@@ -34,7 +36,7 @@
   import { onMount } from "svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import ChatPanel from "$lib/components/ChatPanel.svelte";
+  import ChatPanel, { type PastedImage } from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
@@ -66,7 +68,8 @@
   // ── Lifecycle ──────────────────────────────────────────
 
   onMount(() => {
-    let unlistenFn: (() => void) | undefined;
+    let unlistenStatus: (() => void) | undefined;
+    let unlistenWsUpdate: (() => void) | undefined;
 
     (async () => {
       listRepos().then((r) => {
@@ -74,13 +77,20 @@
         if (r.length > 0) selectRepo(r[0]);
       }).catch((e) => { error = String(e); });
 
-      unlistenFn = await onAgentStatus((event) => {
+      unlistenStatus = await onAgentStatus((event) => {
         const ws = workspaces.find((w) => w.id === event.workspace_id);
         if (ws) {
           ws.status = event.status as WorkspaceInfo["status"];
         }
         if (event.status === "waiting") {
           setSending(event.workspace_id, false);
+        }
+      });
+
+      unlistenWsUpdate = await onWorkspaceUpdated((updated) => {
+        const idx = workspaces.findIndex((w) => w.id === updated.id);
+        if (idx >= 0) {
+          workspaces[idx] = updated;
         }
       });
     })();
@@ -128,7 +138,8 @@
     }, 15_000);
 
     return () => {
-      unlistenFn?.();
+      unlistenStatus?.();
+      unlistenWsUpdate?.();
       clearInterval(prPollInterval);
       window.removeEventListener("keydown", handleKeydown);
     };
@@ -276,6 +287,7 @@
             crypto.randomUUID(),
             event.text.trim(),
             toolUses,
+            event.thinking,
           );
           if (event.tool_uses.length > 0) {
             diffRefreshTrigger++;
@@ -319,9 +331,94 @@
     }
   }
 
-  function handleSend(prompt: string) {
+  async function handleSend(prompt: string, images: PastedImage[] = []) {
     if (!selectedWsId) return;
-    sendPrompt(selectedWsId, prompt);
+    const wsId = selectedWsId;
+
+    // Save images to workspace dir, collect file paths
+    let imagePaths: string[] = [];
+    if (images.length > 0) {
+      try {
+        imagePaths = await Promise.all(
+          images.map((img) => saveImage(wsId, img.base64, img.extension)),
+        );
+      } catch (e) {
+        error = `Failed to save images: ${e}`;
+        return;
+      }
+    }
+
+    // Build prompt with image references
+    let fullPrompt = prompt;
+    if (imagePaths.length > 0) {
+      const refs = imagePaths.map((p) => p).join("\n");
+      const imageInstructions =
+        imagePaths.length === 1
+          ? `I've attached an image. Read it using the Read tool:\n${refs}`
+          : `I've attached ${imagePaths.length} images. Read each using the Read tool:\n${refs}`;
+      fullPrompt = fullPrompt
+        ? `${imageInstructions}\n\n${fullPrompt}`
+        : imageInstructions;
+    }
+
+    // Add to message store with image paths for display
+    if (sendingByWorkspace.get(wsId)) return;
+    error = "";
+    setSending(wsId, true);
+    const dataUrls = images.length > 0 ? images.map((img) => img.dataUrl) : undefined;
+    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls);
+
+    try {
+      await sendMessage(wsId, fullPrompt, (event: AgentEvent) => {
+        if (event.type === "assistant_message") {
+          const toolUses = event.tool_uses.map((t) => ({
+            name: t.name,
+            input: t.input_preview ?? "",
+            filePath: t.file_path,
+          }));
+          addAssistantMessage(
+            wsId,
+            crypto.randomUUID(),
+            event.text.trim(),
+            toolUses,
+          );
+          if (event.tool_uses.length > 0) {
+            diffRefreshTrigger++;
+          }
+        } else if (event.type === "done") {
+          setSending(wsId, false);
+          diffRefreshTrigger++;
+          refreshChangeCounts(wsId);
+          refreshPrStatus(wsId);
+          if (activeRepo) {
+            listWorkspaces(activeRepo.id)
+              .then((fresh) => {
+                const freshIds = new Set(fresh.map((w) => w.id));
+                for (const fw of fresh) {
+                  const idx = workspaces.findIndex((w) => w.id === fw.id);
+                  if (idx >= 0) {
+                    workspaces[idx] = fw;
+                  } else {
+                    workspaces.push(fw);
+                  }
+                }
+                for (let i = workspaces.length - 1; i >= 0; i--) {
+                  if (!freshIds.has(workspaces[i].id) && workspaces[i].id !== creatingWsId) {
+                    workspaces.splice(i, 1);
+                  }
+                }
+              })
+              .catch(() => {});
+          }
+        } else if (event.type === "error") {
+          error = event.message;
+          setSending(wsId, false);
+        }
+      });
+    } catch (e) {
+      error = String(e);
+      setSending(wsId, false);
+    }
   }
 
   async function handleRename(wsId: string, newName: string) {
@@ -347,6 +444,8 @@
         sendPrompt(wsId, `PR #${pr.number} has merge conflicts with ${baseBranch}.\n\nResolve them:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n5. Push\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving conflicts on PR #${pr.number}`);
       } else if (pr.checks === "failing") {
         sendPrompt(wsId, `PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`, `Fixing checks on PR #${pr.number}`);
+      } else if (pr.ahead_by > 0) {
+        sendPrompt(wsId, `Push local commits to origin. Run \`git push\`. Only say "Pushed successfully" on success. If it fails, explain why.`, `Pushing to PR #${pr.number}`);
       } else {
         sendPrompt(wsId, `Merge PR #${pr.number} using \`gh pr merge ${pr.number} --squash --delete-branch=false\`. Only say "PR #${pr.number} merged successfully" on success. If it fails, explain why.`, `Merging PR #${pr.number}`);
       }
@@ -418,7 +517,8 @@
         prev.number === pr.number &&
         prev.additions === pr.additions &&
         prev.deletions === pr.deletions &&
-        prev.title === pr.title
+        prev.title === pr.title &&
+        prev.ahead_by === pr.ahead_by
       ) {
         return; // No change — skip reactive update
       }
@@ -523,6 +623,8 @@
                   <button class="status-badge checks-fail" onclick={handlePrAction}>Fix issues</button>
                 {:else if prStatusMap.get(selectedWs.id)?.checks === "pending"}
                   <span class="status-badge checks-pending">PR #{prStatusMap.get(selectedWs.id)?.number} · Checks</span>
+                {:else if (prStatusMap.get(selectedWs.id)?.ahead_by ?? 0) > 0}
+                  <button class="status-badge push-needed" onclick={handlePrAction}>Push</button>
                 {:else}
                   <button class="status-badge mergeable" onclick={handlePrAction}>Merge #{prStatusMap.get(selectedWs.id)?.number}</button>
                 {/if}
@@ -863,6 +965,18 @@
     border-color: color-mix(in srgb, var(--diff-del) 40%, transparent);
     background: color-mix(in srgb, var(--diff-del) 7%, transparent);
     text-transform: none;
+  }
+
+  .status-badge.push-needed {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    cursor: pointer;
+    text-transform: none;
+  }
+
+  .status-badge.push-needed:hover {
+    filter: brightness(1.2);
   }
 
   .status-badge.mergeable {

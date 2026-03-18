@@ -79,6 +79,7 @@ pub fn run() {
             commands::run_script,
             commands::save_messages,
             commands::load_messages,
+            commands::save_image,
             commands::send_message,
             commands::stop_agent,
             commands::open_terminal,
