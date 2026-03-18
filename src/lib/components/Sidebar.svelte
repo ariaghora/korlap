@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { Eye } from "lucide-svelte";
+  import { Eye, ChevronRight } from "lucide-svelte";
 
   interface Props {
     workspaces: WorkspaceInfo[];
@@ -63,6 +63,16 @@
     ];
   });
 
+  let collapsedGroups = $state(new Set<GroupKey>(["done"]));
+
+  function toggleGroup(key: GroupKey) {
+    if (collapsedGroups.has(key)) {
+      collapsedGroups.delete(key);
+    } else {
+      collapsedGroups.add(key);
+    }
+  }
+
   let editingId = $state<string | null>(null);
   let editValue = $state("");
 
@@ -95,10 +105,14 @@
   <div class="workspace-list">
     {#each groups as group}
       <div class="group">
-        <div class="group-header">
+        <button class="group-header" onclick={() => toggleGroup(group.key)}>
+          <span class="group-chevron" class:expanded={!collapsedGroups.has(group.key)}>
+            <ChevronRight size={12} />
+          </span>
           <span class="group-label">{group.label}</span>
           <span class="group-count">{group.items.length}</span>
-        </div>
+        </button>
+        {#if !collapsedGroups.has(group.key)}
         {#each group.items as ws (ws.id)}
           <div class="ws-item-wrap">
             <button
@@ -149,6 +163,7 @@
             {/if}
           </div>
         {/each}
+        {/if}
       </div>
     {/each}
   </div>
@@ -180,8 +195,30 @@
   .group-header {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.3rem;
     padding: 0.35rem 0.5rem 0.2rem;
+    width: 100%;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .group-header:hover .group-label,
+  .group-header:hover .group-count {
+    color: var(--text-secondary);
+  }
+
+  .group-chevron {
+    display: flex;
+    align-items: center;
+    color: var(--text-dim);
+    transition: transform 0.15s ease;
+    transform: rotate(0deg);
+  }
+
+  .group-chevron.expanded {
+    transform: rotate(90deg);
   }
 
   .group-label {
