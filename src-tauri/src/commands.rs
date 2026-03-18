@@ -168,6 +168,8 @@ pub enum AgentEvent {
     AssistantMessage {
         text: String,
         tool_uses: Vec<ToolUseInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thinking: Option<String>,
     },
     #[serde(rename = "done")]
     Done,
@@ -204,6 +206,7 @@ fn parse_stream_line(
 
             let mut text_parts = Vec::new();
             let mut tool_uses = Vec::new();
+            let mut thinking_parts = Vec::new();
 
             for block in content {
                 match block.get("type").and_then(|t| t.as_str()) {
@@ -259,13 +262,25 @@ fn parse_stream_line(
                             file_path,
                         });
                     }
+                    Some("thinking") => {
+                        if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
+                            if !t.is_empty() {
+                                thinking_parts.push(t.to_string());
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
 
             let text = text_parts.join("\n");
-            if !text.is_empty() || !tool_uses.is_empty() {
-                let _ = on_event.send(AgentEvent::AssistantMessage { text, tool_uses });
+            let thinking = if thinking_parts.is_empty() {
+                None
+            } else {
+                Some(thinking_parts.join("\n"))
+            };
+            if !text.is_empty() || !tool_uses.is_empty() || thinking.is_some() {
+                let _ = on_event.send(AgentEvent::AssistantMessage { text, tool_uses, thinking });
             }
         }
         "result" => {

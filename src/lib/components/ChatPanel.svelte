@@ -112,7 +112,23 @@
           {/if}
           <div class="assistant-msg">
             {#each msg.chunks as chunk}
-              {#if chunk.type === "text"}
+              {#if chunk.type === "thinking"}
+                <details class="thinking-block">
+                  <summary class="thinking-summary">
+                    <span class="thinking-icon">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
+                        <line x1="9" y1="21" x2="15" y2="21"/>
+                      </svg>
+                    </span>
+                    <span class="thinking-label">Thinking</span>
+                    <span class="thinking-chevron"></span>
+                  </summary>
+                  <div class="thinking-content">
+                    <p class="thinking-text">{chunk.content}</p>
+                  </div>
+                </details>
+              {:else if chunk.type === "text"}
                 <div class="assistant-card">
                   <p class="assistant-text">{chunk.content}</p>
                 </div>
@@ -319,7 +335,7 @@
     opacity: 0.6;
   }
 
-  /* ── Thinking ──────────────────────────────── */
+  /* ── Thinking indicator (while streaming) ──── */
 
   .thinking {
     font-size: 0.85rem;
@@ -336,6 +352,77 @@
     50% {
       opacity: 0.5;
     }
+  }
+
+  /* ── Thinking block (collapsible) ──────────── */
+
+  .thinking-block {
+    border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 4%, var(--bg-card));
+    overflow: hidden;
+  }
+
+  .thinking-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    transition: color 0.15s;
+  }
+
+  .thinking-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .thinking-summary:hover {
+    color: var(--text-secondary);
+  }
+
+  .thinking-icon {
+    display: flex;
+    align-items: center;
+    color: var(--accent);
+    opacity: 0.7;
+  }
+
+  .thinking-label {
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+
+  .thinking-chevron {
+    margin-left: auto;
+    transition: transform 0.2s ease;
+  }
+
+  .thinking-chevron::after {
+    content: "▸";
+    font-size: 0.7rem;
+  }
+
+  .thinking-block[open] .thinking-chevron {
+    transform: rotate(90deg);
+  }
+
+  .thinking-content {
+    padding: 0 0.75rem 0.5rem;
+    border-top: 1px solid color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .thinking-text {
+    margin: 0.4rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-style: italic;
   }
 
   /* ── File pills (inline in chat) ─────────────── */
