@@ -823,27 +823,16 @@ pub fn rename_branch(
         return Err("Cannot rename an archived workspace".into());
     }
 
-    let old_branch = ws.branch.clone();
-    // No prefix — user provides the full branch name (e.g. feat/fix-auth)
-    let new_branch = new_name.clone();
     let worktree_path = ws.worktree_path.clone();
+    let fallback_branch = ws.branch.clone();
 
-    let output = std::process::Command::new("git")
-        .args(["branch", "-m", &old_branch, &new_branch])
-        .current_dir(&worktree_path)
-        .output()
-        .map_err(|e| format!("Failed to run git branch -m: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git branch rename failed: {}", stderr.trim()));
-    }
+    crate::state::rename_git_branch(&worktree_path, &new_name, &fallback_branch)?;
 
     let ws = st
         .workspaces
         .get_mut(&workspace_id)
         .ok_or("Workspace not found")?;
-    ws.branch = new_branch;
+    ws.branch = new_name.clone();
     ws.name = new_name;
     let ws_clone = ws.clone();
     st.save_workspaces()?;
@@ -1580,8 +1569,22 @@ pub fn send_message(
         (st.mcp_api_port, st.data_dir.clone())
     };
 
-    let mcp_server_path = repo_path.join("src-mcp").join("server.ts");
-    let mcp_config_path = if mcp_server_path.exists() {
+    // Resolve MCP server script: dev source tree first (compile-time, no I/O), then bundled.
+    let mcp_dir = data_dir.join("mcp");
+    let mcp_server_path = {
+        // Dev mode: resolve from CARGO_MANIFEST_DIR (src-tauri/../src-mcp/server.ts)
+        let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("src-mcp")
+            .join("server.ts");
+        if dev_path.exists() {
+            Some(dev_path)
+        } else {
+            let bundled = mcp_dir.join("server.ts");
+            if bundled.exists() { Some(bundled) } else { None }
+        }
+    };
+    let mcp_config_path = if let Some(ref mcp_server_path) = mcp_server_path {
         let mcp_config = serde_json::json!({
             "mcpServers": {
                 "korlap": {
@@ -1595,9 +1598,8 @@ pub fn send_message(
                 }
             }
         });
-        let config_dir = data_dir.join("mcp");
-        let _ = std::fs::create_dir_all(&config_dir);
-        let config_path = config_dir.join(format!("{}.json", workspace_id));
+        let _ = std::fs::create_dir_all(&mcp_dir);
+        let config_path = mcp_dir.join(format!("{}.json", workspace_id));
         let _ = std::fs::write(
             &config_path,
             serde_json::to_string(&mcp_config).unwrap_or_default(),

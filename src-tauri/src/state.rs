@@ -186,3 +186,34 @@ impl AppState {
         Ok(())
     }
 }
+
+/// Rename a worktree's branch, detecting the actual current branch from git
+/// rather than trusting stored metadata (the agent may have already renamed
+/// it via a bash command). No-ops if the branch is already at the target name.
+pub fn rename_git_branch(worktree_path: &Path, new_branch: &str, fallback_branch: &str) -> Result<(), String> {
+    let current_branch = match std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(worktree_path)
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => fallback_branch.to_string(),
+    };
+
+    if current_branch == new_branch {
+        return Ok(());
+    }
+
+    let output = std::process::Command::new("git")
+        .args(["branch", "-m", &current_branch, new_branch])
+        .current_dir(worktree_path)
+        .output()
+        .map_err(|e| format!("Failed to run git branch -m: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git branch rename failed: {}", stderr.trim()));
+    }
+
+    Ok(())
+}
