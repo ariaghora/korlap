@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { RepoDetail, WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { Settings, ExternalLink, Check, X, Loader } from "lucide-svelte";
+  import { Check, X, Loader } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
 
   interface Props {
@@ -11,10 +11,9 @@
     prStatus: PrStatus | undefined;
     onSelectRepo: (repo: RepoDetail) => void;
     onAddRepo: () => void;
-    onSettings: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, prStatus, onSelectRepo, onAddRepo, onSettings }: Props =
+  let { repos, activeRepo, selectedWs, prStatus, onSelectRepo, onAddRepo }: Props =
     $props();
 
   function startDrag(e: MouseEvent) {
@@ -83,9 +82,6 @@
         <span class="breadcrumb-base">{activeRepo.default_branch}</span>
       </span>
     {/if}
-    <button class="settings-btn" onclick={onSettings} title="Repository settings">
-      <Settings size={14} />
-    </button>
   </div>
 </header>
 
@@ -222,18 +218,4 @@
     to { transform: rotate(360deg); }
   }
 
-  .settings-btn {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-size: 0.9rem;
-    padding: 0.2rem 0.35rem;
-    border-radius: 4px;
-  }
-
-  .settings-btn:hover {
-    color: var(--text-primary);
-    background: var(--border);
-  }
 </style>

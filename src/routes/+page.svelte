@@ -467,7 +467,6 @@
       prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
       onSelectRepo={selectRepo}
       onAddRepo={handleOpenRepo}
-      onSettings={() => (showSettings = true)}
     />
 
     {#if error}
@@ -484,7 +483,7 @@
         {creatingWsId}
         {prStatusMap}
         onSelect={selectWorkspace}
-        onNewWorkspace={handleNewWorkspace}
+        onSettings={() => (showSettings = true)}
         onRename={handleRename}
       />
 

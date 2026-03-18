@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
+  import { Settings } from "lucide-svelte";
 
   interface Props {
     workspaces: WorkspaceInfo[];
@@ -7,11 +8,11 @@
     creatingWsId: string | null;
     prStatusMap: Map<string, PrStatus>;
     onSelect: (wsId: string) => void;
-    onNewWorkspace: () => void;
+    onSettings: () => void;
     onRename: (wsId: string, newName: string) => void;
   }
 
-  let { workspaces, selectedWsId, creatingWsId, prStatusMap, onSelect, onNewWorkspace, onRename }: Props =
+  let { workspaces, selectedWsId, creatingWsId, prStatusMap, onSelect, onSettings, onRename }: Props =
     $props();
 
   let activeWorkspaces = $derived(
@@ -86,8 +87,9 @@
       </button>
     {/each}
   </div>
-  <button class="new-ws-btn" onclick={onNewWorkspace} disabled={!!creatingWsId}>
-    + New workspace
+  <button class="settings-btn" onclick={onSettings} title="Repository settings">
+    <Settings size={14} />
+    <span>Settings</span>
   </button>
 </aside>
 
@@ -222,11 +224,15 @@
     min-width: 0;
   }
 
-  .new-ws-btn {
+  .settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
     margin: 0.5rem;
     padding: 0.4rem;
     background: transparent;
-    border: 1px dashed var(--border-light);
+    border: 1px solid transparent;
     border-radius: 4px;
     color: var(--text-dim);
     cursor: pointer;
@@ -234,14 +240,8 @@
     font-size: 0.8rem;
   }
 
-  .new-ws-btn:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
+  .settings-btn:hover {
+    color: var(--text-primary);
     background: var(--bg-hover);
-  }
-
-  .new-ws-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
   }
 </style>
