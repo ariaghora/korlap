@@ -1,5 +1,19 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
+  import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings } from "lucide-svelte";
+
+  const toolIcons: Record<string, typeof Settings> = {
+    Read: FileText,
+    Edit: Pencil,
+    Write: FilePlus,
+    Bash: Terminal,
+    Glob: FolderSearch,
+    Grep: TextSearch,
+    Agent: Bot,
+    WebFetch: Globe,
+    WebSearch: Globe,
+    Skill: Zap,
+  };
 
   export interface PastedImage {
     id: string;
@@ -197,8 +211,8 @@
                     collapsedDiffs = new Set(collapsedDiffs);
                   }}>
                     <span class="edit-diff-chevron" class:collapsed={isCollapsed}>▾</span>
-                    <span class="edit-diff-icon">&lt;/&gt;</span>
-                    <span class="edit-diff-label">Edit {chunk.input}</span>
+                    <span class="edit-diff-icon"><Pencil size={13} strokeWidth={2} /></span>
+                    <span class="edit-diff-label">{chunk.input}</span>
                   </button>
                   {#if !isCollapsed}
                     <div class="edit-diff-body">
@@ -212,10 +226,13 @@
                   {/if}
                 </div>
               {:else}
+                {@const ToolIcon = toolIcons[chunk.name] ?? Settings}
                 <div class="tool-pills">
                   <span class="tool-pill">
-                    <span class="tool-icon">⚙</span>
-                    {chunk.name}{#if chunk.input}: {chunk.input}{/if}
+                    <span class="tool-icon">
+                      <ToolIcon size={13} strokeWidth={2} />
+                    </span>
+                    {#if chunk.input}{chunk.input}{/if}
                   </span>
                 </div>
               {/if}
@@ -417,7 +434,7 @@
   .tool-pill {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
+    gap: 0.45rem;
     padding: 0.25rem 0.6rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -429,7 +446,8 @@
   }
 
   .tool-icon {
-    font-size: 0.65rem;
+    display: flex;
+    align-items: center;
     opacity: 0.6;
   }
 
@@ -445,7 +463,7 @@
   .edit-diff-header {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.5rem;
     width: 100%;
     padding: 0.4rem 0.7rem;
     background: none;
@@ -473,7 +491,8 @@
   }
 
   .edit-diff-icon {
-    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
     opacity: 0.6;
     color: var(--accent);
   }
