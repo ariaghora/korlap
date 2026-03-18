@@ -625,9 +625,11 @@
       {activeRepo}
       {selectedWs}
       prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
+      wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}
       onSelectRepo={selectRepo}
       onAddRepo={handleOpenRepo}
       onSettings={() => (showSettings = true)}
+      onPrAction={handlePrAction}
     />
 
     {#if error}
@@ -671,28 +673,6 @@
                   {/if}
                 </button>
               {/each}
-            </div>
-            <div class="tab-bar-right">
-              {#if prStatusMap.get(selectedWs.id)?.state === "open"}
-                {#if prStatusMap.get(selectedWs.id)?.mergeable === "conflicting"}
-                  <button class="status-badge conflicts" onclick={handlePrAction}>Conflicts</button>
-                {:else if prStatusMap.get(selectedWs.id)?.checks === "failing"}
-                  <button class="status-badge checks-fail" onclick={handlePrAction}>Fix issues</button>
-                {:else if prStatusMap.get(selectedWs.id)?.checks === "pending"}
-                  <span class="status-badge checks-pending">PR #{prStatusMap.get(selectedWs.id)?.number} · Checks</span>
-                {:else if (prStatusMap.get(selectedWs.id)?.ahead_by ?? 0) > 0}
-                  <button class="status-badge push-needed" onclick={handlePrAction}>Push</button>
-                {:else}
-                  <button class="status-badge mergeable" onclick={handlePrAction}>Merge #{prStatusMap.get(selectedWs.id)?.number}</button>
-                {/if}
-              {:else if prStatusMap.get(selectedWs.id)?.state === "merged"}
-                <span class="status-badge merged">Done</span>
-              {:else}
-                {@const cc = changeCounts.get(selectedWs.id)}
-                {#if cc && (cc.additions > 0 || cc.deletions > 0)}
-                  <button class="status-badge create-pr" onclick={handlePrAction} disabled={selectedWs.status === "running"}>Push & Create PR</button>
-                {/if}
-              {/if}
             </div>
           </div>
 
@@ -980,110 +960,6 @@
     color: var(--text-bright);
     background: var(--border);
   }
-
-  .tab-bar-right {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .status-badge {
-    font-size: 0.68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 0.2rem 0.55rem;
-    border-radius: 4px;
-    border: 1px solid;
-  }
-
-  .status-badge.merged {
-    color: var(--text-dim);
-    border-color: var(--border-light);
-  }
-
-  .status-badge.pr-open {
-    color: #7e8ec8;
-    border-color: color-mix(in srgb, #7e8ec8 40%, transparent);
-    text-transform: none;
-  }
-
-  .status-badge.checks-pending {
-    color: var(--text-dim);
-    border-color: var(--border-light);
-    text-transform: none;
-    animation: badge-pulse 2s ease-in-out infinite;
-  }
-
-  .status-badge.checks-fail {
-    color: var(--diff-del);
-    border-color: color-mix(in srgb, var(--diff-del) 40%, transparent);
-    background: color-mix(in srgb, var(--diff-del) 7%, transparent);
-    text-transform: none;
-  }
-
-  .status-badge.push-needed {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-    background: color-mix(in srgb, var(--accent) 7%, transparent);
-    cursor: pointer;
-    text-transform: none;
-  }
-
-  .status-badge.push-needed:hover {
-    filter: brightness(1.2);
-  }
-
-  .status-badge.mergeable {
-    color: var(--status-ok);
-    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
-    background: color-mix(in srgb, var(--status-ok) 7%, transparent);
-    cursor: pointer;
-    text-transform: none;
-  }
-
-  .status-badge.mergeable:hover {
-    filter: brightness(1.2);
-  }
-
-  .status-badge.create-pr {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-    background: color-mix(in srgb, var(--accent) 7%, transparent);
-    cursor: pointer;
-    text-transform: none;
-  }
-
-  .status-badge.create-pr:hover:not(:disabled) {
-    filter: brightness(1.2);
-  }
-
-  .status-badge.create-pr:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
-  .status-badge.checks-fail {
-    cursor: pointer;
-  }
-
-  .status-badge.conflicts {
-    color: #c87e7e;
-    border-color: color-mix(in srgb, #c87e7e 40%, transparent);
-    background: color-mix(in srgb, #c87e7e 7%, transparent);
-    cursor: pointer;
-    text-transform: none;
-  }
-
-  .status-badge.conflicts:hover {
-    filter: brightness(1.2);
-  }
-
-  @keyframes badge-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-  }
-
 
   /* ── Tab content ──────────────────────────────────── */
 
