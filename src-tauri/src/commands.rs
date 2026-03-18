@@ -852,6 +852,181 @@ pub fn rename_branch(
     Ok(ws_clone)
 }
 
+// ── File browser commands ────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,      // relative to worktree root
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+#[tauri::command]
+pub async fn list_directory(
+    workspace_id: String,
+    relative_path: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<FileEntry>, String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    let target = if relative_path.is_empty() {
+        worktree_path.clone()
+    } else {
+        worktree_path.join(&relative_path)
+    };
+
+    // Security: ensure path doesn't escape worktree
+    let canonical = target
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+    let worktree_canonical = worktree_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve worktree: {}", e))?;
+    if !canonical.starts_with(&worktree_canonical) {
+        return Err("Path escapes worktree boundary".to_string());
+    }
+
+    let wt = worktree_canonical.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut entries = Vec::new();
+        let dir = std::fs::read_dir(&canonical)
+            .map_err(|e| format!("Cannot read directory: {}", e))?;
+
+        for entry in dir {
+            let entry = entry.map_err(|e| format!("Error reading entry: {}", e))?;
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip hidden files/dirs (except common ones like .github)
+            if name.starts_with('.') && name != ".github" && name != ".gitignore" {
+                continue;
+            }
+
+            let metadata = entry
+                .metadata()
+                .map_err(|e| format!("Cannot stat {}: {}", name, e))?;
+
+            let full_path = entry.path();
+            let rel = full_path
+                .strip_prefix(&wt)
+                .unwrap_or(&full_path)
+                .to_string_lossy()
+                .to_string();
+
+            entries.push(FileEntry {
+                name,
+                path: rel,
+                is_dir: metadata.is_dir(),
+                size: metadata.len(),
+            });
+        }
+
+        // Sort: directories first, then alphabetical
+        entries.sort_by(|a, b| {
+            b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn read_file(
+    workspace_id: String,
+    relative_path: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    let target = worktree_path.join(&relative_path);
+    let canonical = target
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+    let worktree_canonical = worktree_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve worktree: {}", e))?;
+    if !canonical.starts_with(&worktree_canonical) {
+        return Err("Path escapes worktree boundary".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let metadata = std::fs::metadata(&canonical)
+            .map_err(|e| format!("Cannot stat file: {}", e))?;
+
+        // Limit to 2MB to avoid UI freezes
+        if metadata.len() > 2 * 1024 * 1024 {
+            return Err(format!(
+                "File too large ({} bytes). Max 2MB for preview.",
+                metadata.len()
+            ));
+        }
+
+        std::fs::read_to_string(&canonical)
+            .map_err(|e| format!("Cannot read file: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn write_file(
+    workspace_id: String,
+    relative_path: String,
+    content: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    let target = worktree_path.join(&relative_path);
+    let canonical_parent = target
+        .parent()
+        .ok_or("Invalid file path")?
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve parent: {}", e))?;
+    let worktree_canonical = worktree_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve worktree: {}", e))?;
+    if !canonical_parent.starts_with(&worktree_canonical) {
+        return Err("Path escapes worktree boundary".to_string());
+    }
+
+    let write_target = canonical_parent.join(
+        target
+            .file_name()
+            .ok_or("Invalid file name")?,
+    );
+
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&write_target, content)
+            .map_err(|e| format!("Cannot write file: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
 // ── Git commands ─────────────────────────────────────────────────────
 
 #[derive(Clone, serde::Serialize)]

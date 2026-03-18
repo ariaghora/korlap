@@ -38,10 +38,11 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel, { type PastedImage } from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
+  import FileBrowser from "$lib/components/FileBrowser.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
 
-  type PanelTab = "chat" | "diff" | "terminal";
+  type PanelTab = "chat" | "diff" | "files" | "terminal";
 
   // ── State ──────────────────────────────────────────────
 
@@ -597,7 +598,7 @@
         {#if selectedWs}
           <div class="tab-bar">
             <div class="tabs">
-              {#each ["chat", "diff", "terminal"] as tab}
+              {#each ["chat", "diff", "files", "terminal"] as tab}
                 <button
                   class="tab"
                   class:active={activeTab === tab}
@@ -668,6 +669,13 @@
                   prState={prStatusMap.get(selectedWs.id)?.state}
                   onCreatePr={handlePrAction}
                 />
+              </div>
+            {/if}
+
+            <!-- Files: mount on demand like diff -->
+            {#if activeTab === "files" && selectedWs}
+              <div class="ws-tab-container active-layer">
+                <FileBrowser workspaceId={selectedWs.id} />
               </div>
             {/if}
 

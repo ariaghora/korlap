@@ -131,6 +131,37 @@ export async function renameBranch(
   return invoke<WorkspaceInfo>("rename_branch", { workspaceId, newName });
 }
 
+// ── File Browser ────────────────────────────────────────────────────
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+}
+
+export async function listDirectory(
+  workspaceId: string,
+  relativePath: string = "",
+): Promise<FileEntry[]> {
+  return invoke<FileEntry[]>("list_directory", { workspaceId, relativePath });
+}
+
+export async function readFile(
+  workspaceId: string,
+  relativePath: string,
+): Promise<string> {
+  return invoke<string>("read_file", { workspaceId, relativePath });
+}
+
+export async function writeFile(
+  workspaceId: string,
+  relativePath: string,
+  content: string,
+): Promise<void> {
+  return invoke("write_file", { workspaceId, relativePath, content });
+}
+
 // ── Git ─────────────────────────────────────────────────────────────
 
 export interface ChangedFile {

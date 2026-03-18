@@ -1,0 +1,628 @@
+<script lang="ts">
+  import { SvelteSet } from "svelte/reactivity";
+  import { Folder, FolderOpen, File as FileIcon } from "lucide-svelte";
+  import { listDirectory, readFile, writeFile, type FileEntry } from "$lib/ipc";
+
+  // ── Devicon imports (Vite resolves as URL strings) ──
+  import iconRust from "devicon/icons/rust/rust-original.svg";
+  import iconTs from "devicon/icons/typescript/typescript-original.svg";
+  import iconJs from "devicon/icons/javascript/javascript-original.svg";
+  import iconSvelte from "devicon/icons/svelte/svelte-original.svg";
+  import iconPython from "devicon/icons/python/python-original.svg";
+  import iconGo from "devicon/icons/go/go-original.svg";
+  import iconHtml from "devicon/icons/html5/html5-original.svg";
+  import iconCss from "devicon/icons/css3/css3-original.svg";
+  import iconSass from "devicon/icons/sass/sass-original.svg";
+  import iconJson from "devicon/icons/json/json-original.svg";
+  import iconMarkdown from "devicon/icons/markdown/markdown-original.svg";
+  import iconBash from "devicon/icons/bash/bash-original.svg";
+  import iconDocker from "devicon/icons/docker/docker-original.svg";
+  import iconYaml from "devicon/icons/yaml/yaml-original.svg";
+  import iconRuby from "devicon/icons/ruby/ruby-original.svg";
+  import iconJava from "devicon/icons/java/java-original.svg";
+  import iconKotlin from "devicon/icons/kotlin/kotlin-original.svg";
+  import iconSwift from "devicon/icons/swift/swift-original.svg";
+  import iconC from "devicon/icons/c/c-original.svg";
+  import iconCpp from "devicon/icons/cplusplus/cplusplus-original.svg";
+  import iconCsharp from "devicon/icons/csharp/csharp-original.svg";
+  import iconPhp from "devicon/icons/php/php-original.svg";
+  import iconLua from "devicon/icons/lua/lua-original.svg";
+  import iconGit from "devicon/icons/git/git-original.svg";
+
+  interface Props {
+    workspaceId: string;
+  }
+
+  let { workspaceId }: Props = $props();
+
+  // ── Tree state ────────────────────────────────────────
+
+  interface TreeNode {
+    entry: FileEntry;
+    children: TreeNode[] | null; // null = not loaded yet
+    loading: boolean;
+  }
+
+  let rootEntries = $state<TreeNode[]>([]);
+  let expandedPaths = new SvelteSet<string>();
+  let selectedPath = $state<string | null>(null);
+  let rootLoading = $state(false);
+  let rootError = $state("");
+
+  // ── File content state ────────────────────────────────
+
+  let fileContent = $state("");
+  let fileLoading = $state(false);
+  let fileError = $state("");
+  let isEditing = $state(false);
+  let editContent = $state("");
+  let saving = $state(false);
+  let saveMessage = $state("");
+
+  // ── Load root on workspace change ─────────────────────
+
+  $effect(() => {
+    const wsId = workspaceId;
+    rootLoading = true;
+    rootError = "";
+    selectedPath = null;
+    fileContent = "";
+    isEditing = false;
+    expandedPaths.clear();
+
+    listDirectory(wsId, "")
+      .then((entries) => {
+        rootEntries = entries.map(toNode);
+      })
+      .catch((e) => {
+        rootError = String(e);
+      })
+      .finally(() => {
+        rootLoading = false;
+      });
+  });
+
+  function toNode(entry: FileEntry): TreeNode {
+    return { entry, children: null, loading: false };
+  }
+
+  // ── Tree interactions ──────────────────────────────────
+
+  async function toggleDir(node: TreeNode) {
+    const path = node.entry.path;
+
+    if (expandedPaths.has(path)) {
+      expandedPaths.delete(path);
+      return;
+    }
+
+    if (node.children === null) {
+      node.loading = true;
+      try {
+        const entries = await listDirectory(workspaceId, path);
+        node.children = entries.map(toNode);
+      } catch (e) {
+        node.children = [];
+      } finally {
+        node.loading = false;
+      }
+    }
+
+    expandedPaths.add(path);
+  }
+
+  async function selectFile(path: string) {
+    if (selectedPath === path) return;
+    selectedPath = path;
+    isEditing = false;
+    saveMessage = "";
+    fileLoading = true;
+    fileError = "";
+
+    try {
+      fileContent = await readFile(workspaceId, path);
+    } catch (e) {
+      fileError = String(e);
+      fileContent = "";
+    } finally {
+      fileLoading = false;
+    }
+  }
+
+  function startEditing() {
+    editContent = fileContent;
+    isEditing = true;
+    saveMessage = "";
+  }
+
+  function cancelEditing() {
+    isEditing = false;
+    saveMessage = "";
+  }
+
+  async function saveFile() {
+    if (!selectedPath) return;
+    saving = true;
+    saveMessage = "";
+
+    try {
+      await writeFile(workspaceId, selectedPath, editContent);
+      fileContent = editContent;
+      isEditing = false;
+      saveMessage = "Saved";
+      setTimeout(() => { saveMessage = ""; }, 2000);
+    } catch (e) {
+      saveMessage = `Error: ${e}`;
+    } finally {
+      saving = false;
+    }
+  }
+
+  // ── Helpers ────────────────────────────────────────────
+
+  function fileName(path: string): string {
+    return path.split("/").pop() ?? path;
+  }
+
+  function fileExtension(name: string): string {
+    const dot = name.lastIndexOf(".");
+    return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
+  }
+
+  const extIconMap: Record<string, string> = {
+    rs: iconRust,
+    ts: iconTs, tsx: iconTs,
+    js: iconJs, jsx: iconJs, mjs: iconJs, cjs: iconJs,
+    svelte: iconSvelte,
+    py: iconPython, pyw: iconPython,
+    go: iconGo,
+    html: iconHtml, htm: iconHtml,
+    css: iconCss,
+    scss: iconSass, sass: iconSass,
+    json: iconJson,
+    md: iconMarkdown, mdx: iconMarkdown,
+    sh: iconBash, bash: iconBash, zsh: iconBash,
+    yml: iconYaml, yaml: iconYaml,
+    rb: iconRuby,
+    java: iconJava,
+    kt: iconKotlin, kts: iconKotlin,
+    swift: iconSwift,
+    c: iconC, h: iconC,
+    cpp: iconCpp, cc: iconCpp, cxx: iconCpp, hpp: iconCpp,
+    cs: iconCsharp,
+    php: iconPhp,
+    lua: iconLua,
+    dockerfile: iconDocker,
+  };
+
+  // Special filenames that map to icons regardless of extension
+  const nameIconMap: Record<string, string> = {
+    "Dockerfile": iconDocker,
+    "Makefile": iconBash,
+    ".gitignore": iconGit,
+    ".gitmodules": iconGit,
+    ".gitattributes": iconGit,
+  };
+
+  function fileIconUrl(name: string): string | null {
+    if (nameIconMap[name]) return nameIconMap[name];
+    const ext = fileExtension(name);
+    return extIconMap[ext] ?? null;
+  }
+
+  function isBinaryExt(name: string): boolean {
+    const ext = fileExtension(name);
+    return ["png", "jpg", "jpeg", "gif", "ico", "svg", "woff", "woff2", "ttf", "eot", "mp3", "mp4", "zip", "tar", "gz", "bin", "exe", "dll", "so", "dylib", "pdf"].includes(ext);
+  }
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  async function refreshTree() {
+    rootLoading = true;
+    rootError = "";
+    try {
+      const entries = await listDirectory(workspaceId, "");
+      rootEntries = entries.map(toNode);
+      expandedPaths.clear();
+    } catch (e) {
+      rootError = String(e);
+    } finally {
+      rootLoading = false;
+    }
+  }
+</script>
+
+<div class="file-browser">
+  {#if rootLoading && rootEntries.length === 0}
+    <div class="browser-empty">Loading...</div>
+  {:else if rootError}
+    <div class="browser-empty browser-error">{rootError}</div>
+  {:else}
+    <div class="browser-layout">
+      <!-- File tree sidebar -->
+      <div class="tree-sidebar">
+        <div class="tree-header">
+          <span class="tree-title">Files</span>
+          <button class="refresh-btn" onclick={refreshTree} title="Refresh">↻</button>
+        </div>
+        <div class="tree-list">
+          {#each rootEntries as node}
+            {@render treeItem(node, 0)}
+          {/each}
+        </div>
+      </div>
+
+      <!-- File content -->
+      <div class="file-content-area">
+        {#if !selectedPath}
+          <div class="browser-empty">Select a file to view</div>
+        {:else if fileLoading}
+          <div class="browser-empty">Loading...</div>
+        {:else if fileError}
+          <div class="browser-empty browser-error">{fileError}</div>
+        {:else}
+          <div class="file-header">
+            <span class="file-header-path">{selectedPath}</span>
+            <div class="file-header-actions">
+              {#if saveMessage}
+                <span class="save-message" class:error={saveMessage.startsWith("Error")}>{saveMessage}</span>
+              {/if}
+              {#if isEditing}
+                <button class="action-btn" onclick={saveFile} disabled={saving}>
+                  {saving ? "Saving..." : "Save"}
+                </button>
+                <button class="action-btn secondary" onclick={cancelEditing}>Cancel</button>
+              {:else}
+                <button class="action-btn" onclick={startEditing}>Edit</button>
+              {/if}
+            </div>
+          </div>
+          <div class="file-body">
+            {#if isEditing}
+              <textarea
+                class="file-editor"
+                bind:value={editContent}
+                spellcheck="false"
+              ></textarea>
+            {:else}
+              <pre class="file-preview"><code>{fileContent}</code></pre>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+</div>
+
+{#snippet treeItem(node: TreeNode, depth: number)}
+  {#if node.entry.is_dir}
+    <button
+      class="tree-node"
+      class:active={false}
+      style="padding-left: {0.5 + depth * 0.9}rem"
+      onclick={() => toggleDir(node)}
+    >
+      <span class="tree-chevron" class:expanded={expandedPaths.has(node.entry.path)}>
+        {#if node.loading}
+          <span class="tree-spinner">...</span>
+        {:else}
+          ›
+        {/if}
+      </span>
+      <span class="tree-icon dir">
+        {#if expandedPaths.has(node.entry.path)}
+          <FolderOpen size={14} />
+        {:else}
+          <Folder size={14} />
+        {/if}
+      </span>
+      <span class="tree-name">{node.entry.name}</span>
+    </button>
+    {#if expandedPaths.has(node.entry.path) && node.children}
+      {#each node.children as child}
+        {@render treeItem(child, depth + 1)}
+      {/each}
+    {/if}
+  {:else}
+    <button
+      class="tree-node"
+      class:active={selectedPath === node.entry.path}
+      style="padding-left: {0.5 + depth * 0.9 + 1.1}rem"
+      onclick={() => {
+        if (!isBinaryExt(node.entry.name)) selectFile(node.entry.path);
+      }}
+      disabled={isBinaryExt(node.entry.name)}
+    >
+      <span class="tree-icon file">
+        {#if fileIconUrl(node.entry.name)}
+          <img src={fileIconUrl(node.entry.name)} alt="" class="devicon" />
+        {:else}
+          <FileIcon size={14} />
+        {/if}
+      </span>
+      <span class="tree-name" class:binary={isBinaryExt(node.entry.name)}>{node.entry.name}</span>
+      <span class="tree-size">{formatSize(node.entry.size)}</span>
+    </button>
+  {/if}
+{/snippet}
+
+<style>
+  .file-browser {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .browser-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+
+  .browser-error {
+    color: var(--diff-del);
+  }
+
+  .browser-layout {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  /* ── Tree sidebar ───────────────────────── */
+
+  .tree-sidebar {
+    width: 260px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .tree-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.72rem;
+  }
+
+  .tree-title {
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  .refresh-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0 0.2rem;
+  }
+
+  .refresh-btn:hover {
+    color: var(--text-primary);
+  }
+
+  .tree-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  /* ── Tree nodes ─────────────────────────── */
+
+  .tree-node {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.18rem 0.5rem;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.75rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .tree-node:hover {
+    background: var(--bg-hover);
+  }
+
+  .tree-node.active {
+    background: var(--border);
+  }
+
+  .tree-node:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+
+  .tree-chevron {
+    width: 0.8rem;
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    transition: transform 0.1s;
+    display: inline-block;
+    text-align: center;
+  }
+
+  .tree-chevron.expanded {
+    transform: rotate(90deg);
+  }
+
+  .tree-spinner {
+    font-size: 0.6rem;
+    animation: pulse-spin 0.8s ease-in-out infinite;
+  }
+
+  @keyframes pulse-spin {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .tree-icon {
+    width: 1.1rem;
+    height: 1.1rem;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+  }
+
+  .tree-icon.dir {
+    color: var(--accent);
+  }
+
+  .devicon {
+    width: 14px;
+    height: 14px;
+    filter: brightness(0) invert(0.55);
+  }
+
+  .tree-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.73rem;
+  }
+
+  .tree-name.binary {
+    color: var(--text-dim);
+  }
+
+  .tree-size {
+    flex-shrink: 0;
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    opacity: 0.6;
+    padding-right: 0.4rem;
+  }
+
+  /* ── File content area ──────────────────── */
+
+  .file-content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .file-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.35rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 0.5rem;
+  }
+
+  .file-header-path {
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+
+  .save-message {
+    font-size: 0.7rem;
+    color: var(--status-ok);
+  }
+
+  .save-message.error {
+    color: var(--diff-del);
+  }
+
+  .action-btn {
+    padding: 0.2rem 0.55rem;
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: 4px;
+    color: var(--accent);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+
+  .action-btn:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .action-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .action-btn.secondary {
+    color: var(--text-dim);
+    border-color: var(--border-light);
+  }
+
+  .action-btn.secondary:hover {
+    background: var(--bg-hover);
+  }
+
+  .file-body {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+  }
+
+  .file-preview {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: var(--text-primary);
+    white-space: pre;
+    tab-size: 2;
+  }
+
+  .file-preview code {
+    font-family: inherit;
+  }
+
+  .file-editor {
+    width: 100%;
+    height: 100%;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
+    tab-size: 2;
+    white-space: pre;
+    overflow: auto;
+  }
+</style>
