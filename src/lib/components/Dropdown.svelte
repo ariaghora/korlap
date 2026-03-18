@@ -52,7 +52,7 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.25rem 0.5rem;
+    padding: 0.4rem 0.5rem;
     background: transparent;
     border: 1px solid var(--border-light);
     border-radius: 5px;
