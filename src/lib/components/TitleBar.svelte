@@ -61,7 +61,6 @@
     <div class="btn-group">
       <Dropdown bind:this={dropdownRef}>
         {#snippet trigger()}
-          <span class="repo-dot" class:has-running={false}></span>
           <span class="repo-name">{activeRepo.display_name}</span>
         {/snippet}
 
@@ -71,7 +70,6 @@
             class:active={repo.id === activeRepo.id}
             onclick={() => selectRepo(repo)}
           >
-            <span class="repo-dot" class:has-running={false}></span>
             <span class="dropdown-item-name">{repo.display_name}</span>
             {#if repo.id === activeRepo.id}
               <Check size={12} class="check-mark" />
@@ -239,18 +237,6 @@
 
   .add-item:hover {
     color: var(--text-primary);
-  }
-
-  .repo-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--border-light);
-    flex-shrink: 0;
-  }
-
-  .repo-dot.has-running {
-    background: var(--accent);
   }
 
   .breadcrumb {
