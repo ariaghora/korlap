@@ -288,6 +288,8 @@ export interface RepoSettings {
   run_script: string;
   remove_script: string;
   pr_message: string;
+  default_thinking: boolean;
+  default_plan: boolean;
 }
 
 export async function getRepoSettings(repoId: string): Promise<RepoSettings> {

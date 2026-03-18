@@ -27,6 +27,8 @@
     run_script: "",
     remove_script: "",
     pr_message: "",
+    default_thinking: false,
+    default_plan: false,
   });
   let saveStatus = $state<"idle" | "saving" | "saved">("idle");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -182,6 +184,39 @@
         <span class="autosave-status" class:visible={saveStatus !== "idle"}>
           {saveStatus === "saving" ? "Saving..." : "Saved"}
         </span>
+      </div>
+
+      <div class="setting-block">
+        <div class="setting-meta">
+          <span class="setting-name">Default modes</span>
+          <span class="setting-desc">New workspaces start with these modes enabled</span>
+        </div>
+        <div class="toggle-group">
+          <label class="toggle-row">
+            <span class="toggle-label">Thinking</span>
+            <button
+              class="toggle-switch"
+              class:on={settings.default_thinking}
+              onclick={() => { settings.default_thinking = !settings.default_thinking; scheduleAutosave(); }}
+              role="switch"
+              aria-checked={settings.default_thinking}
+            >
+              <span class="toggle-knob"></span>
+            </button>
+          </label>
+          <label class="toggle-row">
+            <span class="toggle-label">Plan</span>
+            <button
+              class="toggle-switch"
+              class:on={settings.default_plan}
+              onclick={() => { settings.default_plan = !settings.default_plan; scheduleAutosave(); }}
+              role="switch"
+              aria-checked={settings.default_plan}
+            >
+              <span class="toggle-knob"></span>
+            </button>
+          </label>
+        </div>
       </div>
 
       <div class="setting-block">
@@ -513,6 +548,63 @@
     padding: 0.1rem 0.35rem;
     border-radius: 3px;
     font-size: 0.78rem;
+  }
+
+  /* ── Toggle switches ─────────────── */
+
+  .toggle-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .toggle-label {
+    font-size: 0.82rem;
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  .toggle-switch {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    padding: 0;
+  }
+
+  .toggle-switch.on {
+    background: color-mix(in srgb, var(--accent) 30%, var(--bg-card));
+    border-color: var(--accent);
+  }
+
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    background: var(--text-dim);
+    border-radius: 50%;
+    transition: transform 0.15s, background 0.15s;
+  }
+
+  .toggle-switch.on .toggle-knob {
+    transform: translateX(16px);
+    background: var(--accent);
   }
 
   .pr-message-field {
