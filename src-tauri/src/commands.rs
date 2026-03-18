@@ -790,16 +790,18 @@ pub async fn get_changed_files(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        // Find merge-base: the commit where this branch diverged from base
+        // Compare against origin/<base> since workspaces branch from the remote tip.
+        // Using the local base branch would show phantom diffs when local is behind remote.
+        let remote_base = format!("origin/{}", base_branch);
         let merge_base = std::process::Command::new("git")
-            .args(["merge-base", &base_branch, "HEAD"])
+            .args(["merge-base", &remote_base, "HEAD"])
             .current_dir(&worktree_path)
             .output()
             .ok()
             .and_then(|o| if o.status.success() {
                 Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
             } else { None })
-            .unwrap_or_else(|| base_branch.clone());
+            .unwrap_or_else(|| remote_base.clone());
 
         let output = std::process::Command::new("git")
             .args(["diff", "--numstat", &merge_base])
@@ -882,15 +884,17 @@ pub async fn get_diff(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
+        // Compare against origin/<base> since workspaces branch from the remote tip.
+        let remote_base = format!("origin/{}", base_branch);
         let merge_base = std::process::Command::new("git")
-            .args(["merge-base", &base_branch, "HEAD"])
+            .args(["merge-base", &remote_base, "HEAD"])
             .current_dir(&worktree_path)
             .output()
             .ok()
             .and_then(|o| if o.status.success() {
                 Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
             } else { None })
-            .unwrap_or_else(|| base_branch.clone());
+            .unwrap_or_else(|| remote_base.clone());
 
         let mut cmd = std::process::Command::new("git");
         cmd.args(["diff", &merge_base]);
