@@ -16,41 +16,82 @@
   let diff = $state("");
   let loading = $state(false);
   let error = $state("");
+  let hasLoaded = false;
+
+  // Serialize file list for cheap equality check
+  function filesKey(f: ChangedFile[]): string {
+    return f.map(x => `${x.path}:${x.status}:${x.additions}:${x.deletions}`).join("\n");
+  }
+  let lastFilesKey = "";
+  let lastDiff = "";
 
   async function loadFiles() {
-    loading = true;
+    // Only show loading spinner on first load — background refreshes are silent
+    if (!hasLoaded) {
+      loading = true;
+    }
     error = "";
     try {
-      files = await getChangedFiles(workspaceId);
-      if (files.length === 0) {
-        selectedFile = null;
-        diff = "";
-      } else if (selectedFile && files.some((f) => f.path === selectedFile)) {
-        // Reload current file's diff
-        diff = await getDiff(workspaceId, selectedFile);
+      const newFiles = await getChangedFiles(workspaceId);
+      const newKey = filesKey(newFiles);
+
+      if (newFiles.length === 0) {
+        if (files.length !== 0 || selectedFile !== null) {
+          files = [];
+          selectedFile = null;
+          diff = "";
+          lastFilesKey = "";
+          lastDiff = "";
+        }
+      } else if (selectedFile && newFiles.some((f) => f.path === selectedFile)) {
+        // Update file list only if it actually changed
+        if (newKey !== lastFilesKey) {
+          files = newFiles;
+          lastFilesKey = newKey;
+        }
+        // Reload current file's diff, but skip update if unchanged
+        const newDiff = await getDiff(workspaceId, selectedFile);
+        if (newDiff !== lastDiff) {
+          diff = newDiff;
+          lastDiff = newDiff;
+        }
       } else {
         // Selected file gone or no selection — pick first
-        await selectFile(files[0].path);
+        files = newFiles;
+        lastFilesKey = newKey;
+        await selectFile(newFiles[0].path);
       }
     } catch (e) {
       error = String(e);
     } finally {
       loading = false;
+      hasLoaded = true;
     }
   }
 
   async function selectFile(path: string) {
     selectedFile = path;
     try {
-      diff = await getDiff(workspaceId, path);
+      const newDiff = await getDiff(workspaceId, path);
+      diff = newDiff;
+      lastDiff = newDiff;
     } catch (e) {
       diff = `Error: ${e}`;
+      lastDiff = "";
     }
   }
 
+  let prevWorkspaceId = "";
   $effect(() => {
-    workspaceId;
-    refreshTrigger;
+    const wsId = workspaceId;
+    const _trigger = refreshTrigger;
+    // Reset on workspace switch so we show loading for new workspace
+    if (wsId !== prevWorkspaceId) {
+      hasLoaded = false;
+      lastFilesKey = "";
+      lastDiff = "";
+      prevWorkspaceId = wsId;
+    }
     loadFiles();
   });
 
