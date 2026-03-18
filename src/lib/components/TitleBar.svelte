@@ -1,8 +1,9 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { RepoDetail, WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { Settings, ExternalLink, Check, X, Loader } from "lucide-svelte";
+  import { Settings, ExternalLink, Check, X, Loader, Plus } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import Dropdown from "./Dropdown.svelte";
 
   interface Props {
     repos: RepoDetail[];
@@ -16,6 +17,18 @@
 
   let { repos, activeRepo, selectedWs, prStatus, onSelectRepo, onAddRepo, onSettings }: Props =
     $props();
+
+  let dropdownRef: Dropdown | undefined = $state();
+
+  function selectRepo(repo: RepoDetail) {
+    onSelectRepo(repo);
+    dropdownRef?.close();
+  }
+
+  function handleAddRepo() {
+    onAddRepo();
+    dropdownRef?.close();
+  }
 
   function startDrag(e: MouseEvent) {
     const target = e.target as HTMLElement;
@@ -36,22 +49,31 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <header class="titlebar" onmousedown={startDrag} ondblclick={handleDoubleClick}>
   <div class="titlebar-left">
-    <div class="repo-tabs">
+    <Dropdown bind:this={dropdownRef}>
+      {#snippet trigger()}
+        <span class="repo-dot" class:has-running={false}></span>
+        <span class="repo-name">{activeRepo.display_name}</span>
+      {/snippet}
+
       {#each repos as repo}
         <button
-          class="repo-tab"
+          class="dropdown-item"
           class:active={repo.id === activeRepo.id}
-          onclick={() => onSelectRepo(repo)}
+          onclick={() => selectRepo(repo)}
         >
-          <span
-            class="repo-dot"
-            class:has-running={false}
-          ></span>
-          {repo.display_name}
+          <span class="repo-dot" class:has-running={false}></span>
+          <span class="dropdown-item-name">{repo.display_name}</span>
+          {#if repo.id === activeRepo.id}
+            <Check size={12} class="check-mark" />
+          {/if}
         </button>
       {/each}
-      <button class="repo-tab add-tab" onclick={onAddRepo}>+</button>
-    </div>
+      <div class="dropdown-divider"></div>
+      <button class="dropdown-item add-item" onclick={handleAddRepo}>
+        <Plus size={12} />
+        <span>Add repository</span>
+      </button>
+    </Dropdown>
   </div>
 
   <div class="titlebar-right">
@@ -118,41 +140,62 @@
     gap: 0.75rem;
   }
 
-  .repo-tabs {
-    display: flex;
-    gap: 0.25rem;
-    align-items: center;
+  .repo-name {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .repo-tab {
+  .dropdown-item {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.3rem 0.6rem;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.4rem 0.5rem;
     background: transparent;
-    border: 1px solid transparent;
+    border: none;
     border-radius: 4px;
     color: var(--text-secondary);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.8rem;
+    text-align: left;
   }
 
-  .repo-tab:hover {
+  .dropdown-item:hover {
+    background: var(--border);
     color: var(--text-primary);
-    background: var(--border);
   }
 
-  .repo-tab.active {
+  .dropdown-item.active {
     color: var(--text-bright);
-    background: var(--border);
-    border-color: var(--border-light);
   }
 
-  .add-tab {
-    font-size: 1rem;
-    padding: 0.2rem 0.5rem;
+  .dropdown-item-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dropdown-item :global(.check-mark) {
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .dropdown-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 0.25rem 0;
+  }
+
+  .add-item {
     color: var(--text-dim);
+  }
+
+  .add-item:hover {
+    color: var(--text-primary);
   }
 
   .repo-dot {
