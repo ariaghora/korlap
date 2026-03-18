@@ -79,6 +79,8 @@ pub fn run() {
             commands::write_file,
             commands::get_changed_files,
             commands::get_diff,
+            commands::search_workspace_files,
+            commands::read_workspace_file,
             commands::run_script,
             commands::save_messages,
             commands::load_messages,

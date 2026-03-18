@@ -8,6 +8,12 @@ export type MessageChunk =
   | { type: "thinking"; content: string }
   | { type: "tool"; name: string; input: string; filePath?: string; oldString?: string; newString?: string };
 
+export interface MessageMention {
+  type: "file" | "folder";
+  path: string;
+  displayName: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant" | "action";
@@ -15,6 +21,7 @@ export interface Message {
   done: boolean;
   actionLabel?: string; // compact label for action messages (e.g. "Creating PR", "Merging")
   imageDataUrls?: string[]; // data URLs for attached image thumbnails (user messages only)
+  mentions?: MessageMention[]; // @-mentioned files/folders (user messages only)
 }
 
 // ── State ──────────────────────────────────────────────────────────
@@ -61,6 +68,7 @@ export function addUserMessage(
   id: string,
   text: string,
   imageDataUrls?: string[],
+  mentions?: MessageMention[],
 ) {
   pushMessage(workspaceId, {
     id,
@@ -68,6 +76,7 @@ export function addUserMessage(
     chunks: text ? [{ type: "text", content: text }] : [],
     done: true,
     imageDataUrls: imageDataUrls && imageDataUrls.length > 0 ? imageDataUrls : undefined,
+    mentions: mentions && mentions.length > 0 ? mentions : undefined,
   });
   persistMessages(workspaceId);
 }

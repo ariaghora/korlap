@@ -18,6 +18,7 @@
     getPrStatus,
     getPrTemplate,
     getChangedFiles,
+    readWorkspaceFile,
     type RepoDetail,
     type RepoSettings,
     type WorkspaceInfo,
@@ -37,6 +38,7 @@
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel, { type PastedImage } from "$lib/components/ChatPanel.svelte";
+  import type { Mention } from "$lib/components/MentionInput.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
@@ -58,6 +60,7 @@
   let repoSettings = $state<RepoSettings | null>(null);
   let prStatusMap = new SvelteMap<string, PrStatus>();
   let changeCounts = new SvelteMap<string, { additions: number; deletions: number }>();
+  let fileNavigatePath = $state<string | null>(null);
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
@@ -100,8 +103,9 @@
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
 
-      const tag = (e.target as HTMLElement)?.tagName;
-      const inInput = tag === "INPUT" || tag === "TEXTAREA";
+      const target = e.target as HTMLElement;
+      const tag = target?.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable;
 
       switch (e.key) {
         case ",":
@@ -332,7 +336,7 @@
     }
   }
 
-  async function handleSend(prompt: string, images: PastedImage[] = []) {
+  async function handleSend(prompt: string, images: PastedImage[] = [], mentions: Mention[] = []) {
     if (!selectedWsId) return;
     const wsId = selectedWsId;
 
@@ -349,8 +353,30 @@
       }
     }
 
-    // Build prompt with image references
+    // Resolve mentioned files — read contents and prepend as context blocks
+    let contextBlocks: string[] = [];
+    for (const mention of mentions) {
+      if (mention.type === "file") {
+        try {
+          const content = await readWorkspaceFile(wsId, mention.path);
+          const lines = content.split("\n").length;
+          contextBlocks.push(`<file path="${mention.path}" lines="${lines}" source="mention">\n${content}\n</file>`);
+        } catch {
+          // File unreadable (binary, too large, etc.) — just reference the path
+          contextBlocks.push(`<file path="${mention.path}" source="mention">(could not read file — use Read tool to access)</file>`);
+        }
+      } else if (mention.type === "folder") {
+        // For folders, just mention the path — Claude can explore it
+        contextBlocks.push(`<folder path="${mention.path}" />`);
+      }
+    }
+
+    // Build prompt with context + image references
     let fullPrompt = prompt;
+    if (contextBlocks.length > 0) {
+      const contextSection = contextBlocks.join("\n\n");
+      fullPrompt = `${contextSection}\n\n${fullPrompt}`;
+    }
     if (imagePaths.length > 0) {
       const refs = imagePaths.map((p) => p).join("\n");
       const imageInstructions =
@@ -367,7 +393,8 @@
     error = "";
     setSending(wsId, true);
     const dataUrls = images.length > 0 ? images.map((img) => img.dataUrl) : undefined;
-    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls);
+    const msgMentions = mentions.length > 0 ? mentions.map((m) => ({ type: m.type, path: m.path, displayName: m.displayName })) : undefined;
+    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls, msgMentions);
 
     try {
       await sendMessage(wsId, fullPrompt, (event: AgentEvent) => {
@@ -602,7 +629,7 @@
                 <button
                   class="tab"
                   class:active={activeTab === tab}
-                  onclick={() => (activeTab = tab as PanelTab)}
+                  onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") fileNavigatePath = null; }}
                 >
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   {#if tab === "diff" && changeCounts.get(selectedWs.id)}
@@ -654,8 +681,9 @@
                   workspaceId={ws.id}
                   creating={ws.id === creatingWsId}
                   disabled={ws.status === "archived"}
-                  onSend={handleSend}
+                  onSend={(prompt, images, mentions) => handleSend(prompt, images, mentions)}
                   onStop={handleStop}
+                  onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
                 />
               </div>
             {/each}
@@ -676,7 +704,7 @@
             <!-- Files: mount on demand like diff -->
             {#if activeTab === "files" && selectedWs}
               <div class="ws-tab-container active-layer">
-                <FileBrowser workspaceId={selectedWs.id} />
+                <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} />
               </div>
             {/if}
 

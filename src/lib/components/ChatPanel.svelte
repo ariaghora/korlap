@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
+  import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
+  import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
   import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings } from "lucide-svelte";
+  import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
+  import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
 
   const toolIcons: Record<string, typeof Settings> = {
     Read: FileText,
@@ -26,19 +29,61 @@
     workspaceId: string;
     creating?: boolean;
     disabled: boolean;
-    onSend: (prompt: string, images: PastedImage[]) => void;
+    onSend: (prompt: string, images: PastedImage[], mentions: Mention[]) => void;
     onStop: () => void;
+    onMentionClick?: (path: string) => void;
   }
 
-  let { workspaceId, creating = false, disabled, onSend, onStop }: Props = $props();
+  let { workspaceId, creating = false, disabled, onSend, onStop, onMentionClick }: Props = $props();
+
+  /** Split text into segments, replacing @displayName with mention references. */
+  type TextSegment = { kind: "text"; value: string } | { kind: "mention"; mention: MessageMention };
+
+  function splitTextWithMentions(text: string, mentions: MessageMention[]): TextSegment[] {
+    if (mentions.length === 0) return [{ kind: "text", value: text }];
+
+    // Build regex matching any @displayName, longest first to avoid partial matches
+    const sorted = [...mentions].sort((a, b) => b.displayName.length - a.displayName.length);
+    const escaped = sorted.map((m) => `@${m.displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+    const regex = new RegExp(`(${escaped.join("|")})`, "g");
+
+    const segments: TextSegment[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ kind: "text", value: text.slice(lastIndex, match.index) });
+      }
+      const displayName = match[0].slice(1); // strip @
+      const mention = mentions.find((m) => m.displayName === displayName);
+      if (mention) {
+        segments.push({ kind: "mention", mention });
+      } else {
+        segments.push({ kind: "text", value: match[0] });
+      }
+      lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      segments.push({ kind: "text", value: text.slice(lastIndex) });
+    }
+    return segments;
+  }
 
   let messages = $derived(messagesByWorkspace.get(workspaceId) ?? []);
   let sending = $derived(sendingByWorkspace.get(workspaceId) ?? false);
 
-  let userInput = $state("");
   let pastedImages = $state<PastedImage[]>([]);
   let chatArea: HTMLDivElement | undefined = $state();
   let userScrolledUp = $state(false);
+  let inputEl: HTMLDivElement | undefined = $state();
+
+  // Mention input + autocomplete state
+  let mentionInputApi: MentionInputApi | undefined = $state();
+  let autocompleteApi: MentionAutocompleteApi | undefined = $state();
+  let autocompleteVisible = $state(false);
+  let autocompleteResults = $state<FileSearchResult[]>([]);
+  let autocompleteLoading = $state(false);
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Track which edit diffs are collapsed (by "msgId:chunkIdx" key)
   let collapsedDiffs = $state(new Set<string>());
@@ -79,22 +124,73 @@
     return files;
   });
 
-  function handleSubmit() {
-    if ((!userInput.trim() && pastedImages.length === 0) || sending || disabled || creating) return;
-    const prompt = userInput.trim();
+  function handleMentionSubmit(value: MentionInputValue) {
+    if (sending || disabled || creating) return;
+    if (!value.text.trim() && value.mentions.length === 0 && pastedImages.length === 0) return;
+    const prompt = value.text.trim();
     const images = [...pastedImages];
-    userInput = "";
+    const mentions = [...value.mentions];
     pastedImages = [];
-    // Reset textarea height after clearing
-    const ta = document.querySelector(".input-row textarea") as HTMLTextAreaElement | null;
-    if (ta) ta.style.height = "auto";
-    onSend(prompt, images);
+    onSend(prompt, images, mentions);
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
+  function handleQueryChange(query: string | null) {
+    if (query === null) {
+      autocompleteVisible = false;
+      autocompleteResults = [];
+      autocompleteLoading = false;
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      return;
+    }
+
+    autocompleteVisible = true;
+    if (!query) {
+      autocompleteResults = [];
+      autocompleteLoading = false;
+      return;
+    }
+
+    autocompleteLoading = true;
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(async () => {
+      try {
+        const results = await searchWorkspaceFiles(workspaceId, query);
+        autocompleteResults = results;
+      } catch {
+        autocompleteResults = [];
+      }
+      autocompleteLoading = false;
+    }, 100);
+  }
+
+  function handleAutocompleteSelect(result: FileSearchResult) {
+    const mention: Mention = {
+      type: result.kind === "folder" ? "folder" : "file",
+      path: result.path,
+      displayName: result.name,
+    };
+    mentionInputApi?.insertMention(mention);
+    autocompleteVisible = false;
+    autocompleteResults = [];
+  }
+
+  function handleInputKeydown(e: KeyboardEvent) {
+    // When autocomplete is open, intercept arrow keys and Enter
+    if (autocompleteVisible && autocompleteResults.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        autocompleteApi?.moveUp();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        autocompleteApi?.moveDown();
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        autocompleteApi?.selectCurrent();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        autocompleteVisible = false;
+        autocompleteResults = [];
+      }
     }
   }
 
@@ -113,7 +209,6 @@
       const reader = new FileReader();
       reader.onload = () => {
         const dataUrl = reader.result as string;
-        // Extract base64 after the data:image/...;base64, prefix
         const base64 = dataUrl.split(",")[1] ?? "";
         pastedImages = [
           ...pastedImages,
@@ -126,12 +221,6 @@
 
   function removeImage(id: string) {
     pastedImages = pastedImages.filter((img) => img.id !== id);
-  }
-
-  function autoResize(e: Event) {
-    const el = e.target as HTMLTextAreaElement;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }
 </script>
 
@@ -168,7 +257,20 @@
             {/if}
             <div class="user-bubble">
               {#each msg.chunks as chunk}
-                {#if chunk.type === "text"}{chunk.content}{/if}
+                {#if chunk.type === "text"}
+                  {#if msg.mentions && msg.mentions.length > 0}
+                    {#each splitTextWithMentions(chunk.content, msg.mentions) as seg}
+                      {#if seg.kind === "text"}{seg.value}{:else}
+                        <button
+                          class="msg-mention-chip"
+                          onclick={() => onMentionClick?.(seg.mention.path)}
+                        >@{seg.mention.displayName}</button>
+                      {/if}
+                    {/each}
+                  {:else}
+                    {chunk.content}
+                  {/if}
+                {/if}
               {/each}
             </div>
           </div>
@@ -265,13 +367,7 @@
     {/if}
   </div>
 
-  <form
-    class="input-form"
-    onsubmit={(e) => {
-      e.preventDefault();
-      handleSubmit();
-    }}
-  >
+  <div class="input-form">
     {#if pastedImages.length > 0}
       <div class="image-preview-strip">
         {#each pastedImages as img (img.id)}
@@ -288,25 +384,34 @@
         {/each}
       </div>
     {/if}
-    <div class="input-row">
-      <textarea
-        bind:value={userInput}
-        onkeydown={handleKeydown}
-        oninput={autoResize}
-        onpaste={handlePaste}
-        placeholder="Ask to make changes, @mention files, run /commands"
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="input-row" onkeydown={handleInputKeydown} bind:this={inputEl}>
+      <MentionInput
+        placeholder="Ask to make changes, @mention files"
         disabled={disabled || creating}
-        rows="1"
-      ></textarea>
+        onSubmit={handleMentionSubmit}
+        onQueryChange={handleQueryChange}
+        onPaste={handlePaste}
+        bind:ref={mentionInputApi}
+      />
     {#if sending}
       <button type="button" class="stop-btn" onclick={onStop}>Stop</button>
     {:else}
-      <button type="submit" class="send-btn" disabled={!userInput.trim() && pastedImages.length === 0 || disabled}
+      <button type="button" class="send-btn" disabled={disabled}
+        onclick={() => mentionInputApi?.focus()}
         >Send</button
       >
     {/if}
     </div>
-  </form>
+    <MentionAutocomplete
+      results={autocompleteResults}
+      visible={autocompleteVisible}
+      loading={autocompleteLoading}
+      anchorEl={inputEl ?? null}
+      onSelect={handleAutocompleteSelect}
+      bind:ref={autocompleteApi}
+    />
+  </div>
 </div>
 
 <style>
@@ -387,6 +492,23 @@
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  .msg-mention-chip {
+    display: inline;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+    border: none;
+    border-radius: 4px;
+    padding: 0.05rem 0.35rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .msg-mention-chip:hover {
+    background: color-mix(in srgb, var(--accent) 25%, transparent);
   }
 
   /* ── Assistant messages ────────────────────── */
@@ -753,30 +875,6 @@
     padding: 0.6rem 1rem;
   }
 
-  .input-row textarea {
-    flex: 1;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    color: var(--text-primary);
-    padding: 0.55rem 0.85rem;
-    border-radius: 8px;
-    font-family: inherit;
-    font-size: 0.85rem;
-    resize: none;
-    overflow-y: auto;
-    line-height: 1.4;
-    max-height: 160px;
-  }
-
-  .input-row textarea:focus {
-    outline: none;
-    border-color: color-mix(in srgb, var(--accent) 33%, transparent);
-  }
-
-  .input-row textarea:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
 
   .send-btn {
     padding: 0.55rem 1rem;
