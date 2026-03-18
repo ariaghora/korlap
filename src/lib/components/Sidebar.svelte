@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { Eye } from "lucide-svelte";
+  import { Eye, ChevronRight } from "lucide-svelte";
+  import { SvelteSet } from "svelte/reactivity";
 
   interface Props {
     workspaces: WorkspaceInfo[];
@@ -63,6 +64,16 @@
     ];
   });
 
+  const collapsed = new SvelteSet<GroupKey>(["done"]);
+
+  function toggleGroup(key: GroupKey) {
+    if (collapsed.has(key)) {
+      collapsed.delete(key);
+    } else {
+      collapsed.add(key);
+    }
+  }
+
   let editingId = $state<string | null>(null);
   let editValue = $state("");
 
@@ -95,10 +106,14 @@
   <div class="workspace-list">
     {#each groups as group}
       <div class="group">
-        <div class="group-header">
+        <button class="group-header" onclick={() => toggleGroup(group.key)}>
+          <span class="group-chevron" class:expanded={!collapsed.has(group.key)}>
+            <ChevronRight size={12} />
+          </span>
           <span class="group-label">{group.label}</span>
           <span class="group-count">{group.items.length}</span>
-        </div>
+        </button>
+        {#if !collapsed.has(group.key)}
         {#each group.items as ws (ws.id)}
           <div class="ws-item-wrap">
             <button
@@ -149,6 +164,7 @@
             {/if}
           </div>
         {/each}
+        {/if}
       </div>
     {/each}
   </div>
@@ -170,32 +186,55 @@
   .workspace-list {
     flex: 1;
     overflow-y: auto;
-    padding: 0.25rem;
+    padding: 0.25rem 0;
   }
 
   .group + .group {
-    margin-top: 0.4rem;
+    border-top: 1px solid var(--border);
   }
 
   .group-header {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.35rem 0.5rem 0.2rem;
+    gap: 0.25rem;
+    padding: 0.3rem 0.5rem 0.25rem;
+    width: 100%;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .group-header:hover .group-label,
+  .group-header:hover .group-count {
+    color: var(--text-secondary);
+  }
+
+  .group-chevron {
+    display: flex;
+    align-items: center;
+    color: var(--text-dim);
+    opacity: 0.5;
+    transition: transform 0.15s ease;
+    transform: rotate(0deg);
+  }
+
+  .group-chevron.expanded {
+    transform: rotate(90deg);
   }
 
   .group-label {
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    font-weight: 500;
+    font-weight: 600;
   }
 
   .group-count {
     font-size: 0.6rem;
     color: var(--text-dim);
-    opacity: 0.6;
+    opacity: 0.45;
   }
 
   .ws-item-wrap {
