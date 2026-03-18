@@ -106,6 +106,35 @@ export async function saveImage(
   return invoke<string>("save_image", { workspaceId, data, extension });
 }
 
+// ── File Search ─────────────────────────────────────────────────
+
+export interface FileSearchResult {
+  path: string;
+  name: string;
+  kind: "file" | "folder";
+  score: number;
+}
+
+export async function searchWorkspaceFiles(
+  workspaceId: string,
+  query: string,
+): Promise<FileSearchResult[]> {
+  return invoke<FileSearchResult[]>("search_workspace_files", {
+    workspaceId,
+    query,
+  });
+}
+
+export async function readWorkspaceFile(
+  workspaceId: string,
+  filePath: string,
+): Promise<string> {
+  return invoke<string>("read_workspace_file", {
+    workspaceId,
+    filePath,
+  });
+}
+
 // ── Agent ────────────────────────────────────────────────────────────
 
 export async function sendMessage(

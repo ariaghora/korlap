@@ -18,6 +18,7 @@
     getPrStatus,
     getPrTemplate,
     getChangedFiles,
+    readWorkspaceFile,
     type RepoDetail,
     type RepoSettings,
     type WorkspaceInfo,
@@ -37,6 +38,7 @@
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel, { type PastedImage } from "$lib/components/ChatPanel.svelte";
+  import type { Mention } from "$lib/components/MentionInput.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
@@ -100,8 +102,9 @@
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
 
-      const tag = (e.target as HTMLElement)?.tagName;
-      const inInput = tag === "INPUT" || tag === "TEXTAREA";
+      const target = e.target as HTMLElement;
+      const tag = target?.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable;
 
       switch (e.key) {
         case ",":
@@ -332,7 +335,7 @@
     }
   }
 
-  async function handleSend(prompt: string, images: PastedImage[] = []) {
+  async function handleSend(prompt: string, images: PastedImage[] = [], mentions: Mention[] = []) {
     if (!selectedWsId) return;
     const wsId = selectedWsId;
 
@@ -349,8 +352,29 @@
       }
     }
 
-    // Build prompt with image references
+    // Resolve mentioned files — read contents and prepend as context blocks
+    let contextBlocks: string[] = [];
+    for (const mention of mentions) {
+      if (mention.type === "file") {
+        try {
+          const content = await readWorkspaceFile(wsId, mention.path);
+          contextBlocks.push(`<file path="${mention.path}">\n${content}\n</file>`);
+        } catch {
+          // File unreadable (binary, too large, etc.) — just reference the path
+          contextBlocks.push(`<file path="${mention.path}">(could not read file)</file>`);
+        }
+      } else if (mention.type === "folder") {
+        // For folders, just mention the path — Claude can explore it
+        contextBlocks.push(`<folder path="${mention.path}" />`);
+      }
+    }
+
+    // Build prompt with context + image references
     let fullPrompt = prompt;
+    if (contextBlocks.length > 0) {
+      const contextSection = contextBlocks.join("\n\n");
+      fullPrompt = `${contextSection}\n\n${fullPrompt}`;
+    }
     if (imagePaths.length > 0) {
       const refs = imagePaths.map((p) => p).join("\n");
       const imageInstructions =
@@ -654,7 +678,7 @@
                   workspaceId={ws.id}
                   creating={ws.id === creatingWsId}
                   disabled={ws.status === "archived"}
-                  onSend={handleSend}
+                  onSend={(prompt, images, mentions) => handleSend(prompt, images, mentions)}
                   onStop={handleStop}
                 />
               </div>

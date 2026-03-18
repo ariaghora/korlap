@@ -1,4 +1,6 @@
 use crate::state::{AgentHandle, AppState, RepoInfo, WorkspaceInfo, WorkspaceStatus};
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -1197,6 +1199,143 @@ pub async fn get_diff(
 
         Ok(diff_text)
     }).await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+// ── File search commands ─────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct FileSearchResult {
+    /// Relative path from worktree root (e.g. "src/lib/ipc.ts")
+    pub path: String,
+    /// Just the filename (e.g. "ipc.ts")
+    pub name: String,
+    /// "file" or "folder"
+    pub kind: String,
+    /// Fuzzy match score (higher = better)
+    pub score: i64,
+}
+
+#[tauri::command]
+pub fn search_workspace_files(
+    workspace_id: String,
+    query: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<FileSearchResult>, String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let matcher = SkimMatcherV2::default();
+    let mut results: Vec<FileSearchResult> = Vec::new();
+    let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let walker = ignore::WalkBuilder::new(&worktree_path)
+        .hidden(true) // respect hidden
+        .git_ignore(true) // respect .gitignore
+        .git_global(true)
+        .git_exclude(true)
+        .max_depth(Some(12))
+        .build();
+
+    for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let path = entry.path();
+        let rel_path = match path.strip_prefix(&worktree_path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        // Skip the root itself and .git
+        let rel_str = rel_path.to_string_lossy();
+        if rel_str.is_empty() || rel_str.starts_with(".git") {
+            continue;
+        }
+
+        let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
+        let name = rel_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Match against filename and full path — take the better score
+        let score_name = matcher.fuzzy_match(&name, &query).unwrap_or(0);
+        let score_path = matcher.fuzzy_match(&rel_str, &query).unwrap_or(0);
+        let score = score_name.max(score_path);
+
+        if score > 0 {
+            if is_dir {
+                let dir_key = rel_str.to_string();
+                if !seen_dirs.insert(dir_key.clone()) {
+                    continue;
+                }
+                results.push(FileSearchResult {
+                    path: format!("{}/", rel_str),
+                    name: format!("{}/", name),
+                    kind: "folder".to_string(),
+                    score,
+                });
+            } else {
+                results.push(FileSearchResult {
+                    path: rel_str.to_string(),
+                    name,
+                    kind: "file".to_string(),
+                    score,
+                });
+            }
+        }
+    }
+
+    // Sort by score descending, limit to top 20
+    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.truncate(20);
+
+    Ok(results)
+}
+
+#[tauri::command]
+pub fn read_workspace_file(
+    workspace_id: String,
+    file_path: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    let full_path = worktree_path.join(&file_path);
+
+    // Security: ensure the path stays within the worktree
+    let canonical = full_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+    let wt_canonical = worktree_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve worktree: {}", e))?;
+    if !canonical.starts_with(&wt_canonical) {
+        return Err("Path escapes worktree boundary".into());
+    }
+
+    std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("Failed to read file: {}", e))
 }
 
 // ── PR commands ──────────────────────────────────────────────────────

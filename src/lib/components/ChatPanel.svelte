@@ -1,6 +1,9 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
+  import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
   import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings } from "lucide-svelte";
+  import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
+  import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
 
   const toolIcons: Record<string, typeof Settings> = {
     Read: FileText,
@@ -26,7 +29,7 @@
     workspaceId: string;
     creating?: boolean;
     disabled: boolean;
-    onSend: (prompt: string, images: PastedImage[]) => void;
+    onSend: (prompt: string, images: PastedImage[], mentions: Mention[]) => void;
     onStop: () => void;
   }
 
@@ -35,10 +38,18 @@
   let messages = $derived(messagesByWorkspace.get(workspaceId) ?? []);
   let sending = $derived(sendingByWorkspace.get(workspaceId) ?? false);
 
-  let userInput = $state("");
   let pastedImages = $state<PastedImage[]>([]);
   let chatArea: HTMLDivElement | undefined = $state();
   let userScrolledUp = $state(false);
+  let inputEl: HTMLDivElement | undefined = $state();
+
+  // Mention input + autocomplete state
+  let mentionInputApi: MentionInputApi | undefined = $state();
+  let autocompleteApi: MentionAutocompleteApi | undefined = $state();
+  let autocompleteVisible = $state(false);
+  let autocompleteResults = $state<FileSearchResult[]>([]);
+  let autocompleteLoading = $state(false);
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Track which edit diffs are collapsed (by "msgId:chunkIdx" key)
   let collapsedDiffs = $state(new Set<string>());
@@ -79,22 +90,73 @@
     return files;
   });
 
-  function handleSubmit() {
-    if ((!userInput.trim() && pastedImages.length === 0) || sending || disabled || creating) return;
-    const prompt = userInput.trim();
+  function handleMentionSubmit(value: MentionInputValue) {
+    if (sending || disabled || creating) return;
+    if (!value.text.trim() && value.mentions.length === 0 && pastedImages.length === 0) return;
+    const prompt = value.text.trim();
     const images = [...pastedImages];
-    userInput = "";
+    const mentions = [...value.mentions];
     pastedImages = [];
-    // Reset textarea height after clearing
-    const ta = document.querySelector(".input-row textarea") as HTMLTextAreaElement | null;
-    if (ta) ta.style.height = "auto";
-    onSend(prompt, images);
+    onSend(prompt, images, mentions);
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
+  function handleQueryChange(query: string | null) {
+    if (query === null) {
+      autocompleteVisible = false;
+      autocompleteResults = [];
+      autocompleteLoading = false;
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      return;
+    }
+
+    autocompleteVisible = true;
+    if (!query) {
+      autocompleteResults = [];
+      autocompleteLoading = false;
+      return;
+    }
+
+    autocompleteLoading = true;
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(async () => {
+      try {
+        const results = await searchWorkspaceFiles(workspaceId, query);
+        autocompleteResults = results;
+      } catch {
+        autocompleteResults = [];
+      }
+      autocompleteLoading = false;
+    }, 100);
+  }
+
+  function handleAutocompleteSelect(result: FileSearchResult) {
+    const mention: Mention = {
+      type: result.kind === "folder" ? "folder" : "file",
+      path: result.path,
+      displayName: result.name,
+    };
+    mentionInputApi?.insertMention(mention);
+    autocompleteVisible = false;
+    autocompleteResults = [];
+  }
+
+  function handleInputKeydown(e: KeyboardEvent) {
+    // When autocomplete is open, intercept arrow keys and Enter
+    if (autocompleteVisible && autocompleteResults.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        autocompleteApi?.moveUp();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        autocompleteApi?.moveDown();
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        autocompleteApi?.selectCurrent();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        autocompleteVisible = false;
+        autocompleteResults = [];
+      }
     }
   }
 
@@ -113,7 +175,6 @@
       const reader = new FileReader();
       reader.onload = () => {
         const dataUrl = reader.result as string;
-        // Extract base64 after the data:image/...;base64, prefix
         const base64 = dataUrl.split(",")[1] ?? "";
         pastedImages = [
           ...pastedImages,
@@ -126,12 +187,6 @@
 
   function removeImage(id: string) {
     pastedImages = pastedImages.filter((img) => img.id !== id);
-  }
-
-  function autoResize(e: Event) {
-    const el = e.target as HTMLTextAreaElement;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }
 </script>
 
@@ -265,13 +320,7 @@
     {/if}
   </div>
 
-  <form
-    class="input-form"
-    onsubmit={(e) => {
-      e.preventDefault();
-      handleSubmit();
-    }}
-  >
+  <div class="input-form">
     {#if pastedImages.length > 0}
       <div class="image-preview-strip">
         {#each pastedImages as img (img.id)}
@@ -288,25 +337,34 @@
         {/each}
       </div>
     {/if}
-    <div class="input-row">
-      <textarea
-        bind:value={userInput}
-        onkeydown={handleKeydown}
-        oninput={autoResize}
-        onpaste={handlePaste}
-        placeholder="Ask to make changes, @mention files, run /commands"
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="input-row" onkeydown={handleInputKeydown} bind:this={inputEl}>
+      <MentionInput
+        placeholder="Ask to make changes, @mention files"
         disabled={disabled || creating}
-        rows="1"
-      ></textarea>
+        onSubmit={handleMentionSubmit}
+        onQueryChange={handleQueryChange}
+        onPaste={handlePaste}
+        bind:ref={mentionInputApi}
+      />
     {#if sending}
       <button type="button" class="stop-btn" onclick={onStop}>Stop</button>
     {:else}
-      <button type="submit" class="send-btn" disabled={!userInput.trim() && pastedImages.length === 0 || disabled}
+      <button type="button" class="send-btn" disabled={disabled}
+        onclick={() => mentionInputApi?.focus()}
         >Send</button
       >
     {/if}
     </div>
-  </form>
+    <MentionAutocomplete
+      results={autocompleteResults}
+      visible={autocompleteVisible}
+      loading={autocompleteLoading}
+      anchorEl={inputEl ?? null}
+      onSelect={handleAutocompleteSelect}
+      bind:ref={autocompleteApi}
+    />
+  </div>
 </div>
 
 <style>
@@ -753,30 +811,6 @@
     padding: 0.6rem 1rem;
   }
 
-  .input-row textarea {
-    flex: 1;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    color: var(--text-primary);
-    padding: 0.55rem 0.85rem;
-    border-radius: 8px;
-    font-family: inherit;
-    font-size: 0.85rem;
-    resize: none;
-    overflow-y: auto;
-    line-height: 1.4;
-    max-height: 160px;
-  }
-
-  .input-row textarea:focus {
-    outline: none;
-    border-color: color-mix(in srgb, var(--accent) 33%, transparent);
-  }
-
-  .input-row textarea:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
 
   .send-btn {
     padding: 0.55rem 1rem;
