@@ -44,6 +44,10 @@ pub struct RepoSettings {
     pub remove_script: String,
     #[serde(default)]
     pub pr_message: String,
+    #[serde(default)]
+    pub default_thinking: bool,
+    #[serde(default)]
+    pub default_plan: bool,
 }
 
 pub struct TerminalHandle {

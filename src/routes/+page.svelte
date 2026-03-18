@@ -351,7 +351,7 @@
   async function handleSend(prompt: string, images: PastedImage[] = [], mentions: Mention[] = [], planMode: boolean = false) {
     if (!selectedWsId) return;
     const wsId = selectedWsId;
-    const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? false;
+    const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? repoSettings?.default_thinking ?? false;
 
     // Save images to workspace dir, collect file paths
     let imagePaths: string[] = [];
@@ -709,8 +709,8 @@
                 <ChatPanel
                   workspaceId={ws.id}
                   creating={ws.id === creatingWsId}
-                  planMode={planModeByWorkspace.get(ws.id) ?? false}
-                  thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? false}
+                  planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
+                  thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
                   onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
                   onStop={handleStop}
                   onPlanModeChange={(enabled) => planModeByWorkspace.set(ws.id, enabled)}
