@@ -88,6 +88,9 @@
   const pendingDrain = new SvelteMap<string, boolean>();
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
+  let reviewingWsIds = $derived(
+    new Set([...reviewByWorkspace.entries()].filter(([, r]) => r.status === "running").map(([id]) => id)),
+  );
   let activeWorkspaces = $derived(
     [...workspaces].sort((a, b) => a.created_at - b.created_at),
   );
@@ -105,11 +108,13 @@
       }).catch((e) => { error = String(e); });
 
       unlistenStatus = await onAgentStatus((event) => {
+        const isReviewing = reviewByWorkspace.has(event.workspace_id);
         const ws = workspaces.find((w) => w.id === event.workspace_id);
-        if (ws) {
+        // Suppress "running" for reviewing workspaces; let "waiting" through
+        if (ws && !(isReviewing && event.status === "running")) {
           ws.status = event.status as WorkspaceInfo["status"];
         }
-        if (event.status === "waiting") {
+        if (event.status === "waiting" && !isReviewing) {
           setSending(event.workspace_id, false);
           if (pendingDrain.get(event.workspace_id)) {
             pendingDrain.delete(event.workspace_id);
@@ -437,7 +442,7 @@
   }
 
   async function handleSend(prompt: string, images: PastedImage[] = [], mentions: Mention[] = [], planMode: boolean = false) {
-    if (!selectedWsId) return;
+    if (!selectedWsId || reviewByWorkspace.has(selectedWsId)) return;
     const wsId = selectedWsId;
     const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? repoSettings?.default_thinking ?? false;
 
@@ -625,20 +630,19 @@
     if (!selectedWsId || !activeRepo) return;
     const wsId = selectedWsId;
 
-    if (sendingByWorkspace.get(wsId)) return;
+    if (sendingByWorkspace.get(wsId) || reviewByWorkspace.has(wsId)) return;
     const pr = prStatusMap.get(wsId);
     if (!pr || pr.state !== "open") return;
 
     const baseBranch = activeRepo.default_branch;
 
+    addActionMessage(wsId, crypto.randomUUID(), "Reviewing code");
+
     reviewByWorkspace.set(wsId, {
       status: "running",
-      workspaceId: wsId,
       currentTask: "Starting review...",
       resultMarkdown: "",
     });
-
-    setSending(wsId, true);
 
     try {
       await sendMessage(wsId, `Review the code changes on this branch compared to ${baseBranch}.
@@ -662,22 +666,19 @@ Format your review as markdown with clear sections. Be specific — reference fi
             review.currentTask = formatToolTask(last.name, last.input_preview);
           }
           if (event.text.trim()) {
-            review.resultMarkdown += (review.resultMarkdown ? "\n\n" : "") + event.text.trim();
+            review.resultMarkdown += event.text.trim();
           }
           reviewByWorkspace.set(wsId, { ...review });
         } else if (event.type === "done") {
-          setSending(wsId, false);
           review.status = "complete";
           reviewByWorkspace.set(wsId, { ...review });
         } else if (event.type === "error") {
-          setSending(wsId, false);
           review.status = "complete";
           review.resultMarkdown = `**Review failed:** ${event.message}`;
           reviewByWorkspace.set(wsId, { ...review });
         }
       });
     } catch (e) {
-      setSending(wsId, false);
       const review = reviewByWorkspace.get(wsId);
       if (review) {
         review.status = "complete";
@@ -789,6 +790,7 @@ Format your review as markdown with clear sections. Be specific — reference fi
         {selectedWsId}
         {creatingWsId}
         {prStatusMap}
+        {reviewingWsIds}
         onSelect={selectWorkspace}
         onNewWorkspace={handleNewWorkspace}
         onRename={handleRename}
@@ -859,16 +861,14 @@ Format your review as markdown with clear sections. Be specific — reference fi
                   <ReviewPill
                     state={reviewByWorkspace.get(ws.id)!}
                     onCancel={() => {
-                      if (sendingByWorkspace.get(ws.id)) {
-                        stopAgent(ws.id).catch(() => {});
-                        setSending(ws.id, false);
-                      }
+                      const wasRunning = reviewByWorkspace.get(ws.id)?.status === "running";
                       reviewByWorkspace.delete(ws.id);
+                      if (wasRunning) stopAgent(ws.id).catch(() => {});
                     }}
                     onSendToChat={(markdown) => {
                       reviewByWorkspace.delete(ws.id);
-                      addActionMessage(ws.id, crypto.randomUUID(), "Code review");
-                      sendPrompt(ws.id, `Address all issues from this code review:\n\n${markdown}`);
+                      addActionMessage(ws.id, crypto.randomUUID(), "Addressing review");
+                      sendPrompt(ws.id, `Address all issues from this code review:\n\n${markdown}`).catch((e) => { error = String(e); });
                       activeTab = "chat";
                     }}
                   />

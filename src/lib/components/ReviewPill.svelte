@@ -4,7 +4,6 @@
 
   export interface ReviewState {
     status: "running" | "complete";
-    workspaceId: string;
     currentTask: string;
     resultMarkdown: string;
   }
@@ -186,18 +185,19 @@
 
   .send-btn {
     width: 100%;
-    padding: 0.35rem 0.75rem;
+    padding: 0.4rem 0.75rem;
     font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--bg);
-    background: var(--accent);
-    border: none;
+    font-weight: 600;
+    font-family: inherit;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
     border-radius: 6px;
     cursor: pointer;
   }
 
   .send-btn:hover {
-    filter: brightness(1.1);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
   }
 
   /* ── Shared ────────────────────────────────── */

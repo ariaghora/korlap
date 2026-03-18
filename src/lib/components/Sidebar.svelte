@@ -1,18 +1,20 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
+  import { Eye } from "lucide-svelte";
 
   interface Props {
     workspaces: WorkspaceInfo[];
     selectedWsId: string | null;
     creatingWsId: string | null;
     prStatusMap: Map<string, PrStatus>;
+    reviewingWsIds?: Set<string>;
     onSelect: (wsId: string) => void;
     onNewWorkspace: () => void;
     onRename: (wsId: string, newName: string) => void;
     onRemove: (wsId: string) => void;
   }
 
-  let { workspaces, selectedWsId, creatingWsId, prStatusMap, onSelect, onNewWorkspace, onRename, onRemove }: Props =
+  let { workspaces, selectedWsId, creatingWsId, prStatusMap, reviewingWsIds = new Set(), onSelect, onNewWorkspace, onRename, onRemove }: Props =
     $props();
 
   let menuOpenId = $state<string | null>(null);
@@ -126,7 +128,9 @@
                 />
               {:else}
                 <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
-                {#if ws.id !== creatingWsId && ws.status === "running"}
+                {#if ws.id !== creatingWsId && reviewingWsIds.has(ws.id)}
+                  <span class="ws-reviewing"><Eye size={11} /></span>
+                {:else if ws.id !== creatingWsId && ws.status === "running"}
                   <span class="ws-spinner"></span>
                 {/if}
               {/if}
@@ -347,6 +351,20 @@
     50% {
       opacity: 0.5;
     }
+  }
+
+  .ws-reviewing {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    animation: pulse-review 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-review {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
   }
 
   .ws-spinner {
