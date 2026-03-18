@@ -490,7 +490,13 @@
       } else if (pr.ahead_by > 0) {
         sendPrompt(wsId, `Push local commits to origin. Run \`git push\`. Only say "Pushed successfully" on success. If it fails, explain why.`, `Pushing to PR #${pr.number}`);
       } else {
-        sendPrompt(wsId, `Merge PR #${pr.number} using \`gh pr merge ${pr.number} --squash --delete-branch=false\`. Only say "PR #${pr.number} merged successfully" on success. If it fails, explain why.`, `Merging PR #${pr.number}`);
+        const cc = changeCounts.get(wsId);
+        const hasLocalChanges = cc && (cc.additions !== pr.additions || cc.deletions !== pr.deletions);
+        if (hasLocalChanges) {
+          sendPrompt(wsId, `There are uncommitted local changes. Commit them with a descriptive message and push to origin. Only say "Pushed successfully" on success. If it fails, explain why.`, `Committing & pushing to PR #${pr.number}`);
+        } else {
+          sendPrompt(wsId, `Merge PR #${pr.number} using \`gh pr merge ${pr.number} --squash --delete-branch=false\`. Only say "PR #${pr.number} merged successfully" on success. If it fails, explain why.`, `Merging PR #${pr.number}`);
+        }
       }
       activeTab = "chat";
       return;
