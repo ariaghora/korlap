@@ -1777,6 +1777,9 @@ pub fn send_message(
     // Permission mode: plan mode uses --permission-mode plan, otherwise bypass all
     if plan_mode {
         cmd.args(["--permission-mode", "plan"]);
+        // Allow rename_branch to execute without permission in plan mode —
+        // branch naming is a side-effect-free housekeeping action, not a code change
+        cmd.args(["--allowedTools", "mcp__korlap__rename_branch"]);
     } else {
         cmd.arg("--dangerously-skip-permissions");
     }
