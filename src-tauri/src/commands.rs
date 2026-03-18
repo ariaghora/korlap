@@ -1670,9 +1670,13 @@ pub fn send_message(
     workspace_id: String,
     prompt: String,
     on_event: Channel<AgentEvent>,
+    plan_mode: Option<bool>,
+    thinking_mode: Option<bool>,
     state: State<'_, Arc<Mutex<AppState>>>,
     app: AppHandle,
 ) -> Result<(), String> {
+    let plan_mode = plan_mode.unwrap_or(false);
+    let thinking_mode = thinking_mode.unwrap_or(false);
     let (worktree_path, gh_profile, repo_id, ws_branch, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
@@ -1770,7 +1774,17 @@ pub fn send_message(
     let mut cmd = std::process::Command::new("claude");
     cmd.arg("-p").arg(&prompt);
     cmd.args(["--output-format", "stream-json", "--verbose"]);
-    cmd.arg("--dangerously-skip-permissions");
+    // Permission mode: plan mode uses --permission-mode plan, otherwise bypass all
+    if plan_mode {
+        cmd.args(["--permission-mode", "plan"]);
+    } else {
+        cmd.arg("--dangerously-skip-permissions");
+    }
+
+    // Thinking mode: use high effort for deeper reasoning
+    if thinking_mode {
+        cmd.args(["--effort", "high"]);
+    }
 
     if let Some(ref sid) = session_id {
         cmd.arg("--resume").arg(sid);
