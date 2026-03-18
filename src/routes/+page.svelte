@@ -672,6 +672,7 @@
                   refreshTrigger={diffRefreshTrigger}
                   prState={prStatusMap.get(selectedWs.id)?.state}
                   onCreatePr={handlePrAction}
+                  disabled={selectedWs.status === "running"}
                 />
               </div>
             {/if}
