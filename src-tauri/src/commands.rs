@@ -238,6 +238,15 @@ fn parse_stream_line(
                             let strip = |s: &str| -> String {
                                 s.replace(worktree_path, ".")
                             };
+                            // AskUserQuestion: pass the raw questions JSON so the frontend
+                            // can render interactive options
+                            // Input shape: {"questions": [{"question": "...", "options": [...]}]}
+                            if name == "AskUserQuestion" {
+                                if let Some(questions) = input.get("questions") {
+                                    return Some(questions.to_string());
+                                }
+                                // Fall through to generic extraction if structure unexpected
+                            }
                             if let Some(fp) = input.get("file_path").and_then(|f| f.as_str()) {
                                 Some(strip(fp))
                             } else if let Some(cmd) =
@@ -1830,7 +1839,7 @@ pub fn send_message(
         .spawn()
         .map_err(|e| format!("Failed to spawn claude: {}", e))?;
 
-    // Take stdout before storing child handle
+    // Take stdout/stderr before storing child handle
     let stdout = child
         .stdout
         .take()

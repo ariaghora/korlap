@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
-  import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings, Lightbulb, BookOpen, Play, ArrowUp, Square } from "lucide-svelte";
+  import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings, Lightbulb, BookOpen, Play, ArrowUp, Square, MessageCircleQuestion } from "lucide-svelte";
   import { renderMarkdown } from "$lib/markdown";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
@@ -17,6 +17,8 @@
     WebFetch: Globe,
     WebSearch: Globe,
     Skill: Zap,
+    ToolSearch: Settings,
+    AskUserQuestion: MessageCircleQuestion,
   };
 
   export interface PastedImage {
@@ -92,6 +94,49 @@
 
   // Track which edit diffs are collapsed (by "msgId:chunkIdx" key)
   let collapsedDiffs = $state(new Set<string>());
+
+  // AskUserQuestion: multi-select toggles and custom input per question
+  // Keyed by "msgId:chunkIdx:questionIdx"
+  let selectedOptions = $state(new Map<string, Set<string>>());
+  let customInputs = $state(new Map<string, string>());
+  let showCustomInput = $state(new Set<string>());
+  let answeredQuestions = $state(new Set<string>());
+
+  function toggleOption(key: string, label: string) {
+    const current = selectedOptions.get(key) ?? new Set();
+    if (current.has(label)) {
+      current.delete(label);
+    } else {
+      current.add(label);
+    }
+    selectedOptions.set(key, current);
+    selectedOptions = new Map(selectedOptions);
+  }
+
+  function submitMultiSelect(key: string) {
+    const selected = selectedOptions.get(key);
+    if (!selected || selected.size === 0) return;
+    const custom = customInputs.get(key)?.trim();
+    const parts = [...selected];
+    if (custom) parts.push(custom);
+    answeredQuestions.add(key);
+    answeredQuestions = new Set(answeredQuestions);
+    onSend(parts.join(", "), [], [], false);
+  }
+
+  function submitCustomInput(key: string) {
+    const text = customInputs.get(key)?.trim();
+    if (!text) return;
+    answeredQuestions.add(key);
+    answeredQuestions = new Set(answeredQuestions);
+    onSend(text, [], [], false);
+  }
+
+  function submitOption(key: string, label: string) {
+    answeredQuestions.add(key);
+    answeredQuestions = new Set(answeredQuestions);
+    onSend(label, [], [], false);
+  }
 
   // Tracks the message count when user clicked Revise — hides plan actions until new messages arrive
   let planActionsHiddenAt = $state<number | null>(null);
@@ -332,6 +377,123 @@
                 <div class="assistant-card">
                   <div class="assistant-text markdown-body">{@html renderMarkdown(chunk.content)}</div>
                 </div>
+              {:else if chunk.type === "tool" && chunk.name === "AskUserQuestion"}
+                {@const parsed = (() => { try { return JSON.parse(chunk.input); } catch { return null; } })()}
+                {#if parsed && Array.isArray(parsed)}
+                  {#each parsed as q, qi}
+                    {@const qKey = `${msg.id}:${ci}:${qi}`}
+                    {@const isMulti = q.multiSelect === true}
+                    {@const answered = answeredQuestions.has(qKey)}
+                    {@const disabled = sending || answered}
+                    {@const selected = selectedOptions.get(qKey) ?? new Set()}
+                    {@const customText = customInputs.get(qKey) ?? ""}
+                    {@const showCustom = showCustomInput.has(qKey)}
+                    <div class="question-card" class:answered>
+                      <div class="question-header">
+                        <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
+                        <span class="question-label">{q.header || "Question"}</span>
+                        {#if isMulti}
+                          <span class="question-multi-badge">Multi-select</span>
+                        {/if}
+                      </div>
+                      {#if q.question}
+                        <div class="question-text">{q.question}</div>
+                      {/if}
+                      {#if q.options && q.options.length > 0}
+                        <div class="question-options">
+                          {#each q.options as opt}
+                            {#if isMulti}
+                              <button
+                                type="button"
+                                class="question-option"
+                                class:selected={selected.has(opt.label)}
+                                disabled={disabled}
+                                onclick={() => toggleOption(qKey, opt.label)}
+                              >
+                                <span class="option-check">{selected.has(opt.label) ? "◉" : "○"}</span>
+                                <span class="option-content">
+                                  <span class="option-label">{opt.label}</span>
+                                  {#if opt.description}
+                                    <span class="option-desc">{opt.description}</span>
+                                  {/if}
+                                </span>
+                              </button>
+                            {:else}
+                              <button
+                                type="button"
+                                class="question-option"
+                                disabled={disabled}
+                                onclick={() => submitOption(qKey, opt.label)}
+                              >
+                                <span class="option-content">
+                                  <span class="option-label">{opt.label}</span>
+                                  {#if opt.description}
+                                    <span class="option-desc">{opt.description}</span>
+                                  {/if}
+                                </span>
+                              </button>
+                            {/if}
+                          {/each}
+                          <!-- Other / custom input -->
+                          {#if !answered}
+                            {#if showCustom}
+                              <div class="custom-input-row">
+                                <input
+                                  type="text"
+                                  class="custom-input"
+                                  placeholder="Type your answer…"
+                                  value={customText}
+                                  disabled={sending}
+                                  oninput={(e) => { customInputs.set(qKey, (e.target as HTMLInputElement).value); customInputs = new Map(customInputs); }}
+                                  onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); isMulti ? submitMultiSelect(qKey) : submitCustomInput(qKey); } }}
+                                />
+                                <button
+                                  type="button"
+                                  class="custom-submit-btn"
+                                  disabled={sending || (!customText.trim() && (!isMulti || selected.size === 0))}
+                                  onclick={() => isMulti ? submitMultiSelect(qKey) : submitCustomInput(qKey)}
+                                >
+                                  <ArrowUp size={14} strokeWidth={2.5} />
+                                </button>
+                              </div>
+                            {:else}
+                              <button
+                                type="button"
+                                class="question-option other-option"
+                                disabled={disabled}
+                                onclick={() => { showCustomInput.add(qKey); showCustomInput = new Set(showCustomInput); }}
+                              >
+                                <span class="option-content">
+                                  <span class="option-label">Other</span>
+                                  <span class="option-desc">Type a custom answer</span>
+                                </span>
+                              </button>
+                            {/if}
+                          {/if}
+                          <!-- Multi-select submit button -->
+                          {#if isMulti && selected.size > 0 && !answered}
+                            <button
+                              type="button"
+                              class="multi-submit-btn"
+                              disabled={sending}
+                              onclick={() => submitMultiSelect(qKey)}
+                            >
+                              Submit ({selected.size} selected)
+                            </button>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                {:else}
+                  <div class="question-card">
+                    <div class="question-header">
+                      <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
+                      <span class="question-label">Question</span>
+                    </div>
+                    <div class="question-text">{chunk.input}</div>
+                  </div>
+                {/if}
               {:else if chunk.type === "tool" && chunk.oldString != null && chunk.newString != null}
                 {@const diffKey = `${msg.id}:${ci}`}
                 {@const isCollapsed = collapsedDiffs.has(diffKey)}
@@ -885,6 +1047,198 @@
   .edit-diff-body .diff-code {
     flex: 1;
     min-width: 0;
+  }
+
+  /* ── AskUserQuestion card ────────────────────── */
+
+  .question-card {
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 6%, var(--bg-card));
+    overflow: hidden;
+  }
+
+  .question-card.answered {
+    opacity: 0.6;
+  }
+
+  .question-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .question-icon {
+    display: flex;
+    align-items: center;
+    opacity: 0.8;
+  }
+
+  .question-text {
+    padding: 0.55rem 0.75rem;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .question-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.4rem 0.75rem 0.6rem;
+  }
+
+  .question-multi-badge {
+    margin-left: auto;
+    font-size: 0.62rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-dim);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    padding: 0.1rem 0.4rem;
+    border-radius: 8px;
+  }
+
+  .question-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.45rem 0.7rem;
+    background: color-mix(in srgb, var(--accent) 4%, var(--bg-base));
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    border-radius: 6px;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+  }
+
+  .question-option:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-base));
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .question-option.selected {
+    background: color-mix(in srgb, var(--accent) 15%, var(--bg-base));
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+
+  .question-option:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .question-option.other-option {
+    border-style: dashed;
+  }
+
+  .option-check {
+    flex-shrink: 0;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--accent);
+    margin-top: 0.1rem;
+  }
+
+  .option-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .option-label {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text-bright);
+  }
+
+  .option-desc {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
+  .custom-input-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+
+  .custom-input {
+    flex: 1;
+    padding: 0.45rem 0.7rem;
+    background: color-mix(in srgb, var(--accent) 4%, var(--bg-base));
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 6px;
+    color: var(--text-bright);
+    font-family: inherit;
+    font-size: 0.82rem;
+    outline: none;
+  }
+
+  .custom-input::placeholder {
+    color: var(--text-dim);
+  }
+
+  .custom-input:focus {
+    border-color: var(--accent);
+  }
+
+  .custom-submit-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: var(--bg-base);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .custom-submit-btn:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .custom-submit-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .multi-submit-btn {
+    padding: 0.4rem 0.75rem;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: 6px;
+    color: var(--accent);
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .multi-submit-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: var(--accent);
+  }
+
+  .multi-submit-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   /* ── Thinking indicator (while streaming) ──── */
