@@ -22,6 +22,7 @@ export interface Message {
   actionLabel?: string; // compact label for action messages (e.g. "Creating PR", "Merging")
   imageDataUrls?: string[]; // data URLs for attached image thumbnails (user messages only)
   mentions?: MessageMention[]; // @-mentioned files/folders (user messages only)
+  planMode?: boolean; // true if this message was sent in plan mode
 }
 
 // ── State ──────────────────────────────────────────────────────────
@@ -69,6 +70,7 @@ export function addUserMessage(
   text: string,
   imageDataUrls?: string[],
   mentions?: MessageMention[],
+  planMode?: boolean,
 ) {
   pushMessage(workspaceId, {
     id,
@@ -77,6 +79,7 @@ export function addUserMessage(
     done: true,
     imageDataUrls: imageDataUrls && imageDataUrls.length > 0 ? imageDataUrls : undefined,
     mentions: mentions && mentions.length > 0 ? mentions : undefined,
+    planMode: planMode || undefined,
   });
   persistMessages(workspaceId);
 }

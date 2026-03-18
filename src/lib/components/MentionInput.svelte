@@ -13,6 +13,7 @@
   export interface MentionInputApi {
     insertMention: (mention: Mention) => void;
     focus: () => void;
+    submit: () => void;
   }
 
   interface Props {
@@ -90,7 +91,7 @@
 
   // Expose API via bindable ref
   $effect(() => {
-    ref = { insertMention, focus };
+    ref = { insertMention, focus, submit: handleSubmit };
   });
 
   function serialize(): MentionInputValue {
@@ -305,11 +306,10 @@
 <style>
   .mention-input {
     flex: 1;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: transparent;
+    border: none;
     color: var(--text-primary);
-    padding: 0.55rem 0.85rem;
-    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
     font-family: inherit;
     font-size: 0.85rem;
     line-height: 1.4;
@@ -319,10 +319,6 @@
     min-height: 1.4em;
     white-space: pre-wrap;
     word-break: break-word;
-  }
-
-  .mention-input:focus {
-    border-color: color-mix(in srgb, var(--accent) 33%, transparent);
   }
 
   .mention-input:empty::before {

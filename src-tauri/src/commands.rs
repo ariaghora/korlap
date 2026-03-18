@@ -587,6 +587,11 @@ pub async fn create_workspace(
 
     // Generate a unique name (retry if branch already exists)
     let mut name = random_workspace_name();
+    let worktree_base = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.worktree_dir()
+    };
+
     for attempt in 0..10 {
         let branch = format!("korlap/{}", name);
         let check = std::process::Command::new("git")
@@ -595,8 +600,10 @@ pub async fn create_workspace(
             .output()
             .map_err(|e| format!("Failed to run git: {}", e))?;
 
-        if !check.status.success() {
-            break; // branch doesn't exist, good to use
+        let folder_exists = worktree_base.join(&name).exists();
+
+        if !check.status.success() && !folder_exists {
+            break; // branch doesn't exist and folder is free, good to use
         }
 
         if attempt == 9 {
@@ -613,11 +620,8 @@ pub async fn create_workspace(
     let id = Uuid::new_v4().to_string();
     let branch = format!("korlap/{}", name);
 
-    // Worktree lives in app data dir, not in the managed repo
-    let worktree_path = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.worktree_dir().join(&id)
-    };
+    // Worktree lives in app data dir, named after the workspace for human readability
+    let worktree_path = worktree_base.join(&name);
 
     std::fs::create_dir_all(worktree_path.parent().unwrap_or(&worktree_path))
         .map_err(|e| e.to_string())?;
@@ -1660,9 +1664,13 @@ pub fn send_message(
     workspace_id: String,
     prompt: String,
     on_event: Channel<AgentEvent>,
+    plan_mode: Option<bool>,
+    thinking_mode: Option<bool>,
     state: State<'_, Arc<Mutex<AppState>>>,
     app: AppHandle,
 ) -> Result<(), String> {
+    let plan_mode = plan_mode.unwrap_or(false);
+    let thinking_mode = thinking_mode.unwrap_or(false);
     let (worktree_path, gh_profile, repo_id, ws_branch, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
@@ -1757,7 +1765,20 @@ pub fn send_message(
     let mut cmd = std::process::Command::new("claude");
     cmd.arg("-p").arg(&prompt);
     cmd.args(["--output-format", "stream-json", "--verbose"]);
-    cmd.arg("--dangerously-skip-permissions");
+    // Permission mode: plan mode uses --permission-mode plan, otherwise bypass all
+    if plan_mode {
+        cmd.args(["--permission-mode", "plan"]);
+        // Allow rename_branch to execute without permission in plan mode —
+        // branch naming is a side-effect-free housekeeping action, not a code change
+        cmd.args(["--allowedTools", "mcp__korlap__rename_branch"]);
+    } else {
+        cmd.arg("--dangerously-skip-permissions");
+    }
+
+    // Thinking mode: use high effort for deeper reasoning
+    if thinking_mode {
+        cmd.args(["--effort", "high"]);
+    }
 
     if let Some(ref sid) = session_id {
         cmd.arg("--resume").arg(sid);

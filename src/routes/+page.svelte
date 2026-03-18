@@ -60,6 +60,8 @@
   let repoSettings = $state<RepoSettings | null>(null);
   let prStatusMap = new SvelteMap<string, PrStatus>();
   let changeCounts = new SvelteMap<string, { additions: number; deletions: number }>();
+  let planModeByWorkspace = new SvelteMap<string, boolean>();
+  let thinkingModeByWorkspace = new SvelteMap<string, boolean>();
   let fileNavigatePath = $state<string | null>(null);
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
@@ -199,6 +201,8 @@
       sendingByWorkspace.clear();
       prStatusMap.clear();
       changeCounts.clear();
+      planModeByWorkspace.clear();
+      thinkingModeByWorkspace.clear();
       activeRepo = repos.length > 0 ? repos[0] : null;
       if (activeRepo) selectRepo(activeRepo);
     } catch (e) {
@@ -264,6 +268,8 @@
     sendingByWorkspace.delete(wsId);
     prStatusMap.delete(wsId);
     changeCounts.delete(wsId);
+    planModeByWorkspace.delete(wsId);
+    thinkingModeByWorkspace.delete(wsId);
 
     removeWorkspace(wsId).catch((e) => {
       // Restore on failure
@@ -342,9 +348,10 @@
     }
   }
 
-  async function handleSend(prompt: string, images: PastedImage[] = [], mentions: Mention[] = []) {
+  async function handleSend(prompt: string, images: PastedImage[] = [], mentions: Mention[] = [], planMode: boolean = false) {
     if (!selectedWsId) return;
     const wsId = selectedWsId;
+    const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? false;
 
     // Save images to workspace dir, collect file paths
     let imagePaths: string[] = [];
@@ -400,7 +407,7 @@
     setSending(wsId, true);
     const dataUrls = images.length > 0 ? images.map((img) => img.dataUrl) : undefined;
     const msgMentions = mentions.length > 0 ? mentions.map((m) => ({ type: m.type, path: m.path, displayName: m.displayName })) : undefined;
-    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls, msgMentions);
+    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls, msgMentions, planMode || undefined);
 
     try {
       await sendMessage(wsId, fullPrompt, (event: AgentEvent) => {
@@ -450,7 +457,7 @@
           error = event.message;
           setSending(wsId, false);
         }
-      });
+      }, planMode, thinkingMode);
     } catch (e) {
       error = String(e);
       setSending(wsId, false);
@@ -686,8 +693,16 @@
                 <ChatPanel
                   workspaceId={ws.id}
                   creating={ws.id === creatingWsId}
-                  onSend={(prompt, images, mentions) => handleSend(prompt, images, mentions)}
+                  planMode={planModeByWorkspace.get(ws.id) ?? false}
+                  thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? false}
+                  onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
                   onStop={handleStop}
+                  onPlanModeChange={(enabled) => planModeByWorkspace.set(ws.id, enabled)}
+                  onThinkingModeChange={(enabled) => thinkingModeByWorkspace.set(ws.id, enabled)}
+                  onExecutePlan={() => {
+                    planModeByWorkspace.set(ws.id, false);
+                    sendPrompt(ws.id, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
+                  }}
                   onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
                 />
               </div>

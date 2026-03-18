@@ -141,10 +141,12 @@ export async function sendMessage(
   workspaceId: string,
   prompt: string,
   onEvent: (event: AgentEvent) => void,
+  planMode: boolean = false,
+  thinkingMode: boolean = false,
 ): Promise<void> {
   const channel = new Channel<AgentEvent>();
   channel.onmessage = onEvent;
-  return invoke("send_message", { workspaceId, prompt, onEvent: channel });
+  return invoke("send_message", { workspaceId, prompt, onEvent: channel, planMode, thinkingMode });
 }
 
 export async function stopAgent(workspaceId: string): Promise<void> {
