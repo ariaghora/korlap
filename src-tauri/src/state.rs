@@ -45,6 +45,8 @@ pub struct RepoSettings {
     #[serde(default)]
     pub pr_message: String,
     #[serde(default)]
+    pub review_message: String,
+    #[serde(default)]
     pub default_thinking: bool,
     #[serde(default)]
     pub default_plan: bool,

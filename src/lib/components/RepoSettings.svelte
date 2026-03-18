@@ -27,6 +27,7 @@
     run_script: "",
     remove_script: "",
     pr_message: "",
+    review_message: "",
     default_thinking: false,
     default_plan: false,
     system_prompt: "",
@@ -261,6 +262,31 @@
         <p class="template-var-hint">
           <code>{"{{pr_template}}"}</code> inserts the repo's PR template (from <code>.github/pull_request_template.md</code>) if one exists.
         </p>
+      </div>
+
+      <div class="setting-block">
+        <div class="setting-meta">
+          <span class="setting-name">Review message</span>
+          <span class="setting-desc">Extra instructions appended to the default review prompt. The built-in review (CLAUDE.md compliance, bug scanning, validation, inline PR comments) always runs.</span>
+        </div>
+        <textarea
+          class="pr-message-field"
+          bind:value={settings.review_message}
+          oninput={scheduleAutosave}
+          placeholder="e.g. Pay special attention to error handling in async functions. Flag any use of unwrap() outside tests."
+          rows="14"
+          spellcheck="false"
+        ></textarea>
+      </div>
+
+      <div class="env-hint">
+        <span class="env-hint-title">Available template variables</span>
+        <div class="env-vars">
+          <code>{"{{branch}}"}</code>
+          <code>{"{{base_branch}}"}</code>
+          <code>{"{{pr_number}}"}</code>
+          <code>{"{{pr_title}}"}</code>
+        </div>
       </div>
 
     {:else if activeSection === "git"}
