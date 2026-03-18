@@ -716,7 +716,7 @@ pub fn save_repo_settings(
 }
 
 #[tauri::command]
-pub async fn archive_workspace(
+pub async fn remove_workspace(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
@@ -738,27 +738,24 @@ pub async fn archive_workspace(
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
-        if ws.status == WorkspaceStatus::Archived {
-            return Ok(());
-        }
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
         (ws.worktree_path.clone(), repo.path.clone(), ws.name.clone(), ws.repo_id.clone())
     };
 
-    // Run archive script if configured
+    // Run remove script if configured
     {
         let st = state.lock().map_err(|e| e.to_string())?;
         if let Some(settings) = st.repo_settings.get(&repo_id) {
-            if !settings.archive_script.trim().is_empty() {
-                tracing::info!("Running archive script for workspace {}", ws_name);
-                let mut archive_cmd = std::process::Command::new("zsh");
-                archive_cmd.args(["-c", &settings.archive_script]);
-                archive_cmd.current_dir(&worktree_path);
-                archive_cmd.env("KORLAP_WORKSPACE_NAME", &ws_name);
-                archive_cmd.env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string());
-                archive_cmd.env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string());
-                inject_shell_env(&mut archive_cmd);
-                let _ = archive_cmd.output();
+            if !settings.remove_script.trim().is_empty() {
+                tracing::info!("Running remove script for workspace {}", ws_name);
+                let mut remove_cmd = std::process::Command::new("zsh");
+                remove_cmd.args(["-c", &settings.remove_script]);
+                remove_cmd.current_dir(&worktree_path);
+                remove_cmd.env("KORLAP_WORKSPACE_NAME", &ws_name);
+                remove_cmd.env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string());
+                remove_cmd.env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string());
+                inject_shell_env(&mut remove_cmd);
+                let _ = remove_cmd.output();
             }
         }
     }
@@ -787,13 +784,13 @@ pub async fn archive_workspace(
             .output();
     }
 
+    // Fully delete workspace: data files, session, and entry
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    if let Some(ws) = st.workspaces.get_mut(&workspace_id) {
-        ws.status = WorkspaceStatus::Archived;
-    }
+    st.delete_workspace_data(&workspace_id);
+    st.workspaces.remove(&workspace_id);
     st.save_workspaces()?;
 
-    tracing::info!("Archived workspace {}", workspace_id);
+    tracing::info!("Removed workspace {}", workspace_id);
     Ok(())
 }
 
@@ -825,9 +822,6 @@ pub fn rename_branch(
         .get(&workspace_id)
         .ok_or("Workspace not found")?;
 
-    if ws.status == WorkspaceStatus::Archived {
-        return Err("Cannot rename an archived workspace".into());
-    }
 
     let worktree_path = ws.worktree_path.clone();
     let fallback_branch = ws.branch.clone();
@@ -1686,9 +1680,6 @@ pub fn send_message(
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
-        if ws.status == WorkspaceStatus::Archived {
-            return Err("Cannot send message to archived workspace".into());
-        }
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
         (
             ws.worktree_path.clone(),

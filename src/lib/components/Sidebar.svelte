@@ -9,10 +9,10 @@
     onSelect: (wsId: string) => void;
     onNewWorkspace: () => void;
     onRename: (wsId: string, newName: string) => void;
-    onArchive: (wsId: string) => void;
+    onRemove: (wsId: string) => void;
   }
 
-  let { workspaces, selectedWsId, creatingWsId, prStatusMap, onSelect, onNewWorkspace, onRename, onArchive }: Props =
+  let { workspaces, selectedWsId, creatingWsId, prStatusMap, onSelect, onNewWorkspace, onRename, onRemove }: Props =
     $props();
 
   let menuOpenId = $state<string | null>(null);
@@ -22,10 +22,10 @@
     menuOpenId = menuOpenId === wsId ? null : wsId;
   }
 
-  function handleArchiveClick(e: MouseEvent, wsId: string) {
+  function handleRemoveClick(e: MouseEvent, wsId: string) {
     e.stopPropagation();
     menuOpenId = null;
-    onArchive(wsId);
+    onRemove(wsId);
   }
 
   function handleWindowClick() {
@@ -33,9 +33,7 @@
   }
 
   let activeWorkspaces = $derived(
-    workspaces
-      .filter((w) => w.status !== "archived")
-      .sort((a, b) => a.created_at - b.created_at),
+    [...workspaces].sort((a, b) => a.created_at - b.created_at),
   );
 
   type GroupKey = "ready" | "review" | "done";
@@ -141,7 +139,7 @@
               >⋯</button>
               {#if menuOpenId === ws.id}
                 <div class="ws-menu">
-                  <button class="ws-menu-item archive" onclick={(e) => handleArchiveClick(e, ws.id)}>Archive</button>
+                  <button class="ws-menu-item remove" onclick={(e) => handleRemoveClick(e, ws.id)}>Remove</button>
                 </div>
               {/if}
             {/if}
@@ -299,7 +297,7 @@
     background: var(--bg-hover);
   }
 
-  .ws-menu-item.archive:hover {
+  .ws-menu-item.remove:hover {
     color: var(--diff-del);
   }
 

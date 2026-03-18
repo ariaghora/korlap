@@ -28,7 +28,6 @@
   interface Props {
     workspaceId: string;
     creating?: boolean;
-    disabled: boolean;
     planMode?: boolean;
     thinkingMode?: boolean;
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
@@ -39,7 +38,7 @@
     onMentionClick?: (path: string) => void;
   }
 
-  let { workspaceId, creating = false, disabled, planMode = false, thinkingMode = false, onSend, onStop, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick }: Props = $props();
+  let { workspaceId, creating = false, planMode = false, thinkingMode = false, onSend, onStop, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick }: Props = $props();
 
   /** Split text into segments, replacing @displayName with mention references. */
   type TextSegment = { kind: "text"; value: string } | { kind: "mention"; mention: MessageMention };
@@ -152,7 +151,7 @@
   });
 
   function handleMentionSubmit(value: MentionInputValue) {
-    if (sending || disabled || creating) return;
+    if (sending || creating) return;
     if (!value.text.trim() && value.mentions.length === 0 && pastedImages.length === 0) return;
     const prompt = value.text.trim();
     const images = [...pastedImages];
@@ -441,7 +440,7 @@
     {/if}
     <MentionInput
       placeholder={planMode ? "Describe what to analyze…" : "Ask to make changes, @mention files"}
-      disabled={disabled || creating || sending}
+      disabled={creating || sending}
       onSubmit={handleMentionSubmit}
       onQueryChange={handleQueryChange}
       onPaste={handlePaste}
@@ -475,7 +474,7 @@
           <Square size={14} strokeWidth={2.5} />
         </button>
       {:else}
-        <button type="button" class="send-btn" disabled={disabled}
+        <button type="button" class="send-btn" disabled={creating}
           onclick={() => mentionInputApi?.submit()}
           title="Send"
         >

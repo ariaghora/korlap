@@ -25,7 +25,7 @@
   let settings = $state<RepoSettings>({
     setup_script: "",
     run_script: "",
-    archive_script: "",
+    remove_script: "",
   });
   let saveStatus = $state<"idle" | "saving" | "saved">("idle");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -150,13 +150,13 @@
 
       <div class="setting-block">
         <div class="setting-meta">
-          <span class="setting-name">Archive</span>
-          <span class="setting-desc">Runs when a workspace is archived</span>
+          <span class="setting-name">Remove</span>
+          <span class="setting-desc">Runs before a workspace is removed</span>
         </div>
         <div class="script-field">
           <span class="script-prompt">$</span>
           <textarea
-            bind:value={settings.archive_script}
+            bind:value={settings.remove_script}
             oninput={scheduleAutosave}
             placeholder="optional cleanup command"
             rows="2"
@@ -236,7 +236,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="confirm-dialog" onmousedown={(e) => e.stopPropagation()}>
         <h2>Remove repository?</h2>
-        <p>This will remove <strong>{repoName}</strong> from Korlap and archive all its workspaces. The repository itself won't be deleted.</p>
+        <p>This will remove <strong>{repoName}</strong> from Korlap and delete all its workspaces. The repository itself won't be deleted.</p>
         <p class="confirm-path">{repoPath}</p>
         <div class="confirm-actions">
           <button class="confirm-cancel" onclick={() => (confirmingRemove = false)}>Cancel</button>

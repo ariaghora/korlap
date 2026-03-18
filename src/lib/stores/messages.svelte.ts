@@ -181,7 +181,7 @@ export function flushPersist(workspaceId: string) {
   saveMessages(workspaceId, msgs).catch(() => {});
 }
 
-/** Remove all in-memory state for a workspace (call on archive) */
+/** Remove all in-memory state for a workspace (call on remove) */
 export function clearWorkspaceData(workspaceId: string) {
   const pending = pendingSaves.get(workspaceId);
   if (pending) clearTimeout(pending);
