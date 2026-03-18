@@ -33,13 +33,24 @@
     addMention: (mention: Mention) => void;
   }
 
+  export interface QueueDisplayItem {
+    id: string;
+    prompt: string;
+    imageCount: number;
+    mentionCount: number;
+    planMode: boolean;
+  }
+
   interface Props {
     workspaceId: string;
     creating?: boolean;
     planMode?: boolean;
     thinkingMode?: boolean;
+    queue?: QueueDisplayItem[];
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
+    onSendImmediate?: (prompt: string) => void;
     onStop: () => void;
+    onRemoveFromQueue?: (id: string) => void;
     onPlanModeChange?: (enabled: boolean) => void;
     onThinkingModeChange?: (enabled: boolean) => void;
     onExecutePlan?: () => void;
@@ -47,7 +58,7 @@
     onReady?: (api: ChatPanelApi) => void;
   }
 
-  let { workspaceId, creating = false, planMode = false, thinkingMode = false, onSend, onStop, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
+  let { workspaceId, creating = false, planMode = false, thinkingMode = false, queue = [], onSend, onSendImmediate, onStop, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
 
   /** Split text into segments, replacing @displayName with mention references. */
   type TextSegment = { kind: "text"; value: string } | { kind: "mention"; mention: MessageMention };
@@ -263,13 +274,15 @@
     submittedBatches.add(batchKey);
 
     if (totalInBatch === 1) {
-      onSend(answers.get(0)!, [], [], false);
+      const answer = answers.get(0)!;
+      onSendImmediate ? onSendImmediate(answer) : onSend(answer, [], [], false);
     } else {
       const parts: string[] = [];
       for (let i = 0; i < totalInBatch; i++) {
         parts.push(`${i + 1}. ${answers.get(i) ?? "(no answer)"}`);
       }
-      onSend(parts.join("\n"), [], [], false);
+      const answer = parts.join("\n");
+      onSendImmediate ? onSendImmediate(answer) : onSend(answer, [], [], false);
     }
   }
 
@@ -378,7 +391,7 @@
   });
 
   function handleMentionSubmit(value: MentionInputValue) {
-    if (sending || creating) return;
+    if (creating) return;
     if (!value.text.trim() && value.mentions.length === 0 && pastedImages.length === 0) return;
     const prompt = value.text.trim();
     const images = [...pastedImages];
@@ -833,6 +846,36 @@
     {/if}
   </div>
 
+  {#if queue.length > 0}
+    <div class="queue-strip">
+      <span class="queue-label">Queued ({queue.length})</span>
+      <div class="queue-items">
+        {#each queue as item (item.id)}
+          <div class="queue-item">
+            <span class="queue-text">
+              {#if item.planMode}
+                <BookOpen size={11} strokeWidth={2} />
+              {/if}
+              {item.prompt.length > 80 ? item.prompt.slice(0, 80) + '…' : item.prompt}
+              {#if item.imageCount > 0}
+                <span class="queue-meta">{item.imageCount} img</span>
+              {/if}
+              {#if item.mentionCount > 0}
+                <span class="queue-meta">{item.mentionCount} file{item.mentionCount > 1 ? 's' : ''}</span>
+              {/if}
+            </span>
+            <button
+              type="button"
+              class="queue-remove"
+              onclick={() => onRemoveFromQueue?.(item.id)}
+              title="Remove from queue"
+            >&times;</button>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="input-form" onkeydown={handleInputKeydown} bind:this={inputEl}>
     {#if pastedImages.length > 0}
@@ -853,7 +896,7 @@
     {/if}
     <MentionInput
       placeholder={planMode ? "Describe what to analyze…" : "Ask to make changes, @mention files"}
-      disabled={creating || sending}
+      disabled={creating}
       onSubmit={handleMentionSubmit}
       onQueryChange={handleQueryChange}
       onPaste={handlePaste}
@@ -1828,6 +1871,73 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  /* ── Queue strip ────────── */
+
+  .queue-strip {
+    padding: 0.35rem 0.75rem;
+    background: color-mix(in srgb, var(--accent) 4%, var(--bg-card));
+    flex-shrink: 0;
+  }
+
+  .queue-label {
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 500;
+  }
+
+  .queue-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin-top: 0.3rem;
+  }
+
+  .queue-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+
+  .queue-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .queue-meta {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  .queue-remove {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0 0.2rem;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .queue-remove:hover {
+    color: var(--diff-del, #e06c75);
   }
 
   /* ── Input (Slack-style container) ────────── */
