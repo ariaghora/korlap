@@ -588,6 +588,7 @@
         onSelect={selectWorkspace}
         onNewWorkspace={handleNewWorkspace}
         onRename={handleRename}
+        onArchive={handleArchive}
       />
 
       <main class="panel">
@@ -633,12 +634,6 @@
               {:else if selectedWs.status === "waiting"}
                 <span class="status-badge waiting">Ready</span>
               {/if}
-              <button
-                class="archive-btn"
-                onclick={() => handleArchive(selectedWs!.id)}
-              >
-                Archive
-              </button>
             </div>
           </div>
 
@@ -1024,21 +1019,6 @@
     50% { opacity: 0.6; }
   }
 
-  .archive-btn {
-    padding: 0.2rem 0.5rem;
-    background: transparent;
-    border: 1px solid var(--border-light);
-    border-radius: 4px;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.72rem;
-  }
-
-  .archive-btn:hover {
-    color: var(--text-primary);
-    background: var(--bg-active);
-  }
 
   /* ── Tab content ──────────────────────────────────── */
 

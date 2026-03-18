@@ -9,10 +9,28 @@
     onSelect: (wsId: string) => void;
     onNewWorkspace: () => void;
     onRename: (wsId: string, newName: string) => void;
+    onArchive: (wsId: string) => void;
   }
 
-  let { workspaces, selectedWsId, creatingWsId, prStatusMap, onSelect, onNewWorkspace, onRename }: Props =
+  let { workspaces, selectedWsId, creatingWsId, prStatusMap, onSelect, onNewWorkspace, onRename, onArchive }: Props =
     $props();
+
+  let menuOpenId = $state<string | null>(null);
+
+  function toggleMenu(e: MouseEvent, wsId: string) {
+    e.stopPropagation();
+    menuOpenId = menuOpenId === wsId ? null : wsId;
+  }
+
+  function handleArchiveClick(e: MouseEvent, wsId: string) {
+    e.stopPropagation();
+    menuOpenId = null;
+    onArchive(wsId);
+  }
+
+  function handleWindowClick() {
+    if (menuOpenId) menuOpenId = null;
+  }
 
   let activeWorkspaces = $derived(
     workspaces
@@ -71,6 +89,8 @@
   }
 </script>
 
+<svelte:window onclick={handleWindowClick} />
+
 <aside class="sidebar">
   <div class="workspace-list">
     {#each groups as group}
@@ -80,38 +100,52 @@
           <span class="group-count">{group.items.length}</span>
         </div>
         {#each group.items as ws (ws.id)}
-          <button
-            class="ws-item"
-            class:active={ws.id === selectedWsId}
-            onclick={() => onSelect(ws.id)}
-            ondblclick={() => ws.id !== creatingWsId && startEdit(ws)}
-          >
-            <span
-              class="ws-dot"
-              class:creating={ws.id === creatingWsId}
-              class:running={ws.id !== creatingWsId && ws.status === "running" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
-              class:waiting={ws.id !== creatingWsId && ws.status === "waiting" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
-              class:pr-open={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable !== "conflicting" && prStatusMap.get(ws.id)?.checks !== "failing"}
-              class:pr-fail={prStatusMap.get(ws.id)?.state === "open" && (prStatusMap.get(ws.id)?.checks === "failing" || prStatusMap.get(ws.id)?.mergeable === "conflicting")}
-              class:pr-merge={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable === "mergeable" && prStatusMap.get(ws.id)?.checks === "passing"}
-            ></span>
-            {#if editingId === ws.id}
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
-                class="ws-rename-input"
-                bind:value={editValue}
-                onblur={() => commitEdit(ws.id)}
-                onkeydown={(e) => handleEditKeydown(e, ws.id)}
-                onclick={(e) => e.stopPropagation()}
-                autofocus
-              />
-            {:else}
-              <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
-              {#if ws.id !== creatingWsId && ws.status === "running"}
-                <span class="ws-status">running</span>
+          <div class="ws-item-wrap">
+            <button
+              class="ws-item"
+              class:active={ws.id === selectedWsId}
+              onclick={() => onSelect(ws.id)}
+              ondblclick={() => ws.id !== creatingWsId && startEdit(ws)}
+            >
+              <span
+                class="ws-dot"
+                class:creating={ws.id === creatingWsId}
+                class:running={ws.id !== creatingWsId && ws.status === "running" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
+                class:waiting={ws.id !== creatingWsId && ws.status === "waiting" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
+                class:pr-open={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable !== "conflicting" && prStatusMap.get(ws.id)?.checks !== "failing"}
+                class:pr-fail={prStatusMap.get(ws.id)?.state === "open" && (prStatusMap.get(ws.id)?.checks === "failing" || prStatusMap.get(ws.id)?.mergeable === "conflicting")}
+                class:pr-merge={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable === "mergeable" && prStatusMap.get(ws.id)?.checks === "passing"}
+              ></span>
+              {#if editingId === ws.id}
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  class="ws-rename-input"
+                  bind:value={editValue}
+                  onblur={() => commitEdit(ws.id)}
+                  onkeydown={(e) => handleEditKeydown(e, ws.id)}
+                  onclick={(e) => e.stopPropagation()}
+                  autofocus
+                />
+              {:else}
+                <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
+                {#if ws.id !== creatingWsId && ws.status === "running"}
+                  <span class="ws-status">running</span>
+                {/if}
+              {/if}
+            </button>
+            {#if ws.id !== creatingWsId}
+              <button
+                class="ws-ellipsis"
+                class:open={menuOpenId === ws.id}
+                onclick={(e) => toggleMenu(e, ws.id)}
+              >⋯</button>
+              {#if menuOpenId === ws.id}
+                <div class="ws-menu">
+                  <button class="ws-menu-item archive" onclick={(e) => handleArchiveClick(e, ws.id)}>Archive</button>
+                </div>
               {/if}
             {/if}
-          </button>
+          </div>
         {/each}
       </div>
     {/each}
@@ -162,6 +196,10 @@
     opacity: 0.6;
   }
 
+  .ws-item-wrap {
+    position: relative;
+  }
+
   .ws-item {
     width: 100%;
     display: flex;
@@ -178,13 +216,91 @@
     text-align: left;
   }
 
-  .ws-item:hover {
+  .ws-item:hover,
+  .ws-item-wrap:hover .ws-item {
     background: var(--bg-hover);
   }
 
   .ws-item.active {
     background: var(--border);
     border-color: var(--border-light);
+  }
+
+  .ws-ellipsis {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.85rem;
+    letter-spacing: 0.05em;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s;
+  }
+
+  .ws-item-wrap:hover .ws-ellipsis,
+  .ws-ellipsis.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .ws-item-wrap:hover .ws-ellipsis {
+    background: var(--bg-hover);
+  }
+
+  .ws-item.active + .ws-ellipsis,
+  .ws-item-wrap:hover .ws-item.active + .ws-ellipsis {
+    background: var(--border);
+  }
+
+  .ws-ellipsis:hover {
+    background: var(--bg-active) !important;
+    color: var(--text-bright);
+  }
+
+  .ws-menu {
+    position: absolute;
+    right: 4px;
+    top: 100%;
+    z-index: 100;
+    min-width: 110px;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    padding: 0.25rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  }
+
+  .ws-menu-item {
+    width: 100%;
+    display: block;
+    padding: 0.35rem 0.6rem;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.78rem;
+    text-align: left;
+  }
+
+  .ws-menu-item:hover {
+    background: var(--bg-hover);
+  }
+
+  .ws-menu-item.archive:hover {
+    color: var(--diff-del);
   }
 
   .ws-dot {
