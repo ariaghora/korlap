@@ -29,6 +29,7 @@
     pr_message: "",
     default_thinking: false,
     default_plan: false,
+    system_prompt: "",
   });
   let saveStatus = $state<"idle" | "saving" | "saved">("idle");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -184,6 +185,21 @@
         <span class="autosave-status" class:visible={saveStatus !== "idle"}>
           {saveStatus === "saving" ? "Saving..." : "Saved"}
         </span>
+      </div>
+
+      <div class="setting-block">
+        <div class="setting-meta">
+          <span class="setting-name">System prompt</span>
+          <span class="setting-desc">Custom instructions injected into every new conversation. Applied to all workspaces in this repo.</span>
+        </div>
+        <textarea
+          class="system-prompt-field"
+          bind:value={settings.system_prompt}
+          oninput={scheduleAutosave}
+          placeholder="- Never handwave errors or warnings&#10;- Debug log early to verify your assumption&#10;- Search the internet before guessing"
+          rows="6"
+          spellcheck="false"
+        ></textarea>
       </div>
 
       <div class="setting-block">
@@ -605,6 +621,29 @@
   .toggle-switch.on .toggle-knob {
     transform: translateX(16px);
     background: var(--accent);
+  }
+
+  .system-prompt-field {
+    width: 100%;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    padding: 0.6rem 0.65rem;
+    resize: vertical;
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .system-prompt-field::placeholder {
+    color: var(--text-muted);
+  }
+
+  .system-prompt-field:focus {
+    border-color: var(--border-light);
   }
 
   .pr-message-field {
