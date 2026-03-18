@@ -54,11 +54,11 @@
       }
     }
 
-    const result: { key: GroupKey; label: string; items: WorkspaceInfo[] }[] = [];
-    if (ready.length) result.push({ key: "ready", label: "Ready", items: ready });
-    if (review.length) result.push({ key: "review", label: "Review", items: review });
-    if (done.length) result.push({ key: "done", label: "Done", items: done });
-    return result;
+    return [
+      { key: "ready" as GroupKey, label: "Ready", items: ready },
+      { key: "review" as GroupKey, label: "Review", items: review },
+      { key: "done" as GroupKey, label: "Done", items: done },
+    ];
   });
 
   let editingId = $state<string | null>(null);
