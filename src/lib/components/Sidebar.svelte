@@ -127,7 +127,7 @@
               {:else}
                 <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
                 {#if ws.id !== creatingWsId && ws.status === "running"}
-                  <span class="ws-status">running</span>
+                  <span class="ws-spinner"></span>
                 {/if}
               {/if}
             </button>
@@ -349,10 +349,19 @@
     }
   }
 
-  .ws-status {
-    font-size: 0.65rem;
-    color: var(--accent);
+  .ws-spinner {
+    width: 12px;
+    height: 12px;
     margin-left: auto;
+    flex-shrink: 0;
+    border: 1.5px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .ws-name {

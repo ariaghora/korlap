@@ -658,9 +658,7 @@
               {/each}
             </div>
             <div class="tab-bar-right">
-              {#if selectedWs.status === "running"}
-                <span class="status-badge running">Running</span>
-              {:else if prStatusMap.get(selectedWs.id)?.state === "open"}
+              {#if prStatusMap.get(selectedWs.id)?.state === "open"}
                 {#if prStatusMap.get(selectedWs.id)?.mergeable === "conflicting"}
                   <button class="status-badge conflicts" onclick={handlePrAction}>Conflicts</button>
                 {:else if prStatusMap.get(selectedWs.id)?.checks === "failing"}
@@ -674,8 +672,11 @@
                 {/if}
               {:else if prStatusMap.get(selectedWs.id)?.state === "merged"}
                 <span class="status-badge merged">Done</span>
-              {:else if selectedWs.status === "waiting"}
-                <span class="status-badge waiting">Ready</span>
+              {:else}
+                {@const cc = changeCounts.get(selectedWs.id)}
+                {#if cc && (cc.additions > 0 || cc.deletions > 0)}
+                  <button class="status-badge create-pr" onclick={handlePrAction} disabled={selectedWs.status === "running"}>Push & Create PR</button>
+                {/if}
               {/if}
             </div>
           </div>
@@ -714,9 +715,6 @@
                 <DiffViewer
                   workspaceId={selectedWs.id}
                   refreshTrigger={diffRefreshTrigger}
-                  prState={prStatusMap.get(selectedWs.id)?.state}
-                  onCreatePr={handlePrAction}
-                  disabled={selectedWs.status === "running"}
                 />
               </div>
             {/if}
@@ -984,18 +982,6 @@
     border: 1px solid;
   }
 
-  .status-badge.running {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-    background: color-mix(in srgb, var(--accent) 7%, transparent);
-    animation: badge-pulse 2s ease-in-out infinite;
-  }
-
-  .status-badge.waiting {
-    color: var(--status-ok);
-    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
-  }
-
   .status-badge.merged {
     color: var(--text-dim);
     border-color: var(--border-light);
@@ -1053,8 +1039,13 @@
     text-transform: none;
   }
 
-  .status-badge.create-pr:hover {
+  .status-badge.create-pr:hover:not(:disabled) {
     filter: brightness(1.2);
+  }
+
+  .status-badge.create-pr:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   .status-badge.checks-fail {
