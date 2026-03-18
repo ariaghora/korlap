@@ -352,7 +352,8 @@
     if (sendingByWorkspace.get(wsId)) return;
     error = "";
     setSending(wsId, true);
-    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", imagePaths.length > 0 ? imagePaths : undefined);
+    const dataUrls = images.length > 0 ? images.map((img) => img.dataUrl) : undefined;
+    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls);
 
     try {
       await sendMessage(wsId, fullPrompt, (event: AgentEvent) => {

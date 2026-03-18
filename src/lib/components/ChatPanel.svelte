@@ -1,6 +1,5 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
-  import { convertFileSrc } from "@tauri-apps/api/core";
 
   export interface PastedImage {
     id: string;
@@ -141,11 +140,11 @@
           </div>
         {:else if msg.role === "user"}
           <div class="user-msg">
-            {#if msg.imagePaths && msg.imagePaths.length > 0}
+            {#if msg.imageDataUrls && msg.imageDataUrls.length > 0}
               <div class="user-images">
-                {#each msg.imagePaths as imgPath}
+                {#each msg.imageDataUrls as dataUrl}
                   <div class="user-image-thumb">
-                    <img src={convertFileSrc(imgPath)} alt="Attached" />
+                    <img src={dataUrl} alt="Attached" />
                   </div>
                 {/each}
               </div>
