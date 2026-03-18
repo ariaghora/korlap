@@ -1302,6 +1302,144 @@ pub fn search_workspace_files(
     Ok(results)
 }
 
+// ── Grep (content search) ────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct GrepMatch {
+    pub path: String,
+    pub line_number: u32,
+    pub column: u32,
+    pub line_content: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct GrepResult {
+    pub matches: Vec<GrepMatch>,
+    pub truncated: bool,
+}
+
+#[tauri::command]
+pub async fn grep_workspace(
+    workspace_id: String,
+    pattern: String,
+    is_regex: bool,
+    case_sensitive: bool,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<GrepResult, String> {
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    let pattern_trimmed = pattern.trim().to_string();
+    if pattern_trimmed.is_empty() {
+        return Ok(GrepResult {
+            matches: vec![],
+            truncated: false,
+        });
+    }
+
+    let wt = worktree_path.clone();
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("rg");
+        cmd.arg("--json")
+            .arg(if case_sensitive { "--case-sensitive" } else { "--smart-case" })
+            .arg("--max-count=5")
+            .arg("--max-columns=500")
+            .arg("--max-filesize=1M");
+
+        if !is_regex {
+            cmd.arg("--fixed-strings");
+        }
+
+        cmd.arg("--").arg(&pattern_trimmed).current_dir(&wt);
+        cmd.output()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            "ripgrep (rg) not found — install via 'brew install ripgrep'".to_string()
+        } else {
+            format!("Failed to run rg: {}", e)
+        }
+    })?;
+
+    // Exit code 1 = no matches (not an error), 2 = regex error or similar
+    if !output.status.success() && output.status.code() != Some(1) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("rg error: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut matches = Vec::new();
+    let mut truncated = false;
+    let max_results = 100;
+
+    let worktree_prefix = worktree_path.to_string_lossy();
+
+    for line in stdout.lines() {
+        if matches.len() >= max_results {
+            truncated = true;
+            break;
+        }
+
+        let parsed: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if parsed.get("type").and_then(|t| t.as_str()) != Some("match") {
+            continue;
+        }
+
+        let data = match parsed.get("data") {
+            Some(d) => d,
+            None => continue,
+        };
+
+        let raw_path = data
+            .pointer("/path/text")
+            .and_then(|p| p.as_str())
+            .unwrap_or("");
+        // Make path relative to worktree
+        let rel_path = raw_path
+            .strip_prefix(worktree_prefix.as_ref())
+            .unwrap_or(raw_path)
+            .trim_start_matches('/');
+
+        let line_number = data
+            .get("line_number")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0) as u32;
+
+        let line_content = data
+            .pointer("/lines/text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .trim_end()
+            .to_string();
+
+        let column = data
+            .pointer("/submatches/0/start")
+            .and_then(|s| s.as_u64())
+            .unwrap_or(0) as u32;
+
+        matches.push(GrepMatch {
+            path: rel_path.to_string(),
+            line_number,
+            column,
+            line_content,
+        });
+    }
+
+    Ok(GrepResult { matches, truncated })
+}
+
 #[tauri::command]
 pub fn read_workspace_file(
     workspace_id: String,

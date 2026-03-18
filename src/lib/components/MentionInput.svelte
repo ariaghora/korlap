@@ -3,6 +3,7 @@
     type: "file" | "folder";
     path: string;
     displayName: string;
+    lineNumber?: number;
   }
 
   export interface MentionInputValue {
@@ -12,6 +13,7 @@
 
   export interface MentionInputApi {
     insertMention: (mention: Mention) => void;
+    appendMention: (mention: Mention) => void;
     focus: () => void;
     submit: () => void;
   }
@@ -43,19 +45,7 @@
     editorEl?.focus();
   }
 
-  function insertMention(mention: Mention) {
-    if (!editorEl || !atTriggerRange) return;
-
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return;
-
-    // Build the range from @ to current cursor
-    const currentRange = sel.getRangeAt(0);
-    const replaceRange = document.createRange();
-    replaceRange.setStart(atTriggerRange.startContainer, atTriggerRange.startOffset);
-    replaceRange.setEnd(currentRange.startContainer, currentRange.startOffset);
-
-    // Create chip element
+  function createMentionChip(mention: Mention): HTMLSpanElement {
     const chip = document.createElement("span");
     chip.className = "mention-chip";
     chip.contentEditable = "false";
@@ -68,6 +58,32 @@
     chip.appendChild(icon);
 
     chip.appendChild(document.createTextNode(mention.displayName));
+    return chip;
+  }
+
+  function placeCursorAfter(node: Node) {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const newRange = document.createRange();
+    newRange.setStartAfter(node);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+  }
+
+  function insertMention(mention: Mention) {
+    if (!editorEl || !atTriggerRange) return;
+
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+
+    // Build the range from @ to current cursor
+    const currentRange = sel.getRangeAt(0);
+    const replaceRange = document.createRange();
+    replaceRange.setStart(atTriggerRange.startContainer, atTriggerRange.startOffset);
+    replaceRange.setEnd(currentRange.startContainer, currentRange.startOffset);
+
+    const chip = createMentionChip(mention);
 
     // Replace the @query text with the chip
     replaceRange.deleteContents();
@@ -76,22 +92,26 @@
     // Insert a space after the chip so cursor can continue typing
     const spacer = document.createTextNode("\u00A0");
     chip.after(spacer);
-
-    // Place cursor after the spacer
-    const newRange = document.createRange();
-    newRange.setStartAfter(spacer);
-    newRange.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(newRange);
+    placeCursorAfter(spacer);
 
     // Clear trigger state
     atTriggerRange = null;
     onQueryChange(null);
   }
 
+  function appendMention(mention: Mention) {
+    if (!editorEl) return;
+
+    const chip = createMentionChip(mention);
+    const spacer = document.createTextNode("\u00A0");
+    editorEl.appendChild(chip);
+    chip.after(spacer);
+    placeCursorAfter(spacer);
+  }
+
   // Expose API via bindable ref
   $effect(() => {
-    ref = { insertMention, focus, submit: handleSubmit };
+    ref = { insertMention, appendMention, focus, submit: handleSubmit };
   });
 
   function serialize(): MentionInputValue {
