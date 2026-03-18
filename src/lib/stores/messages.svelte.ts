@@ -6,7 +6,7 @@ import { SvelteMap } from "svelte/reactivity";
 export type MessageChunk =
   | { type: "text"; content: string }
   | { type: "thinking"; content: string }
-  | { type: "tool"; name: string; input: string; filePath?: string };
+  | { type: "tool"; name: string; input: string; filePath?: string; oldString?: string; newString?: string };
 
 export interface Message {
   id: string;
@@ -93,7 +93,7 @@ export function addAssistantMessage(
   workspaceId: string,
   id: string,
   text: string,
-  toolUses: { name: string; input: string; filePath?: string }[],
+  toolUses: { name: string; input: string; filePath?: string; oldString?: string; newString?: string }[],
   thinking?: string,
 ) {
   const chunks: MessageChunk[] = [];
@@ -104,7 +104,7 @@ export function addAssistantMessage(
     chunks.push({ type: "text", content: text });
   }
   for (const tool of toolUses) {
-    chunks.push({ type: "tool", name: tool.name, input: tool.input, filePath: tool.filePath });
+    chunks.push({ type: "tool", name: tool.name, input: tool.input, filePath: tool.filePath, oldString: tool.oldString, newString: tool.newString });
   }
   pushMessage(workspaceId, {
     id,

@@ -32,6 +32,8 @@ export interface ToolUseInfo {
   name: string;
   input_preview?: string;
   file_path?: string;
+  old_string?: string;
+  new_string?: string;
 }
 
 export type AgentEvent =
