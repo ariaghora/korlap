@@ -47,7 +47,12 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<header class="titlebar" onmousedown={startDrag} ondblclick={handleDoubleClick}>
+<header
+  class="titlebar"
+  class:dev={import.meta.env.DEV}
+  onmousedown={startDrag}
+  ondblclick={handleDoubleClick}
+>
   <div class="titlebar-left">
     <Dropdown bind:this={dropdownRef}>
       {#snippet trigger()}
@@ -124,6 +129,11 @@
     user-select: none;
     cursor: default;
     flex-shrink: 0;
+  }
+
+  .titlebar.dev {
+    background: #191726;
+    border-bottom-color: #252238;
   }
 
   .titlebar-left {
