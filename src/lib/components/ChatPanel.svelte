@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
-  import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings } from "lucide-svelte";
+  import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings, Lightbulb, BookOpen, Play, ArrowUp, Square } from "lucide-svelte";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
 
@@ -29,12 +29,17 @@
     workspaceId: string;
     creating?: boolean;
     disabled: boolean;
-    onSend: (prompt: string, images: PastedImage[], mentions: Mention[]) => void;
+    planMode?: boolean;
+    thinkingMode?: boolean;
+    onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
     onStop: () => void;
+    onPlanModeChange?: (enabled: boolean) => void;
+    onThinkingModeChange?: (enabled: boolean) => void;
+    onExecutePlan?: () => void;
     onMentionClick?: (path: string) => void;
   }
 
-  let { workspaceId, creating = false, disabled, onSend, onStop, onMentionClick }: Props = $props();
+  let { workspaceId, creating = false, disabled, planMode = false, thinkingMode = false, onSend, onStop, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick }: Props = $props();
 
   /** Split text into segments, replacing @displayName with mention references. */
   type TextSegment = { kind: "text"; value: string } | { kind: "mention"; mention: MessageMention };
@@ -88,6 +93,9 @@
   // Track which edit diffs are collapsed (by "msgId:chunkIdx" key)
   let collapsedDiffs = $state(new Set<string>());
 
+  // Tracks the message count when user clicked Revise — hides plan actions until new messages arrive
+  let planActionsHiddenAt = $state<number | null>(null);
+
   function handleScroll(e: Event) {
     const el = e.target as HTMLElement;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
@@ -102,6 +110,25 @@
         chatArea!.scrollTop = chatArea!.scrollHeight;
       });
     }
+  });
+
+  // Show "Execute plan" button only when the most recent user-or-action message
+  // is a plan-mode user message and Claude has responded after it.
+  let showExecutePlan = $derived.by(() => {
+    if (sending || messages.length < 2) return false;
+    if (planActionsHiddenAt !== null && messages.length <= planActionsHiddenAt) return false;
+    // Find the last non-assistant message (user or action)
+    let lastNonAssistantIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role !== "assistant") { lastNonAssistantIdx = i; break; }
+    }
+    if (lastNonAssistantIdx < 0) return false;
+    const msg = messages[lastNonAssistantIdx];
+    // Must be a plan-mode user message (not an action like "Executing plan")
+    if (msg.role !== "user" || !msg.planMode) return false;
+    // And there must be an assistant response after it
+    const lastMsg = messages[messages.length - 1];
+    return lastMsg.role === "assistant";
   });
 
   // Files touched in the latest agent turn (after last user message)
@@ -131,7 +158,7 @@
     const images = [...pastedImages];
     const mentions = [...value.mentions];
     pastedImages = [];
-    onSend(prompt, images, mentions);
+    onSend(prompt, images, mentions, planMode);
   }
 
   function handleQueryChange(query: string | null) {
@@ -255,6 +282,14 @@
                 {/each}
               </div>
             {/if}
+            {#if msg.planMode}
+              <div class="plan-badge-row">
+                <span class="plan-badge">
+                  <BookOpen size={11} strokeWidth={2} />
+                  Plan
+                </span>
+              </div>
+            {/if}
             <div class="user-bubble">
               {#each msg.chunks as chunk}
                 {#if chunk.type === "text"}
@@ -284,10 +319,7 @@
                 <details class="thinking-block">
                   <summary class="thinking-summary">
                     <span class="thinking-icon">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
-                        <line x1="9" y1="21" x2="15" y2="21"/>
-                      </svg>
+                      <Lightbulb size={14} strokeWidth={2} />
                     </span>
                     <span class="thinking-label">Thinking</span>
                     <span class="thinking-chevron"></span>
@@ -355,6 +387,28 @@
         </div>
       {/if}
 
+      <!-- Plan approval buttons after a plan-mode response -->
+      {#if showExecutePlan}
+        <div class="plan-actions-row">
+          <button
+            type="button"
+            class="plan-action-btn execute"
+            onclick={() => onExecutePlan?.()}
+          >
+            <Play size={14} strokeWidth={2} />
+            Execute plan
+          </button>
+          <button
+            type="button"
+            class="plan-action-btn revise"
+            onclick={() => { planActionsHiddenAt = messages.length; mentionInputApi?.focus(); }}
+          >
+            <Pencil size={14} strokeWidth={2} />
+            Revise
+          </button>
+        </div>
+      {/if}
+
       {#if sending}
         {@const lastRole = messages.length > 0 ? messages[messages.length - 1].role : null}
         {#if lastRole !== "assistant"}
@@ -367,7 +421,8 @@
     {/if}
   </div>
 
-  <div class="input-form">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="input-form" onkeydown={handleInputKeydown} bind:this={inputEl}>
     {#if pastedImages.length > 0}
       <div class="image-preview-strip">
         {#each pastedImages as img (img.id)}
@@ -384,24 +439,49 @@
         {/each}
       </div>
     {/if}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="input-row" onkeydown={handleInputKeydown} bind:this={inputEl}>
-      <MentionInput
-        placeholder="Ask to make changes, @mention files"
-        disabled={disabled || creating}
-        onSubmit={handleMentionSubmit}
-        onQueryChange={handleQueryChange}
-        onPaste={handlePaste}
-        bind:ref={mentionInputApi}
-      />
-    {#if sending}
-      <button type="button" class="stop-btn" onclick={onStop}>Stop</button>
-    {:else}
-      <button type="button" class="send-btn" disabled={disabled}
-        onclick={() => mentionInputApi?.focus()}
-        >Send</button
-      >
-    {/if}
+    <MentionInput
+      placeholder={planMode ? "Describe what to analyze…" : "Ask to make changes, @mention files"}
+      disabled={disabled || creating || sending}
+      onSubmit={handleMentionSubmit}
+      onQueryChange={handleQueryChange}
+      onPaste={handlePaste}
+      bind:ref={mentionInputApi}
+    />
+    <div class="input-toolbar">
+      <div class="toolbar-left">
+        <button
+          type="button"
+          class="mode-pill"
+          class:active={thinkingMode}
+          onclick={() => onThinkingModeChange?.(!thinkingMode)}
+          title="Extended thinking: deeper reasoning before responding"
+        >
+          <Lightbulb size={13} strokeWidth={2} />
+          Thinking
+        </button>
+        <button
+          type="button"
+          class="mode-pill"
+          class:active={planMode}
+          onclick={() => onPlanModeChange?.(!planMode)}
+          title="Plan mode: analyze and plan without making changes"
+        >
+          <BookOpen size={13} strokeWidth={2} />
+          Plan
+        </button>
+      </div>
+      {#if sending}
+        <button type="button" class="stop-btn" onclick={onStop} title="Stop">
+          <Square size={14} strokeWidth={2.5} />
+        </button>
+      {:else}
+        <button type="button" class="send-btn" disabled={disabled}
+          onclick={() => mentionInputApi?.submit()}
+          title="Send"
+        >
+          <ArrowUp size={16} strokeWidth={2.5} />
+        </button>
+      {/if}
     </div>
     <MentionAutocomplete
       results={autocompleteResults}
@@ -812,18 +892,26 @@
     object-fit: cover;
   }
 
-  /* ── Input ─────────────────────────────────── */
+  /* ── Input (Slack-style container) ────────── */
 
   .input-form {
     display: flex;
     flex-direction: column;
-    border-top: 1px solid var(--border);
+    margin: 0 0.75rem 0.6rem;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    background: var(--bg-card);
+    overflow: hidden;
+  }
+
+  .input-form:focus-within {
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border-light));
   }
 
   .image-preview-strip {
     display: flex;
     gap: 0.4rem;
-    padding: 0.5rem 1rem 0;
+    padding: 0.5rem 0.65rem 0;
     flex-wrap: wrap;
   }
 
@@ -868,44 +956,154 @@
     color: var(--text-bright);
   }
 
-  .input-row {
+  .input-toolbar {
     display: flex;
-    align-items: flex-end;
-    gap: 0.5rem;
-    padding: 0.6rem 1rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.3rem 0.55rem;
+  }
+
+  .toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 1;
+  }
+
+  .mode-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.55rem;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    line-height: 1;
+  }
+
+  .mode-pill:hover {
+    border-color: var(--border-light);
+    color: var(--text-secondary);
+  }
+
+  .mode-pill.active {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    color: var(--accent);
+  }
+
+  .mode-pill.active:hover {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  /* ── Plan mode badge on user messages ──── */
+
+  .plan-badge-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.2rem;
+  }
+
+  .plan-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-radius: 10px;
+    padding: 0.1rem 0.45rem;
+  }
+
+  /* ── Plan action buttons (execute / revise) ── */
+
+  .plan-actions-row {
+    display: flex;
+    gap: 0.4rem;
+    padding: 0.3rem 0;
+  }
+
+  .plan-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.85rem;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .plan-action-btn.execute {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    color: var(--accent);
+  }
+
+  .plan-action-btn.execute:hover {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+
+  .plan-action-btn.revise {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+
+  .plan-action-btn.revise:hover {
+    border-color: var(--border-light);
+    color: var(--text-primary);
   }
 
 
   .send-btn {
-    padding: 0.55rem 1rem;
-    background: var(--border);
-    border: 1px solid var(--border-light);
-    color: var(--text-primary);
-    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: var(--text-primary);
+    border: none;
+    border-radius: 6px;
+    color: var(--bg-base);
     cursor: pointer;
-    font-family: inherit;
-    font-size: 0.85rem;
+    flex-shrink: 0;
   }
 
   .send-btn:hover:not(:disabled) {
-    background: var(--border-light);
+    background: var(--text-bright);
   }
 
   .send-btn:disabled {
-    opacity: 0.4;
+    opacity: 0.25;
     cursor: default;
   }
 
   .stop-btn {
-    padding: 0.55rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     background: var(--diff-del-bg);
     border: 1px solid var(--diff-del);
+    border-radius: 6px;
     color: var(--diff-del);
-    border-radius: 8px;
     cursor: pointer;
-    font-family: inherit;
-    font-size: 0.85rem;
-    font-weight: 500;
+    flex-shrink: 0;
   }
 
   .stop-btn:hover {
