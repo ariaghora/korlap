@@ -920,6 +920,7 @@ pub struct PrStatus {
     pub mergeable: String,       // "mergeable", "conflicting", "unknown"
     pub additions: i64,
     pub deletions: i64,
+    pub ahead_by: i64,         // commits ahead of remote (unpushed)
 }
 
 #[tauri::command]
@@ -958,6 +959,7 @@ pub async fn get_pr_status(
                 mergeable: "unknown".into(),
                 additions: 0,
                 deletions: 0,
+                ahead_by: 0,
             });
         }
 
@@ -996,6 +998,20 @@ pub async fn get_pr_status(
         "none".to_string()
     };
 
+        // Count unpushed commits: how far local branch is ahead of remote
+        let ahead_by = {
+            let rev_output = std::process::Command::new("git")
+                .args(["rev-list", "--count", &format!("origin/{}..{}", branch, branch)])
+                .current_dir(&worktree_path)
+                .output();
+            match rev_output {
+                Ok(o) if o.status.success() => {
+                    String::from_utf8_lossy(&o.stdout).trim().parse::<i64>().unwrap_or(0)
+                }
+                _ => 0,
+            }
+        };
+
         Ok(PrStatus {
             state: pr_state,
             url,
@@ -1005,6 +1021,7 @@ pub async fn get_pr_status(
             mergeable,
             additions,
             deletions,
+            ahead_by,
         })
     }).await.map_err(|e| format!("Task failed: {}", e))?
 }

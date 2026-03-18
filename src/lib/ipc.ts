@@ -206,6 +206,7 @@ export interface PrStatus {
   mergeable: "mergeable" | "conflicting" | "unknown";
   additions: number;
   deletions: number;
+  ahead_by: number;
 }
 
 export async function getPrStatus(workspaceId: string): Promise<PrStatus> {
