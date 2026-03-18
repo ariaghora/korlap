@@ -1818,7 +1818,7 @@ pub fn send_message(
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
     let thinking_mode = thinking_mode.unwrap_or(false);
-    let (worktree_path, gh_profile, repo_id, ws_branch, repo_path) = {
+    let (worktree_path, gh_profile, repo_id, ws_branch, repo_path, user_system_prompt) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
             return Err("Agent is already processing a message".into());
@@ -1828,12 +1828,17 @@ pub fn send_message(
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        let user_sp = st.repo_settings
+            .get(&ws.repo_id)
+            .map(|s| s.system_prompt.clone())
+            .unwrap_or_default();
         (
             ws.worktree_path.clone(),
             repo.gh_profile.clone(), // Always use repo's current profile, not stale workspace snapshot
             ws.repo_id.clone(),
             ws.branch.clone(),
             repo.path.clone(),
+            user_sp,
         )
     };
 
@@ -1933,7 +1938,7 @@ pub fn send_message(
         // Inject system prompt only on first message (resume inherits it)
         let base_branch = detect_default_branch(&repo_path)
             .unwrap_or_else(|_| "main".to_string());
-        let system_prompt = format!(
+        let mut system_prompt = format!(
             "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
              Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
              Target branch: {}\n\
@@ -1945,6 +1950,10 @@ pub fn send_message(
             ws_branch,
             base_branch,
         );
+        if !user_system_prompt.is_empty() {
+            system_prompt.push_str("\n\nUser preferences:\n");
+            system_prompt.push_str(&user_system_prompt);
+        }
         cmd.arg("--system-prompt").arg(&system_prompt);
     }
 

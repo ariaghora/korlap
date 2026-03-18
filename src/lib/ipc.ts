@@ -318,6 +318,7 @@ export interface RepoSettings {
   pr_message: string;
   default_thinking: boolean;
   default_plan: boolean;
+  system_prompt: string;
 }
 
 export async function getRepoSettings(repoId: string): Promise<RepoSettings> {

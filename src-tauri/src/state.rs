@@ -48,6 +48,8 @@ pub struct RepoSettings {
     pub default_thinking: bool,
     #[serde(default)]
     pub default_plan: bool,
+    #[serde(default)]
+    pub system_prompt: String,
 }
 
 pub struct TerminalHandle {
