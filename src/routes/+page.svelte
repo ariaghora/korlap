@@ -642,21 +642,20 @@ No need to mention in your report whether or not you used one of the fallback st
     const pr = prStatusMap.get(wsId);
 
     if (pr && pr.state === "open") {
+      const cc = changeCounts.get(wsId);
+      const hasLocalChanges = cc && (cc.additions !== pr.additions || cc.deletions !== pr.deletions);
+
       if (pr.mergeable === "conflicting") {
         const baseBranch = activeRepo.default_branch;
         sendPrompt(wsId, `PR #${pr.number} has merge conflicts with ${baseBranch}.\n\nResolve them:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n5. Push\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving conflicts on PR #${pr.number}`);
       } else if (pr.checks === "failing") {
         sendPrompt(wsId, `PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`, `Fixing checks on PR #${pr.number}`);
+      } else if (hasLocalChanges) {
+        sendPrompt(wsId, `There are uncommitted local changes. Run \`git status\` and \`git diff\` to review them, commit with a descriptive message, and push to origin. Only say "Pushed successfully" on success. If it fails, explain why.`, `Committing & pushing to PR #${pr.number}`);
       } else if (pr.ahead_by > 0) {
         sendPrompt(wsId, `Push local commits to origin. Run \`git push\`. Only say "Pushed successfully" on success. If it fails, explain why.`, `Pushing to PR #${pr.number}`);
       } else {
-        const cc = changeCounts.get(wsId);
-        const hasLocalChanges = cc && (cc.additions !== pr.additions || cc.deletions !== pr.deletions);
-        if (hasLocalChanges) {
-          sendPrompt(wsId, `There are uncommitted local changes. Commit them with a descriptive message and push to origin. Only say "Pushed successfully" on success. If it fails, explain why.`, `Committing & pushing to PR #${pr.number}`);
-        } else {
-          sendPrompt(wsId, `Merge PR #${pr.number} using \`gh pr merge ${pr.number} --squash --delete-branch=false\`. Only say "PR #${pr.number} merged successfully" on success. If it fails, explain why.`, `Merging PR #${pr.number}`);
-        }
+        sendPrompt(wsId, `Merge PR #${pr.number} using \`gh pr merge ${pr.number} --squash --delete-branch=false\`. Only say "PR #${pr.number} merged successfully" on success. If it fails, explain why.`, `Merging PR #${pr.number}`);
       }
       activeTab = "chat";
       return;
