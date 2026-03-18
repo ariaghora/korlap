@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
-  import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings, Lightbulb, BookOpen, Play, ArrowUp, Square, MessageCircleQuestion } from "lucide-svelte";
+  import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings, Lightbulb, BookOpen, Play, ArrowUp, Square, MessageCircleQuestion, Loader2, Timer } from "lucide-svelte";
   import { renderMarkdown } from "$lib/markdown";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
@@ -79,6 +79,30 @@
   let messages = $derived(messagesByWorkspace.get(workspaceId) ?? []);
   let sending = $derived(sendingByWorkspace.get(workspaceId) ?? false);
 
+  // Elapsed timer for "thinking" indicator
+  let thinkingStartTime = $state<number | null>(null);
+  let thinkingElapsed = $state("0.00");
+  let thinkingInterval: ReturnType<typeof setInterval> | undefined;
+
+  $effect(() => {
+    if (sending) {
+      if (!thinkingStartTime) {
+        thinkingStartTime = Date.now();
+        thinkingElapsed = "0.00";
+        thinkingInterval = setInterval(() => {
+          const elapsed = (Date.now() - thinkingStartTime!) / 1000;
+          thinkingElapsed = elapsed.toFixed(1);
+        }, 50);
+      }
+    } else {
+      if (thinkingInterval) {
+        clearInterval(thinkingInterval);
+        thinkingInterval = undefined;
+      }
+      thinkingStartTime = null;
+    }
+  });
+
   let pastedImages = $state<PastedImage[]>([]);
   let chatArea: HTMLDivElement | undefined = $state();
   let userScrolledUp = $state(false);
@@ -94,6 +118,87 @@
 
   // Track which edit diffs are collapsed (by "msgId:chunkIdx" key)
   let collapsedDiffs = $state(new Set<string>());
+
+  // Track which tool groups are expanded (collapsed by default)
+  let expandedGroups = $state(new Set<string>());
+
+  function toggleGroup(key: string) {
+    if (expandedGroups.has(key)) {
+      expandedGroups.delete(key);
+    } else {
+      expandedGroups.add(key);
+    }
+    expandedGroups = new Set(expandedGroups);
+  }
+
+  // Build visual blocks from the messages array, grouping consecutive tool calls
+  // across message boundaries into collapsible groups.
+  type ToolEntry = { chunk: MessageChunk & { type: "tool" }; msgId: string; ci: number };
+  type VisualBlock =
+    | { kind: "user"; msg: Message; key: string }
+    | { kind: "action"; msg: Message; key: string }
+    | { kind: "assistant-label"; key: string }
+    | { kind: "thinking"; chunk: MessageChunk & { type: "thinking" }; key: string }
+    | { kind: "text"; chunk: MessageChunk & { type: "text" }; msgId: string; key: string }
+    | { kind: "special-tool"; chunk: MessageChunk & { type: "tool" }; msgId: string; ci: number; key: string }
+    | { kind: "tool-group"; tools: ToolEntry[]; key: string };
+
+  function buildVisualBlocks(msgs: Message[]): VisualBlock[] {
+    const blocks: VisualBlock[] = [];
+    let pendingTools: ToolEntry[] = [];
+    let lastRole: string | null = null;
+
+    function flushTools() {
+      if (pendingTools.length > 0) {
+        blocks.push({ kind: "tool-group", tools: pendingTools, key: `tg:${pendingTools[0].msgId}:${pendingTools[0].ci}` });
+        pendingTools = [];
+      }
+    }
+
+    for (const msg of msgs) {
+      if (msg.role === "user" || msg.role === "action") {
+        flushTools();
+        blocks.push({
+          kind: msg.role as "user" | "action",
+          msg,
+          key: msg.id,
+        });
+        lastRole = msg.role;
+        continue;
+      }
+
+      // assistant message
+      if (lastRole !== "assistant") {
+        flushTools();
+        blocks.push({ kind: "assistant-label", key: `label:${msg.id}` });
+      }
+      lastRole = "assistant";
+
+      for (let ci = 0; ci < msg.chunks.length; ci++) {
+        const chunk = msg.chunks[ci];
+        if (chunk.type === "thinking") {
+          flushTools();
+          blocks.push({ kind: "thinking", chunk, key: `think:${msg.id}` });
+        } else if (chunk.type === "text") {
+          flushTools();
+          blocks.push({ kind: "text", chunk, msgId: msg.id, key: `text:${msg.id}` });
+        } else if (chunk.type === "tool") {
+          const isSpecial = chunk.name === "AskUserQuestion" ||
+                            (chunk.oldString != null && chunk.newString != null);
+          if (isSpecial) {
+            flushTools();
+            blocks.push({ kind: "special-tool", chunk, msgId: msg.id, ci, key: `st:${msg.id}:${ci}` });
+          } else {
+            pendingTools.push({ chunk, msgId: msg.id, ci });
+          }
+        }
+      }
+    }
+    flushTools();
+    return blocks;
+  }
+
+  let visualBlocks = $derived(buildVisualBlocks(messages));
 
   // AskUserQuestion: multi-select toggles and custom input per question
   // Keyed by "msgId:chunkIdx:questionIdx"
@@ -308,26 +413,23 @@
         <p>Send a message to start the agent.</p>
       </div>
     {:else}
-      {#each messages as msg, i (msg.id)}
-        {@const prevRole = i > 0 ? messages[i - 1].role : null}
-        {@const showLabel = msg.role === "assistant" && prevRole !== "assistant"}
-
-        {#if msg.role === "action"}
+      {#each visualBlocks as block, bi (block.key)}
+        {#if block.kind === "action"}
           <div class="action-msg">
-            <span class="action-indicator">{msg.actionLabel ?? "Action"}</span>
+            <span class="action-indicator">{block.msg.actionLabel ?? "Action"}</span>
           </div>
-        {:else if msg.role === "user"}
+        {:else if block.kind === "user"}
           <div class="user-msg">
-            {#if msg.imageDataUrls && msg.imageDataUrls.length > 0}
+            {#if block.msg.imageDataUrls && block.msg.imageDataUrls.length > 0}
               <div class="user-images">
-                {#each msg.imageDataUrls as dataUrl}
+                {#each block.msg.imageDataUrls as dataUrl}
                   <div class="user-image-thumb">
                     <img src={dataUrl} alt="Attached" />
                   </div>
                 {/each}
               </div>
             {/if}
-            {#if msg.planMode}
+            {#if block.msg.planMode}
               <div class="plan-badge-row">
                 <span class="plan-badge">
                   <BookOpen size={11} strokeWidth={2} />
@@ -336,10 +438,10 @@
               </div>
             {/if}
             <div class="user-bubble">
-              {#each msg.chunks as chunk}
+              {#each block.msg.chunks as chunk}
                 {#if chunk.type === "text"}
-                  {#if msg.mentions && msg.mentions.length > 0}
-                    {#each splitTextWithMentions(chunk.content, msg.mentions) as seg}
+                  {#if block.msg.mentions && block.msg.mentions.length > 0}
+                    {#each splitTextWithMentions(chunk.content, block.msg.mentions) as seg}
                       {#if seg.kind === "text"}{seg.value}{:else}
                         <button
                           class="msg-mention-chip"
@@ -354,185 +456,212 @@
               {/each}
             </div>
           </div>
-        {:else}
-          {#if showLabel}
-            <div class="assistant-label">Claude</div>
-          {/if}
+        {:else if block.kind === "assistant-label"}
+          <!-- no label needed -->
+        {:else if block.kind === "thinking"}
           <div class="assistant-msg">
-            {#each msg.chunks as chunk, ci}
-              {#if chunk.type === "thinking"}
-                <details class="thinking-block">
-                  <summary class="thinking-summary">
-                    <span class="thinking-icon">
-                      <Lightbulb size={14} strokeWidth={2} />
+            <details class="thinking-block">
+              <summary class="thinking-summary">
+                <span class="thinking-icon">
+                  <Lightbulb size={14} strokeWidth={2} />
+                </span>
+                <span class="thinking-label">Thinking</span>
+                <span class="thinking-chevron"></span>
+              </summary>
+              <div class="thinking-content">
+                <p class="thinking-text">{block.chunk.content}</p>
+              </div>
+            </details>
+          </div>
+        {:else if block.kind === "text"}
+          <div class="assistant-msg">
+            <div class="assistant-card">
+              <div class="assistant-text markdown-body">{@html renderMarkdown(block.chunk.content)}</div>
+            </div>
+          </div>
+        {:else if block.kind === "tool-group"}
+          {@const isExpanded = expandedGroups.has(block.key)}
+          {@const lastTool = block.tools[block.tools.length - 1].chunk}
+          {@const LastIcon = toolIcons[lastTool.name] ?? Settings}
+          {@const isActive = sending && bi === visualBlocks.length - 1}
+          {@const count = block.tools.length}
+          <div class="assistant-msg">
+            <div class="tool-group" class:expanded={isExpanded}>
+              <button class="tool-group-header" onclick={() => toggleGroup(block.key)}>
+                {#if isActive}
+                  <span class="tool-group-spinner"><Loader2 size={13} strokeWidth={2} /></span>
+                {:else}
+                  <span class="tool-group-gear"><Settings size={13} strokeWidth={2} /></span>
+                {/if}
+                <span class="tool-group-latest">
+                  <span class="tool-group-latest-icon"><LastIcon size={12} strokeWidth={2} /></span>
+                  <span class="tool-group-latest-label">{lastTool.input || lastTool.name}</span>
+                </span>
+                {#if count > 1}
+                  <span class="tool-group-count">{count} actions</span>
+                {/if}
+                <span class="tool-group-chevron" class:expanded={isExpanded}>▾</span>
+              </button>
+              {#if isExpanded}
+                <div class="tool-group-body">
+                  {#each block.tools as t}
+                    {@const ToolIcon = toolIcons[t.chunk.name] ?? Settings}
+                    <span class="tool-pill">
+                      <span class="tool-icon"><ToolIcon size={13} strokeWidth={2} /></span>
+                      {t.chunk.input || t.chunk.name}
                     </span>
-                    <span class="thinking-label">Thinking</span>
-                    <span class="thinking-chevron"></span>
-                  </summary>
-                  <div class="thinking-content">
-                    <p class="thinking-text">{chunk.content}</p>
-                  </div>
-                </details>
-              {:else if chunk.type === "text"}
-                <div class="assistant-card">
-                  <div class="assistant-text markdown-body">{@html renderMarkdown(chunk.content)}</div>
+                  {/each}
                 </div>
-              {:else if chunk.type === "tool" && chunk.name === "AskUserQuestion"}
-                {@const parsed = (() => { try { return JSON.parse(chunk.input); } catch { return null; } })()}
-                {#if parsed && Array.isArray(parsed)}
-                  {#each parsed as q, qi}
-                    {@const qKey = `${msg.id}:${ci}:${qi}`}
-                    {@const isMulti = q.multiSelect === true}
-                    {@const answered = answeredQuestions.has(qKey)}
-                    {@const disabled = sending || answered}
-                    {@const selected = selectedOptions.get(qKey) ?? new Set()}
-                    {@const customText = customInputs.get(qKey) ?? ""}
-                    {@const showCustom = showCustomInput.has(qKey)}
-                    <div class="question-card" class:answered>
-                      <div class="question-header">
-                        <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
-                        <span class="question-label">{q.header || "Question"}</span>
+              {/if}
+            </div>
+          </div>
+        {:else if block.kind === "special-tool" && block.chunk.name === "AskUserQuestion"}
+          {@const chunk = block.chunk}
+          {@const parsed = (() => { try { return JSON.parse(chunk.input); } catch { return null; } })()}
+          <div class="assistant-msg">
+            {#if parsed && Array.isArray(parsed)}
+              {#each parsed as q, qi}
+                {@const qKey = `${block.msgId}:${block.ci}:${qi}`}
+                {@const isMulti = q.multiSelect === true}
+                {@const answered = answeredQuestions.has(qKey)}
+                {@const disabled = sending || answered}
+                {@const selected = selectedOptions.get(qKey) ?? new Set()}
+                {@const customText = customInputs.get(qKey) ?? ""}
+                {@const showCustom = showCustomInput.has(qKey)}
+                <div class="question-card" class:answered>
+                  <div class="question-header">
+                    <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
+                    <span class="question-label">{q.header || "Question"}</span>
+                    {#if isMulti}
+                      <span class="question-multi-badge">Multi-select</span>
+                    {/if}
+                  </div>
+                  {#if q.question}
+                    <div class="question-text">{q.question}</div>
+                  {/if}
+                  {#if q.options && q.options.length > 0}
+                    <div class="question-options">
+                      {#each q.options as opt}
                         {#if isMulti}
-                          <span class="question-multi-badge">Multi-select</span>
+                          <button
+                            type="button"
+                            class="question-option"
+                            class:selected={selected.has(opt.label)}
+                            disabled={disabled}
+                            onclick={() => toggleOption(qKey, opt.label)}
+                          >
+                            <span class="option-check">{selected.has(opt.label) ? "◉" : "○"}</span>
+                            <span class="option-content">
+                              <span class="option-label">{opt.label}</span>
+                              {#if opt.description}
+                                <span class="option-desc">{opt.description}</span>
+                              {/if}
+                            </span>
+                          </button>
+                        {:else}
+                          <button
+                            type="button"
+                            class="question-option"
+                            disabled={disabled}
+                            onclick={() => submitOption(qKey, opt.label)}
+                          >
+                            <span class="option-content">
+                              <span class="option-label">{opt.label}</span>
+                              {#if opt.description}
+                                <span class="option-desc">{opt.description}</span>
+                              {/if}
+                            </span>
+                          </button>
                         {/if}
-                      </div>
-                      {#if q.question}
-                        <div class="question-text">{q.question}</div>
-                      {/if}
-                      {#if q.options && q.options.length > 0}
-                        <div class="question-options">
-                          {#each q.options as opt}
-                            {#if isMulti}
-                              <button
-                                type="button"
-                                class="question-option"
-                                class:selected={selected.has(opt.label)}
-                                disabled={disabled}
-                                onclick={() => toggleOption(qKey, opt.label)}
-                              >
-                                <span class="option-check">{selected.has(opt.label) ? "◉" : "○"}</span>
-                                <span class="option-content">
-                                  <span class="option-label">{opt.label}</span>
-                                  {#if opt.description}
-                                    <span class="option-desc">{opt.description}</span>
-                                  {/if}
-                                </span>
-                              </button>
-                            {:else}
-                              <button
-                                type="button"
-                                class="question-option"
-                                disabled={disabled}
-                                onclick={() => submitOption(qKey, opt.label)}
-                              >
-                                <span class="option-content">
-                                  <span class="option-label">{opt.label}</span>
-                                  {#if opt.description}
-                                    <span class="option-desc">{opt.description}</span>
-                                  {/if}
-                                </span>
-                              </button>
-                            {/if}
-                          {/each}
-                          <!-- Other / custom input -->
-                          {#if !answered}
-                            {#if showCustom}
-                              <div class="custom-input-row">
-                                <input
-                                  type="text"
-                                  class="custom-input"
-                                  placeholder="Type your answer…"
-                                  value={customText}
-                                  disabled={sending}
-                                  oninput={(e) => { customInputs.set(qKey, (e.target as HTMLInputElement).value); customInputs = new Map(customInputs); }}
-                                  onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); isMulti ? submitMultiSelect(qKey) : submitCustomInput(qKey); } }}
-                                />
-                                <button
-                                  type="button"
-                                  class="custom-submit-btn"
-                                  disabled={sending || (!customText.trim() && (!isMulti || selected.size === 0))}
-                                  onclick={() => isMulti ? submitMultiSelect(qKey) : submitCustomInput(qKey)}
-                                >
-                                  <ArrowUp size={14} strokeWidth={2.5} />
-                                </button>
-                              </div>
-                            {:else}
-                              <button
-                                type="button"
-                                class="question-option other-option"
-                                disabled={disabled}
-                                onclick={() => { showCustomInput.add(qKey); showCustomInput = new Set(showCustomInput); }}
-                              >
-                                <span class="option-content">
-                                  <span class="option-label">Other</span>
-                                  <span class="option-desc">Type a custom answer</span>
-                                </span>
-                              </button>
-                            {/if}
-                          {/if}
-                          <!-- Multi-select submit button -->
-                          {#if isMulti && selected.size > 0 && !answered}
+                      {/each}
+                      {#if !answered}
+                        {#if showCustom}
+                          <div class="custom-input-row">
+                            <input
+                              type="text"
+                              class="custom-input"
+                              placeholder="Type your answer…"
+                              value={customText}
+                              disabled={sending}
+                              oninput={(e) => { customInputs.set(qKey, (e.target as HTMLInputElement).value); customInputs = new Map(customInputs); }}
+                              onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); isMulti ? submitMultiSelect(qKey) : submitCustomInput(qKey); } }}
+                            />
                             <button
                               type="button"
-                              class="multi-submit-btn"
-                              disabled={sending}
-                              onclick={() => submitMultiSelect(qKey)}
+                              class="custom-submit-btn"
+                              disabled={sending || (!customText.trim() && (!isMulti || selected.size === 0))}
+                              onclick={() => isMulti ? submitMultiSelect(qKey) : submitCustomInput(qKey)}
                             >
-                              Submit ({selected.size} selected)
+                              <ArrowUp size={14} strokeWidth={2.5} />
                             </button>
-                          {/if}
-                        </div>
+                          </div>
+                        {:else}
+                          <button
+                            type="button"
+                            class="question-option other-option"
+                            disabled={disabled}
+                            onclick={() => { showCustomInput.add(qKey); showCustomInput = new Set(showCustomInput); }}
+                          >
+                            <span class="option-content">
+                              <span class="option-label">Other</span>
+                              <span class="option-desc">Type a custom answer</span>
+                            </span>
+                          </button>
+                        {/if}
                       {/if}
-                    </div>
-                  {/each}
-                {:else}
-                  <div class="question-card">
-                    <div class="question-header">
-                      <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
-                      <span class="question-label">Question</span>
-                    </div>
-                    <div class="question-text">{chunk.input}</div>
-                  </div>
-                {/if}
-              {:else if chunk.type === "tool" && chunk.oldString != null && chunk.newString != null}
-                {@const diffKey = `${msg.id}:${ci}`}
-                {@const isCollapsed = collapsedDiffs.has(diffKey)}
-                <div class="edit-diff-block">
-                  <button class="edit-diff-header" onclick={() => {
-                    if (collapsedDiffs.has(diffKey)) {
-                      collapsedDiffs.delete(diffKey);
-                    } else {
-                      collapsedDiffs.add(diffKey);
-                    }
-                    collapsedDiffs = new Set(collapsedDiffs);
-                  }}>
-                    <span class="edit-diff-chevron" class:collapsed={isCollapsed}>▾</span>
-                    <span class="edit-diff-icon"><Pencil size={13} strokeWidth={2} /></span>
-                    <span class="edit-diff-label">{chunk.input}</span>
-                  </button>
-                  {#if !isCollapsed}
-                    <div class="edit-diff-body">
-                      {#each chunk.oldString.split("\n") as line, li}
-                        <div class="diff-line remove"><span class="diff-ln">{li + 1}</span><span class="diff-prefix">-</span><span class="diff-code">{line}</span></div>
-                      {/each}
-                      {#each chunk.newString.split("\n") as line, li}
-                        <div class="diff-line add"><span class="diff-ln">{li + 1}</span><span class="diff-prefix">+</span><span class="diff-code">{line}</span></div>
-                      {/each}
+                      {#if isMulti && selected.size > 0 && !answered}
+                        <button
+                          type="button"
+                          class="multi-submit-btn"
+                          disabled={sending}
+                          onclick={() => submitMultiSelect(qKey)}
+                        >
+                          Submit ({selected.size} selected)
+                        </button>
+                      {/if}
                     </div>
                   {/if}
                 </div>
-              {:else}
-                {@const ToolIcon = toolIcons[chunk.name] ?? Settings}
-                <div class="tool-pills">
-                  <span class="tool-pill">
-                    <span class="tool-icon">
-                      <ToolIcon size={13} strokeWidth={2} />
-                    </span>
-                    {chunk.input || chunk.name}
-                  </span>
+              {/each}
+            {:else}
+              <div class="question-card">
+                <div class="question-header">
+                  <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
+                  <span class="question-label">Question</span>
+                </div>
+                <div class="question-text">{chunk.input}</div>
+              </div>
+            {/if}
+          </div>
+        {:else if block.kind === "special-tool" && block.chunk.oldString != null && block.chunk.newString != null}
+          {@const chunk = block.chunk}
+          {@const diffKey = `${block.msgId}:${block.ci}`}
+          {@const isCollapsed = collapsedDiffs.has(diffKey)}
+          <div class="assistant-msg">
+            <div class="edit-diff-block">
+              <button class="edit-diff-header" onclick={() => {
+                if (collapsedDiffs.has(diffKey)) {
+                  collapsedDiffs.delete(diffKey);
+                } else {
+                  collapsedDiffs.add(diffKey);
+                }
+                collapsedDiffs = new Set(collapsedDiffs);
+              }}>
+                <span class="edit-diff-chevron" class:collapsed={isCollapsed}>▾</span>
+                <span class="edit-diff-icon"><Pencil size={13} strokeWidth={2} /></span>
+                <span class="edit-diff-label">{chunk.input}</span>
+              </button>
+              {#if !isCollapsed}
+                <div class="edit-diff-body">
+                  {#each (chunk.oldString ?? "").split("\n") as line, li}
+                    <div class="diff-line remove"><span class="diff-ln">{li + 1}</span><span class="diff-prefix">-</span><span class="diff-code">{line}</span></div>
+                  {/each}
+                  {#each (chunk.newString ?? "").split("\n") as line, li}
+                    <div class="diff-line add"><span class="diff-ln">{li + 1}</span><span class="diff-prefix">+</span><span class="diff-code">{line}</span></div>
+                  {/each}
                 </div>
               {/if}
-            {/each}
+            </div>
           </div>
         {/if}
       {/each}
@@ -572,12 +701,11 @@
       {/if}
 
       {#if sending}
-        {@const lastRole = messages.length > 0 ? messages[messages.length - 1].role : null}
-        {#if lastRole !== "assistant"}
-          <div class="assistant-label">Claude</div>
-        {/if}
         <div class="assistant-msg">
-          <div class="thinking">Thinking...</div>
+          <div class="thinking">
+            <Timer size={13} strokeWidth={2} />
+            <span class="thinking-timer">{thinkingElapsed}s</span>
+          </div>
         </div>
       {/if}
     {/if}
@@ -923,13 +1051,94 @@
     margin: 0.6rem 0;
   }
 
-  /* ── Tool use pills ────────────────────────── */
+  /* ── Collapsible tool group ─────────────────── */
 
-  .tool-pills {
+  .tool-group {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-card);
+  }
+
+  .tool-group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.35rem 0.65rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    text-align: left;
+  }
+
+  .tool-group-header:hover {
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+  }
+
+  .tool-group-gear {
+    display: flex;
+    align-items: center;
+    opacity: 0.4;
+  }
+
+  .tool-group-latest {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .tool-group-latest-icon {
+    display: flex;
+    align-items: center;
+    opacity: 0.5;
+    flex-shrink: 0;
+  }
+
+  .tool-group-latest-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tool-group-count {
+    opacity: 0.4;
+    flex-shrink: 0;
+  }
+
+  .tool-group-chevron {
+    font-size: 0.65rem;
+    opacity: 0.5;
+    transition: transform 0.15s ease;
+    transform: rotate(-90deg);
+  }
+
+  .tool-group-chevron.expanded {
+    transform: rotate(0deg);
+  }
+
+  .tool-group-spinner {
+    display: flex;
+    align-items: center;
+    color: var(--accent);
+    animation: spin 1s linear infinite;
+  }
+
+  .tool-group-body {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
+    padding: 0.35rem 0.65rem 0.5rem;
+    border-top: 1px solid var(--border);
   }
+
+  /* ── Tool use pills ────────────────────────── */
 
   .tool-pill {
     display: inline-flex;
@@ -1244,10 +1453,18 @@
   /* ── Thinking indicator (while streaming) ──── */
 
   .thinking {
-    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
     color: var(--accent);
     padding: 0.3rem 0;
-    animation: pulse 2s ease-in-out infinite;
+    opacity: 0.7;
+  }
+
+  .thinking-timer {
+    min-width: 4.5ch;
   }
 
   @keyframes pulse {
