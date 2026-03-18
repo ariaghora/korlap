@@ -587,6 +587,11 @@ pub async fn create_workspace(
 
     // Generate a unique name (retry if branch already exists)
     let mut name = random_workspace_name();
+    let worktree_base = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.worktree_dir()
+    };
+
     for attempt in 0..10 {
         let branch = format!("korlap/{}", name);
         let check = std::process::Command::new("git")
@@ -595,8 +600,10 @@ pub async fn create_workspace(
             .output()
             .map_err(|e| format!("Failed to run git: {}", e))?;
 
-        if !check.status.success() {
-            break; // branch doesn't exist, good to use
+        let folder_exists = worktree_base.join(&name).exists();
+
+        if !check.status.success() && !folder_exists {
+            break; // branch doesn't exist and folder is free, good to use
         }
 
         if attempt == 9 {
@@ -613,11 +620,8 @@ pub async fn create_workspace(
     let id = Uuid::new_v4().to_string();
     let branch = format!("korlap/{}", name);
 
-    // Worktree lives in app data dir, not in the managed repo
-    let worktree_path = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.worktree_dir().join(&id)
-    };
+    // Worktree lives in app data dir, named after the workspace for human readability
+    let worktree_path = worktree_base.join(&name);
 
     std::fs::create_dir_all(worktree_path.parent().unwrap_or(&worktree_path))
         .map_err(|e| e.to_string())?;
