@@ -42,6 +42,8 @@ pub struct RepoSettings {
     pub run_script: String,
     #[serde(default, alias = "archive_script")]
     pub remove_script: String,
+    #[serde(default)]
+    pub pr_message: String,
 }
 
 pub struct TerminalHandle {

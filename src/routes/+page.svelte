@@ -500,19 +500,34 @@
       const baseBranch = activeRepo.default_branch;
       const template = await getPrTemplate(activeRepo.id).catch(() => "");
 
-      let prompt = `Create a pull request.\n\n`;
-      prompt += `There are ${files.length} uncommitted changes.\n`;
-      prompt += `The current branch is ${selectedWs.branch}.\n`;
-      prompt += `The target branch is origin/${baseBranch}.\n\n`;
-      prompt += `Follow these steps:\n`;
-      prompt += `1. Run \`git diff\` to review uncommitted changes\n`;
-      prompt += `2. Commit them with a descriptive message\n`;
-      prompt += `3. Push to origin\n`;
-      prompt += `4. Use \`gh pr create --base ${baseBranch}\` to create a PR. Keep the title under 80 characters. Keep the description under five sentences unless there's a template.\n\n`;
-      prompt += `If any step fails, explain the issue.\n`;
+      let prompt: string;
+      const customMsg = repoSettings?.pr_message?.trim();
 
-      if (template) {
-        prompt += `\n## PR Description Template\n\nThis repo has a PR template. Use it:\n\n\`\`\`markdown\n${template}\n\`\`\`\n`;
+      if (customMsg) {
+        // Interpolate template variables in custom PR message
+        prompt = customMsg
+          .replace(/\{\{branch\}\}/g, selectedWs.branch)
+          .replace(/\{\{base_branch\}\}/g, baseBranch)
+          .replace(/\{\{file_count\}\}/g, String(files.length))
+          .replace(/\{\{pr_template\}\}/g, template
+            ? `\n## PR Description Template\n\nThis workspace has a PR template. Use it:\n\n\`\`\`markdown\n${template}\n\`\`\`\n`
+            : "");
+      } else {
+        // Default prompt
+        prompt = `Create a pull request.\n\n`;
+        prompt += `There are ${files.length} uncommitted changes.\n`;
+        prompt += `The current branch is ${selectedWs.branch}.\n`;
+        prompt += `The target branch is origin/${baseBranch}.\n\n`;
+        prompt += `Follow these steps:\n`;
+        prompt += `1. Run \`git diff\` to review uncommitted changes\n`;
+        prompt += `2. Commit them with a descriptive message\n`;
+        prompt += `3. Push to origin\n`;
+        prompt += `4. Use \`gh pr create --base ${baseBranch}\` to create a PR. Keep the title under 80 characters. Keep the description under five sentences unless there's a template.\n\n`;
+        prompt += `If any step fails, explain the issue.\n`;
+
+        if (template) {
+          prompt += `\n## PR Description Template\n\nThis repo has a PR template. Use it:\n\n\`\`\`markdown\n${template}\n\`\`\`\n`;
+        }
       }
 
       activeTab = "chat";

@@ -26,6 +26,7 @@
     setup_script: "",
     run_script: "",
     remove_script: "",
+    pr_message: "",
   });
   let saveStatus = $state<"idle" | "saving" | "saved">("idle");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -178,8 +179,38 @@
     {:else if activeSection === "agent"}
       <div class="section-header">
         <h1>Agent</h1>
+        <span class="autosave-status" class:visible={saveStatus !== "idle"}>
+          {saveStatus === "saving" ? "Saving..." : "Saved"}
+        </span>
       </div>
-      <p class="coming-soon">Model selection, permission mode, and system prompt customization.</p>
+
+      <div class="setting-block">
+        <div class="setting-meta">
+          <span class="setting-name">Create PR message</span>
+          <span class="setting-desc">Custom prompt sent to the agent when creating a pull request. Leave empty to use the default.</span>
+        </div>
+        <textarea
+          class="pr-message-field"
+          bind:value={settings.pr_message}
+          oninput={scheduleAutosave}
+          placeholder={`The user likes the current state of the code.\n\nThere are {{file_count}} uncommitted changes.\nThe current branch is {{branch}}.\nThe target branch is origin/{{base_branch}}.\n\nFollow these steps to create a PR:\n- Run \`git diff\` to review uncommitted changes\n- Commit them with a descriptive message\n- Push to origin\n- Use \`gh pr create --base {{base_branch}}\` to create a PR. Keep the title under 80 characters.\n\nIf any step fails, explain the issue.`}
+          rows="14"
+          spellcheck="false"
+        ></textarea>
+      </div>
+
+      <div class="env-hint">
+        <span class="env-hint-title">Available template variables</span>
+        <div class="env-vars">
+          <code>{"{{branch}}"}</code>
+          <code>{"{{base_branch}}"}</code>
+          <code>{"{{file_count}}"}</code>
+          <code>{"{{pr_template}}"}</code>
+        </div>
+        <p class="template-var-hint">
+          <code>{"{{pr_template}}"}</code> inserts the repo's PR template (from <code>.github/pull_request_template.md</code>) if one exists.
+        </p>
+      </div>
 
     {:else if activeSection === "git"}
       <div class="section-header">
@@ -482,6 +513,45 @@
     padding: 0.1rem 0.35rem;
     border-radius: 3px;
     font-size: 0.78rem;
+  }
+
+  .pr-message-field {
+    width: 100%;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    padding: 0.6rem 0.65rem;
+    resize: vertical;
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .pr-message-field::placeholder {
+    color: var(--text-muted);
+  }
+
+  .pr-message-field:focus {
+    border-color: var(--border-light);
+  }
+
+  .template-var-hint {
+    margin-top: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+
+  .template-var-hint code {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
   }
 
   .profile-list {
