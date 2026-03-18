@@ -11,6 +11,7 @@
     sendMessage,
     saveImage,
     onAgentStatus,
+    onWorkspaceUpdated,
     stopAgent,
     renameBranch,
     getRepoSettings,
@@ -67,7 +68,8 @@
   // ── Lifecycle ──────────────────────────────────────────
 
   onMount(() => {
-    let unlistenFn: (() => void) | undefined;
+    let unlistenStatus: (() => void) | undefined;
+    let unlistenWsUpdate: (() => void) | undefined;
 
     (async () => {
       listRepos().then((r) => {
@@ -75,13 +77,20 @@
         if (r.length > 0) selectRepo(r[0]);
       }).catch((e) => { error = String(e); });
 
-      unlistenFn = await onAgentStatus((event) => {
+      unlistenStatus = await onAgentStatus((event) => {
         const ws = workspaces.find((w) => w.id === event.workspace_id);
         if (ws) {
           ws.status = event.status as WorkspaceInfo["status"];
         }
         if (event.status === "waiting") {
           setSending(event.workspace_id, false);
+        }
+      });
+
+      unlistenWsUpdate = await onWorkspaceUpdated((updated) => {
+        const idx = workspaces.findIndex((w) => w.id === updated.id);
+        if (idx >= 0) {
+          workspaces[idx] = updated;
         }
       });
     })();
@@ -129,7 +138,8 @@
     }, 15_000);
 
     return () => {
-      unlistenFn?.();
+      unlistenStatus?.();
+      unlistenWsUpdate?.();
       clearInterval(prPollInterval);
       window.removeEventListener("keydown", handleKeydown);
     };

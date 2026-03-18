@@ -243,3 +243,9 @@ export function onAgentStatus(
 ): Promise<UnlistenFn> {
   return listen<AgentStatusEvent>("agent-status", (e) => callback(e.payload));
 }
+
+export function onWorkspaceUpdated(
+  callback: (ws: WorkspaceInfo) => void,
+): Promise<UnlistenFn> {
+  return listen<WorkspaceInfo>("workspace-updated", (e) => callback(e.payload));
+}
