@@ -20,6 +20,31 @@
       .sort((a, b) => a.created_at - b.created_at),
   );
 
+  type GroupKey = "ready" | "review" | "done";
+
+  let groups = $derived.by(() => {
+    const ready: WorkspaceInfo[] = [];
+    const review: WorkspaceInfo[] = [];
+    const done: WorkspaceInfo[] = [];
+
+    for (const ws of activeWorkspaces) {
+      const pr = prStatusMap.get(ws.id);
+      if (pr?.state === "merged") {
+        done.push(ws);
+      } else if (pr?.state === "open") {
+        review.push(ws);
+      } else {
+        ready.push(ws);
+      }
+    }
+
+    const result: { key: GroupKey; label: string; items: WorkspaceInfo[] }[] = [];
+    if (ready.length) result.push({ key: "ready", label: "Ready", items: ready });
+    if (review.length) result.push({ key: "review", label: "Review", items: review });
+    if (done.length) result.push({ key: "done", label: "Done", items: done });
+    return result;
+  });
+
   let editingId = $state<string | null>(null);
   let editValue = $state("");
 
@@ -47,43 +72,48 @@
 </script>
 
 <aside class="sidebar">
-  <div class="sidebar-header">
-    <span class="sidebar-label">Workspaces</span>
-  </div>
   <div class="workspace-list">
-    {#each activeWorkspaces as ws}
-      <button
-        class="ws-item"
-        class:active={ws.id === selectedWsId}
-        onclick={() => onSelect(ws.id)}
-        ondblclick={() => ws.id !== creatingWsId && startEdit(ws)}
-      >
-        <span
-          class="ws-dot"
-          class:creating={ws.id === creatingWsId}
-          class:running={ws.id !== creatingWsId && ws.status === "running" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
-          class:waiting={ws.id !== creatingWsId && ws.status === "waiting" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
-          class:pr-open={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable !== "conflicting" && prStatusMap.get(ws.id)?.checks !== "failing"}
-          class:pr-fail={prStatusMap.get(ws.id)?.state === "open" && (prStatusMap.get(ws.id)?.checks === "failing" || prStatusMap.get(ws.id)?.mergeable === "conflicting")}
-          class:pr-merge={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable === "mergeable" && prStatusMap.get(ws.id)?.checks === "passing"}
-        ></span>
-        {#if editingId === ws.id}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="ws-rename-input"
-            bind:value={editValue}
-            onblur={() => commitEdit(ws.id)}
-            onkeydown={(e) => handleEditKeydown(e, ws.id)}
-            onclick={(e) => e.stopPropagation()}
-            autofocus
-          />
-        {:else}
-          <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
-          {#if ws.id !== creatingWsId && ws.status === "running"}
-            <span class="ws-status">running</span>
-          {/if}
-        {/if}
-      </button>
+    {#each groups as group}
+      <div class="group">
+        <div class="group-header">
+          <span class="group-label">{group.label}</span>
+          <span class="group-count">{group.items.length}</span>
+        </div>
+        {#each group.items as ws (ws.id)}
+          <button
+            class="ws-item"
+            class:active={ws.id === selectedWsId}
+            onclick={() => onSelect(ws.id)}
+            ondblclick={() => ws.id !== creatingWsId && startEdit(ws)}
+          >
+            <span
+              class="ws-dot"
+              class:creating={ws.id === creatingWsId}
+              class:running={ws.id !== creatingWsId && ws.status === "running" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
+              class:waiting={ws.id !== creatingWsId && ws.status === "waiting" && (!prStatusMap.get(ws.id) || prStatusMap.get(ws.id)?.state === "none")}
+              class:pr-open={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable !== "conflicting" && prStatusMap.get(ws.id)?.checks !== "failing"}
+              class:pr-fail={prStatusMap.get(ws.id)?.state === "open" && (prStatusMap.get(ws.id)?.checks === "failing" || prStatusMap.get(ws.id)?.mergeable === "conflicting")}
+              class:pr-merge={prStatusMap.get(ws.id)?.state === "open" && prStatusMap.get(ws.id)?.mergeable === "mergeable" && prStatusMap.get(ws.id)?.checks === "passing"}
+            ></span>
+            {#if editingId === ws.id}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                class="ws-rename-input"
+                bind:value={editValue}
+                onblur={() => commitEdit(ws.id)}
+                onkeydown={(e) => handleEditKeydown(e, ws.id)}
+                onclick={(e) => e.stopPropagation()}
+                autofocus
+              />
+            {:else}
+              <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
+              {#if ws.id !== creatingWsId && ws.status === "running"}
+                <span class="ws-status">running</span>
+              {/if}
+            {/if}
+          </button>
+        {/each}
+      </div>
     {/each}
   </div>
   <button class="new-ws-btn" onclick={onNewWorkspace} disabled={!!creatingWsId}>
@@ -101,21 +131,35 @@
     flex-shrink: 0;
   }
 
-  .sidebar-header {
-    padding: 0.6rem 0.75rem 0.3rem;
-  }
-
-  .sidebar-label {
-    font-size: 0.7rem;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
   .workspace-list {
     flex: 1;
     overflow-y: auto;
     padding: 0.25rem;
+  }
+
+  .group + .group {
+    margin-top: 0.4rem;
+  }
+
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.5rem 0.2rem;
+  }
+
+  .group-label {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+  }
+
+  .group-count {
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    opacity: 0.6;
   }
 
   .ws-item {

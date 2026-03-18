@@ -128,14 +128,14 @@
 
     window.addEventListener("keydown", handleKeydown);
 
-    // Poll PR status every 15s for workspaces that have a PR open
+    // Poll PR status every 5s for workspaces that have a PR open
     const prPollInterval = setInterval(() => {
       for (const [wsId, pr] of prStatusMap) {
         if (pr.state === "open") {
           refreshPrStatus(wsId);
         }
       }
-    }, 15_000);
+    }, 5_000);
 
     return () => {
       unlistenStatus?.();
