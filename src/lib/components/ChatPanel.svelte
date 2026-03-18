@@ -2,6 +2,7 @@
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
   import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings, Lightbulb, BookOpen, Play, ArrowUp, Square } from "lucide-svelte";
+  import { renderMarkdown } from "$lib/markdown";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
 
@@ -329,7 +330,7 @@
                 </details>
               {:else if chunk.type === "text"}
                 <div class="assistant-card">
-                  <p class="assistant-text">{chunk.content}</p>
+                  <div class="assistant-text markdown-body">{@html renderMarkdown(chunk.content)}</div>
                 </div>
               {:else if chunk.type === "tool" && chunk.oldString != null && chunk.newString != null}
                 {@const diffKey = `${msg.id}:${ci}`}
@@ -620,8 +621,144 @@
     font-size: 0.85rem;
     line-height: 1.55;
     color: var(--text-primary);
-    white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  /* ── Markdown body (rendered assistant text) ─── */
+
+  .assistant-text.markdown-body :global(h1),
+  .assistant-text.markdown-body :global(h2),
+  .assistant-text.markdown-body :global(h3),
+  .assistant-text.markdown-body :global(h4) {
+    margin: 0.6rem 0 0.3rem;
+    color: var(--text-bright);
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .assistant-text.markdown-body :global(h1) { font-size: 1.1rem; }
+  .assistant-text.markdown-body :global(h2) { font-size: 1rem; }
+  .assistant-text.markdown-body :global(h3) { font-size: 0.92rem; }
+  .assistant-text.markdown-body :global(h4) { font-size: 0.85rem; }
+
+  .assistant-text.markdown-body :global(p) {
+    margin: 0.35rem 0;
+    line-height: 1.55;
+  }
+
+  .assistant-text.markdown-body :global(> p:first-child) {
+    margin-top: 0;
+  }
+
+  .assistant-text.markdown-body :global(> p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .assistant-text.markdown-body :global(ul),
+  .assistant-text.markdown-body :global(ol) {
+    margin: 0.3rem 0;
+    padding-left: 1.5rem;
+  }
+
+  .assistant-text.markdown-body :global(li) {
+    margin: 0.15rem 0;
+    line-height: 1.5;
+  }
+
+  .assistant-text.markdown-body :global(li > p) {
+    margin: 0.1rem 0;
+  }
+
+  .assistant-text.markdown-body :global(strong) {
+    color: var(--text-bright);
+    font-weight: 600;
+  }
+
+  .assistant-text.markdown-body :global(em) {
+    font-style: italic;
+    color: var(--text-primary);
+  }
+
+  .assistant-text.markdown-body :global(a) {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .assistant-text.markdown-body :global(a:hover) {
+    text-decoration: underline;
+  }
+
+  /* Inline code */
+  .assistant-text.markdown-body :global(code) {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: var(--bg-active);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.1rem 0.35rem;
+    color: var(--text-bright);
+  }
+
+  /* Code blocks */
+  .assistant-text.markdown-body :global(pre) {
+    margin: 0.4rem 0;
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+
+  .assistant-text.markdown-body :global(pre code) {
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    font-size: 0.78rem;
+    color: var(--text-primary);
+  }
+
+  /* Tables */
+  .assistant-text.markdown-body :global(table) {
+    border-collapse: collapse;
+    margin: 0.4rem 0;
+    font-size: 0.8rem;
+    width: 100%;
+  }
+
+  .assistant-text.markdown-body :global(th) {
+    background: var(--bg-active);
+    color: var(--text-bright);
+    font-weight: 600;
+    text-align: left;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border);
+  }
+
+  .assistant-text.markdown-body :global(td) {
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border);
+  }
+
+  /* Blockquotes */
+  .assistant-text.markdown-body :global(blockquote) {
+    margin: 0.4rem 0;
+    padding: 0.2rem 0.75rem;
+    border-left: 3px solid var(--accent);
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
+  }
+
+  .assistant-text.markdown-body :global(blockquote p) {
+    margin: 0.2rem 0;
+  }
+
+  /* Horizontal rules */
+  .assistant-text.markdown-body :global(hr) {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0.6rem 0;
   }
 
   /* ── Tool use pills ────────────────────────── */
