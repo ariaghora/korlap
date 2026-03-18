@@ -68,6 +68,23 @@
   let showSearchModal = $state(false);
   let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
 
+  // ── Message queue ──────────────────────────────────────
+  interface QueuedMessage {
+    id: string;
+    prompt: string;        // raw user text (for display in queue UI)
+    fullPrompt: string;    // expanded prompt (with context blocks, image refs)
+    images: PastedImage[];
+    imageDataUrls?: string[];
+    mentions: Mention[];
+    msgMentions?: { type: "file" | "folder"; path: string; displayName: string }[];
+    planMode: boolean;
+    thinkingMode: boolean;
+    actionLabel?: string;
+  }
+  const queueByWorkspace = new SvelteMap<string, QueuedMessage[]>();
+  /** Set to true by Channel `done` event; checked by `agent-status: waiting` to trigger drain. */
+  const pendingDrain = new SvelteMap<string, boolean>();
+
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
     [...workspaces].sort((a, b) => a.created_at - b.created_at),
@@ -92,6 +109,10 @@
         }
         if (event.status === "waiting") {
           setSending(event.workspace_id, false);
+          if (pendingDrain.get(event.workspace_id)) {
+            pendingDrain.delete(event.workspace_id);
+            drainQueue(event.workspace_id);
+          }
         }
       });
 
@@ -276,6 +297,8 @@
     if (creatingWsId === wsId) creatingWsId = null;
     clearWorkspaceData(wsId);
     sendingByWorkspace.delete(wsId);
+    queueByWorkspace.delete(wsId);
+    pendingDrain.delete(wsId);
     prStatusMap.delete(wsId);
     changeCounts.delete(wsId);
     planModeByWorkspace.delete(wsId);
@@ -288,19 +311,21 @@
     });
   }
 
-  async function sendPrompt(wsId: string, prompt: string, actionLabel?: string) {
-    if (sendingByWorkspace.get(wsId)) return;
+  // ── Send pipeline ───────────────────────────────────────
+
+  /** Core send — assumes caller has verified it's safe to send. */
+  async function sendDirect(wsId: string, msg: QueuedMessage) {
     error = "";
     setSending(wsId, true);
 
-    if (actionLabel) {
-      addActionMessage(wsId, crypto.randomUUID(), actionLabel);
+    if (msg.actionLabel) {
+      addActionMessage(wsId, crypto.randomUUID(), msg.actionLabel);
     } else {
-      addUserMessage(wsId, crypto.randomUUID(), prompt);
+      addUserMessage(wsId, crypto.randomUUID(), msg.prompt || "(images attached)", msg.imageDataUrls, msg.msgMentions, msg.planMode || undefined);
     }
 
     try {
-      await sendMessage(wsId, prompt, (event: AgentEvent) => {
+      await sendMessage(wsId, msg.fullPrompt, (event: AgentEvent) => {
         if (event.type === "assistant_message") {
           const toolUses = event.tool_uses.map((t) => ({
             name: t.name,
@@ -324,8 +349,6 @@
           diffRefreshTrigger++;
           refreshChangeCounts(wsId);
           refreshPrStatus(wsId);
-          // Refresh workspace list to pick up any branch renames from MCP.
-          // Merge in-place instead of replacing the array to preserve granular reactivity.
           if (activeRepo) {
             listWorkspaces(activeRepo.id)
               .then((fresh) => {
@@ -338,7 +361,6 @@
                     workspaces.push(fw);
                   }
                 }
-                // Remove stale entries (removed externally), but keep the placeholder
                 for (let i = workspaces.length - 1; i >= 0; i--) {
                   if (!freshIds.has(workspaces[i].id) && workspaces[i].id !== creatingWsId) {
                     workspaces.splice(i, 1);
@@ -347,15 +369,69 @@
               })
               .catch(() => {});
           }
+          pendingDrain.set(wsId, true);
         } else if (event.type === "error") {
           error = event.message;
           setSending(wsId, false);
+          pendingDrain.delete(wsId);
         }
-      });
+      }, msg.planMode, msg.thinkingMode);
     } catch (e) {
       error = String(e);
       setSending(wsId, false);
+      pendingDrain.delete(wsId);
     }
+  }
+
+  /** Shift next queued message and send it. */
+  function drainQueue(wsId: string) {
+    const queue = queueByWorkspace.get(wsId);
+    if (!queue || queue.length === 0) return;
+    const next = queue.shift()!;
+    queueByWorkspace.set(wsId, [...queue]);
+    sendDirect(wsId, next);
+  }
+
+  /** Remove a specific message from the queue. */
+  function removeFromQueue(wsId: string, messageId: string) {
+    const queue = queueByWorkspace.get(wsId);
+    if (!queue) return;
+    queueByWorkspace.set(wsId, queue.filter(q => q.id !== messageId));
+  }
+
+  /** Route a QueuedMessage: send directly, or enqueue if busy. */
+  function routeMessage(wsId: string, msg: QueuedMessage) {
+    if (sendingByWorkspace.get(wsId)) {
+      // Agent busy → enqueue
+      const queue = queueByWorkspace.get(wsId) ?? [];
+      queue.push(msg);
+      queueByWorkspace.set(wsId, [...queue]);
+      return;
+    }
+    if ((queueByWorkspace.get(wsId)?.length ?? 0) > 0) {
+      // Idle but queue exists (e.g. after stop) → enqueue + drain
+      const queue = queueByWorkspace.get(wsId)!;
+      queue.push(msg);
+      queueByWorkspace.set(wsId, [...queue]);
+      drainQueue(wsId);
+      return;
+    }
+    // Idle, no queue → send directly
+    sendDirect(wsId, msg);
+  }
+
+  async function sendPrompt(wsId: string, prompt: string, actionLabel?: string) {
+    const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? repoSettings?.default_thinking ?? false;
+    routeMessage(wsId, {
+      id: crypto.randomUUID(),
+      prompt,
+      fullPrompt: prompt,
+      images: [],
+      mentions: [],
+      planMode: false,
+      thinkingMode,
+      actionLabel,
+    });
   }
 
   async function handleSend(prompt: string, images: PastedImage[] = [], mentions: Mention[] = [], planMode: boolean = false) {
@@ -386,11 +462,9 @@
           const focusAttr = mention.lineNumber ? ` focus_line="${mention.lineNumber}"` : "";
           contextBlocks.push(`<file path="${mention.path}" lines="${lines}"${focusAttr} source="mention">\n${content}\n</file>`);
         } catch {
-          // File unreadable (binary, too large, etc.) — just reference the path
           contextBlocks.push(`<file path="${mention.path}" source="mention">(could not read file — use Read tool to access)</file>`);
         }
       } else if (mention.type === "folder") {
-        // For folders, just mention the path — Claude can explore it
         contextBlocks.push(`<folder path="${mention.path}" />`);
       }
     }
@@ -412,67 +486,36 @@
         : imageInstructions;
     }
 
-    // Add to message store with image paths for display
-    if (sendingByWorkspace.get(wsId)) return;
-    error = "";
-    setSending(wsId, true);
     const dataUrls = images.length > 0 ? images.map((img) => img.dataUrl) : undefined;
     const msgMentions = mentions.length > 0 ? mentions.map((m) => ({ type: m.type, path: m.path, displayName: m.displayName })) : undefined;
-    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls, msgMentions, planMode || undefined);
 
-    try {
-      await sendMessage(wsId, fullPrompt, (event: AgentEvent) => {
-        if (event.type === "assistant_message") {
-          const toolUses = event.tool_uses.map((t) => ({
-            name: t.name,
-            input: t.input_preview ?? "",
-            filePath: t.file_path,
-            oldString: t.old_string,
-            newString: t.new_string,
-          }));
-          addAssistantMessage(
-            wsId,
-            crypto.randomUUID(),
-            event.text.trim(),
-            toolUses,
-          );
-          if (event.tool_uses.length > 0) {
-            diffRefreshTrigger++;
-          }
-        } else if (event.type === "done") {
-          setSending(wsId, false);
-          diffRefreshTrigger++;
-          refreshChangeCounts(wsId);
-          refreshPrStatus(wsId);
-          if (activeRepo) {
-            listWorkspaces(activeRepo.id)
-              .then((fresh) => {
-                const freshIds = new Set(fresh.map((w) => w.id));
-                for (const fw of fresh) {
-                  const idx = workspaces.findIndex((w) => w.id === fw.id);
-                  if (idx >= 0) {
-                    workspaces[idx] = fw;
-                  } else {
-                    workspaces.push(fw);
-                  }
-                }
-                for (let i = workspaces.length - 1; i >= 0; i--) {
-                  if (!freshIds.has(workspaces[i].id) && workspaces[i].id !== creatingWsId) {
-                    workspaces.splice(i, 1);
-                  }
-                }
-              })
-              .catch(() => {});
-          }
-        } else if (event.type === "error") {
-          error = event.message;
-          setSending(wsId, false);
-        }
-      }, planMode, thinkingMode);
-    } catch (e) {
-      error = String(e);
-      setSending(wsId, false);
-    }
+    routeMessage(wsId, {
+      id: crypto.randomUUID(),
+      prompt,
+      fullPrompt,
+      images,
+      imageDataUrls: dataUrls,
+      mentions,
+      msgMentions,
+      planMode,
+      thinkingMode,
+    });
+  }
+
+  /** Send immediately, bypassing the queue. Used for AskUserQuestion answers. */
+  async function handleSendImmediate(prompt: string) {
+    if (!selectedWsId) return;
+    const wsId = selectedWsId;
+    const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? repoSettings?.default_thinking ?? false;
+    sendDirect(wsId, {
+      id: crypto.randomUUID(),
+      prompt,
+      fullPrompt: prompt,
+      images: [],
+      mentions: [],
+      planMode: false,
+      thinkingMode,
+    });
   }
 
   async function handleRename(wsId: string, newName: string) {
@@ -708,8 +751,17 @@
                   creating={ws.id === creatingWsId}
                   planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
                   thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
+                  queue={(queueByWorkspace.get(ws.id) ?? []).map(q => ({
+                    id: q.id,
+                    prompt: q.prompt,
+                    imageCount: q.images.length,
+                    mentionCount: q.mentions.length,
+                    planMode: q.planMode,
+                  }))}
                   onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
+                  onSendImmediate={(prompt) => handleSendImmediate(prompt)}
                   onStop={handleStop}
+                  onRemoveFromQueue={(id) => { if (ws.id) removeFromQueue(ws.id, id); }}
                   onPlanModeChange={(enabled) => planModeByWorkspace.set(ws.id, enabled)}
                   onThinkingModeChange={(enabled) => thinkingModeByWorkspace.set(ws.id, enabled)}
                   onExecutePlan={() => {
