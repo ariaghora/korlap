@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk } from "$lib/stores/messages.svelte";
+  import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
   import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings } from "lucide-svelte";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
@@ -31,9 +31,43 @@
     disabled: boolean;
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[]) => void;
     onStop: () => void;
+    onMentionClick?: (path: string) => void;
   }
 
-  let { workspaceId, creating = false, disabled, onSend, onStop }: Props = $props();
+  let { workspaceId, creating = false, disabled, onSend, onStop, onMentionClick }: Props = $props();
+
+  /** Split text into segments, replacing @displayName with mention references. */
+  type TextSegment = { kind: "text"; value: string } | { kind: "mention"; mention: MessageMention };
+
+  function splitTextWithMentions(text: string, mentions: MessageMention[]): TextSegment[] {
+    if (mentions.length === 0) return [{ kind: "text", value: text }];
+
+    // Build regex matching any @displayName, longest first to avoid partial matches
+    const sorted = [...mentions].sort((a, b) => b.displayName.length - a.displayName.length);
+    const escaped = sorted.map((m) => `@${m.displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+    const regex = new RegExp(`(${escaped.join("|")})`, "g");
+
+    const segments: TextSegment[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ kind: "text", value: text.slice(lastIndex, match.index) });
+      }
+      const displayName = match[0].slice(1); // strip @
+      const mention = mentions.find((m) => m.displayName === displayName);
+      if (mention) {
+        segments.push({ kind: "mention", mention });
+      } else {
+        segments.push({ kind: "text", value: match[0] });
+      }
+      lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      segments.push({ kind: "text", value: text.slice(lastIndex) });
+    }
+    return segments;
+  }
 
   let messages = $derived(messagesByWorkspace.get(workspaceId) ?? []);
   let sending = $derived(sendingByWorkspace.get(workspaceId) ?? false);
@@ -223,7 +257,20 @@
             {/if}
             <div class="user-bubble">
               {#each msg.chunks as chunk}
-                {#if chunk.type === "text"}{chunk.content}{/if}
+                {#if chunk.type === "text"}
+                  {#if msg.mentions && msg.mentions.length > 0}
+                    {#each splitTextWithMentions(chunk.content, msg.mentions) as seg}
+                      {#if seg.kind === "text"}{seg.value}{:else}
+                        <button
+                          class="msg-mention-chip"
+                          onclick={() => onMentionClick?.(seg.mention.path)}
+                        >@{seg.mention.displayName}</button>
+                      {/if}
+                    {/each}
+                  {:else}
+                    {chunk.content}
+                  {/if}
+                {/if}
               {/each}
             </div>
           </div>
@@ -445,6 +492,23 @@
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  .msg-mention-chip {
+    display: inline;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+    border: none;
+    border-radius: 4px;
+    padding: 0.05rem 0.35rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .msg-mention-chip:hover {
+    background: color-mix(in srgb, var(--accent) 25%, transparent);
   }
 
   /* ── Assistant messages ────────────────────── */

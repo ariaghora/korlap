@@ -31,9 +31,10 @@
 
   interface Props {
     workspaceId: string;
+    navigateTo?: string | null;
   }
 
-  let { workspaceId }: Props = $props();
+  let { workspaceId, navigateTo = null }: Props = $props();
 
   // ── Tree state ────────────────────────────────────────
 
@@ -232,6 +233,66 @@
       rootError = String(e);
     } finally {
       rootLoading = false;
+    }
+  }
+
+  // ── Deep-link navigation ────────────────────────────────
+
+  let lastNavigated = $state<string | null>(null);
+
+  $effect(() => {
+    const target = navigateTo;
+    if (!target || target === lastNavigated) return;
+    lastNavigated = target;
+    navigateToPath(target);
+  });
+
+  async function navigateToPath(target: string) {
+    // Split "src/lib/components/Foo.svelte" → ["src", "src/lib", "src/lib/components"]
+    const parts = target.split("/");
+    const dirSegments: string[] = [];
+    for (let i = 0; i < parts.length - 1; i++) {
+      dirSegments.push(parts.slice(0, i + 1).join("/"));
+    }
+
+    // Ensure root entries are loaded before navigating
+    if (rootEntries.length === 0) {
+      try {
+        const entries = await listDirectory(workspaceId, "");
+        rootEntries = entries.map(toNode);
+        rootLoading = false;
+      } catch {
+        return;
+      }
+    }
+
+    // Expand each directory level sequentially (lazy-loaded)
+    let nodes = rootEntries;
+    for (const dirPath of dirSegments) {
+      const node = nodes.find((n) => n.entry.path === dirPath && n.entry.is_dir);
+      if (!node) return; // path not found in tree
+
+      if (node.children === null) {
+        node.loading = true;
+        try {
+          const entries = await listDirectory(workspaceId, dirPath);
+          node.children = entries.map(toNode);
+        } catch {
+          node.children = [];
+          return;
+        } finally {
+          node.loading = false;
+        }
+      }
+
+      expandedPaths.add(dirPath);
+      nodes = node.children;
+    }
+
+    // Select the target file
+    const fileNode = nodes.find((n) => n.entry.path === target && !n.entry.is_dir);
+    if (fileNode && !isBinaryExt(fileNode.entry.name)) {
+      selectFile(target);
     }
   }
 </script>

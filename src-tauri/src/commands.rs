@@ -1334,8 +1334,22 @@ pub fn read_workspace_file(
         return Err("Path escapes worktree boundary".into());
     }
 
-    std::fs::read_to_string(&canonical)
-        .map_err(|e| format!("Failed to read file: {}", e))
+    let content = std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    const MAX_LINES: usize = 100;
+    let total_lines = content.lines().count();
+    let total_bytes = content.len();
+
+    if total_lines > MAX_LINES {
+        let truncated: String = content.lines().take(MAX_LINES).collect::<Vec<_>>().join("\n");
+        Ok(format!(
+            "{}\n\n... truncated ({} of {} lines shown, {} bytes total)",
+            truncated, MAX_LINES, total_lines, total_bytes
+        ))
+    } else {
+        Ok(content)
+    }
 }
 
 // ── PR commands ──────────────────────────────────────────────────────

@@ -60,6 +60,7 @@
   let repoSettings = $state<RepoSettings | null>(null);
   let prStatusMap = new SvelteMap<string, PrStatus>();
   let changeCounts = new SvelteMap<string, { additions: number; deletions: number }>();
+  let fileNavigatePath = $state<string | null>(null);
 
   let selectedWs = $derived(workspaces.find((w) => w.id === selectedWsId));
   let activeWorkspaces = $derived(
@@ -358,10 +359,11 @@
       if (mention.type === "file") {
         try {
           const content = await readWorkspaceFile(wsId, mention.path);
-          contextBlocks.push(`<file path="${mention.path}">\n${content}\n</file>`);
+          const lines = content.split("\n").length;
+          contextBlocks.push(`<file path="${mention.path}" lines="${lines}" source="mention">\n${content}\n</file>`);
         } catch {
           // File unreadable (binary, too large, etc.) — just reference the path
-          contextBlocks.push(`<file path="${mention.path}">(could not read file)</file>`);
+          contextBlocks.push(`<file path="${mention.path}" source="mention">(could not read file — use Read tool to access)</file>`);
         }
       } else if (mention.type === "folder") {
         // For folders, just mention the path — Claude can explore it
@@ -391,7 +393,8 @@
     error = "";
     setSending(wsId, true);
     const dataUrls = images.length > 0 ? images.map((img) => img.dataUrl) : undefined;
-    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls);
+    const msgMentions = mentions.length > 0 ? mentions.map((m) => ({ type: m.type, path: m.path, displayName: m.displayName })) : undefined;
+    addUserMessage(wsId, crypto.randomUUID(), prompt || "(images attached)", dataUrls, msgMentions);
 
     try {
       await sendMessage(wsId, fullPrompt, (event: AgentEvent) => {
@@ -626,7 +629,7 @@
                 <button
                   class="tab"
                   class:active={activeTab === tab}
-                  onclick={() => (activeTab = tab as PanelTab)}
+                  onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") fileNavigatePath = null; }}
                 >
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   {#if tab === "diff" && changeCounts.get(selectedWs.id)}
@@ -680,6 +683,7 @@
                   disabled={ws.status === "archived"}
                   onSend={(prompt, images, mentions) => handleSend(prompt, images, mentions)}
                   onStop={handleStop}
+                  onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
                 />
               </div>
             {/each}
@@ -700,7 +704,7 @@
             <!-- Files: mount on demand like diff -->
             {#if activeTab === "files" && selectedWs}
               <div class="ws-tab-container active-layer">
-                <FileBrowser workspaceId={selectedWs.id} />
+                <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} />
               </div>
             {/if}
 
