@@ -5,6 +5,7 @@
   import { renderMarkdown } from "$lib/markdown";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
   const toolIcons: Record<string, typeof Settings> = {
     Read: FileText,
@@ -117,10 +118,10 @@
   let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Track which edit diffs are collapsed (by "msgId:chunkIdx" key)
-  let collapsedDiffs = $state(new Set<string>());
+  const collapsedDiffs = new SvelteSet<string>();
 
   // Track which tool groups are expanded (collapsed by default)
-  let expandedGroups = $state(new Set<string>());
+  const expandedGroups = new SvelteSet<string>();
 
   function toggleGroup(key: string) {
     if (expandedGroups.has(key)) {
@@ -128,7 +129,6 @@
     } else {
       expandedGroups.add(key);
     }
-    expandedGroups = new Set(expandedGroups);
   }
 
   // Build visual blocks from the messages array, grouping consecutive tool calls
@@ -201,46 +201,105 @@
   let visualBlocks = $derived(buildVisualBlocks(messages));
 
   // AskUserQuestion: multi-select toggles and custom input per question
-  // Keyed by "msgId:chunkIdx:questionIdx"
-  let selectedOptions = $state(new Map<string, Set<string>>());
-  let customInputs = $state(new Map<string, string>());
-  let showCustomInput = $state(new Set<string>());
-  let answeredQuestions = $state(new Set<string>());
+  // qKey = "msgId:chunkIdx:questionIdx" — identifies a single question
+  // batchKey = "msgId:chunkIdx" — identifies the entire AskUserQuestion tool call
+  const selectedOptions = new SvelteMap<string, SvelteSet<string>>();
+  const customInputs = new SvelteMap<string, string>();
+  const showCustomInput = new SvelteSet<string>();
+  // Stores each question's answer within a batch: batchKey → Map<questionIdx, answerText>
+  const batchAnswers = new SvelteMap<string, SvelteMap<number, string>>();
+  // Tracks which batches have been fully submitted
+  const submittedBatches = new SvelteSet<string>();
+
+  function batchKeyOf(qKey: string): string {
+    const lastColon = qKey.lastIndexOf(":");
+    return qKey.substring(0, lastColon);
+  }
+
+  function questionIdxOf(qKey: string): number {
+    const lastColon = qKey.lastIndexOf(":");
+    return parseInt(qKey.substring(lastColon + 1), 10);
+  }
+
+  /** Store an answer for one question in the batch. If single-question batch, submit immediately. */
+  function recordAnswer(qKey: string, answer: string, totalInBatch: number) {
+    const bKey = batchKeyOf(qKey);
+    const qi = questionIdxOf(qKey);
+    let answers = batchAnswers.get(bKey);
+    if (!answers) {
+      answers = new SvelteMap<number, string>();
+      batchAnswers.set(bKey, answers);
+    }
+    answers.set(qi, answer);
+
+    // Single-question batch: submit immediately
+    if (totalInBatch === 1) {
+      submitBatch(bKey, totalInBatch);
+    }
+  }
+
+  /** Format all answers in the batch and send as one message. */
+  function submitBatch(batchKey: string, totalInBatch: number) {
+    const answers = batchAnswers.get(batchKey);
+    if (!answers || answers.size < totalInBatch) return;
+
+    submittedBatches.add(batchKey);
+
+    if (totalInBatch === 1) {
+      onSend(answers.get(0)!, [], [], false);
+    } else {
+      const parts: string[] = [];
+      for (let i = 0; i < totalInBatch; i++) {
+        parts.push(`${i + 1}. ${answers.get(i) ?? "(no answer)"}`);
+      }
+      onSend(parts.join("\n"), [], [], false);
+    }
+  }
+
+  /** Re-open a submitted batch for editing. Clears all answers so user re-selects. */
+  function unsubmitBatch(batchKey: string) {
+    submittedBatches.delete(batchKey);
+    batchAnswers.delete(batchKey);
+    // Clear per-question state for this batch
+    for (const key of [...selectedOptions.keys()]) {
+      if (key.startsWith(batchKey + ":")) {
+        selectedOptions.delete(key);
+        customInputs.delete(key);
+        showCustomInput.delete(key);
+      }
+    }
+  }
 
   function toggleOption(key: string, label: string) {
-    const current = selectedOptions.get(key) ?? new Set();
+    let current = selectedOptions.get(key);
+    if (!current) {
+      current = new SvelteSet<string>();
+      selectedOptions.set(key, current);
+    }
     if (current.has(label)) {
       current.delete(label);
     } else {
       current.add(label);
     }
-    selectedOptions.set(key, current);
-    selectedOptions = new Map(selectedOptions);
   }
 
-  function submitMultiSelect(key: string) {
+  function submitMultiSelect(key: string, totalInBatch: number) {
     const selected = selectedOptions.get(key);
     if (!selected || selected.size === 0) return;
     const custom = customInputs.get(key)?.trim();
     const parts = [...selected];
     if (custom) parts.push(custom);
-    answeredQuestions.add(key);
-    answeredQuestions = new Set(answeredQuestions);
-    onSend(parts.join(", "), [], [], false);
+    recordAnswer(key, parts.join(", "), totalInBatch);
   }
 
-  function submitCustomInput(key: string) {
+  function submitCustomInput(key: string, totalInBatch: number) {
     const text = customInputs.get(key)?.trim();
     if (!text) return;
-    answeredQuestions.add(key);
-    answeredQuestions = new Set(answeredQuestions);
-    onSend(text, [], [], false);
+    recordAnswer(key, text, totalInBatch);
   }
 
-  function submitOption(key: string, label: string) {
-    answeredQuestions.add(key);
-    answeredQuestions = new Set(answeredQuestions);
-    onSend(label, [], [], false);
+  function submitOption(key: string, label: string, totalInBatch: number) {
+    recordAnswer(key, label, totalInBatch);
   }
 
   // Tracks the message count when user clicked Revise — hides plan actions until new messages arrive
@@ -518,63 +577,95 @@
         {:else if block.kind === "special-tool" && block.chunk.name === "AskUserQuestion"}
           {@const chunk = block.chunk}
           {@const parsed = (() => { try { return JSON.parse(chunk.input); } catch { return null; } })()}
+          {@const bKey = `${block.msgId}:${block.ci}`}
+          {@const totalQ = parsed && Array.isArray(parsed) ? parsed.length : 0}
+          {@const batchSubmitted = submittedBatches.has(bKey)}
+          {@const bAnswers = batchAnswers.get(bKey)}
+          {@const answeredInBatch = bAnswers?.size ?? 0}
           <div class="assistant-msg">
             {#if parsed && Array.isArray(parsed)}
-              {#each parsed as q, qi}
-                {@const qKey = `${block.msgId}:${block.ci}:${qi}`}
-                {@const isMulti = q.multiSelect === true}
-                {@const answered = answeredQuestions.has(qKey)}
-                {@const disabled = sending || answered}
-                {@const selected = selectedOptions.get(qKey) ?? new Set()}
-                {@const customText = customInputs.get(qKey) ?? ""}
-                {@const showCustom = showCustomInput.has(qKey)}
-                <div class="question-card" class:answered>
+              {#if batchSubmitted}
+                <!-- Collapsed summary after submission -->
+                <div class="question-card answered">
                   <div class="question-header">
                     <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
-                    <span class="question-label">{q.header || "Question"}</span>
-                    {#if isMulti}
-                      <span class="question-multi-badge">Multi-select</span>
-                    {/if}
+                    <span class="question-label">{totalQ === 1 ? (parsed[0].header || "Question") : `${totalQ} questions`}</span>
+                    <button
+                      type="button"
+                      class="question-change-btn"
+                      disabled={sending}
+                      onclick={() => unsubmitBatch(bKey)}
+                    >Change</button>
                   </div>
-                  {#if q.question}
-                    <div class="question-text">{q.question}</div>
-                  {/if}
-                  {#if q.options && q.options.length > 0}
-                    <div class="question-options">
-                      {#each q.options as opt}
-                        {#if isMulti}
-                          <button
-                            type="button"
-                            class="question-option"
-                            class:selected={selected.has(opt.label)}
-                            disabled={disabled}
-                            onclick={() => toggleOption(qKey, opt.label)}
-                          >
-                            <span class="option-check">{selected.has(opt.label) ? "◉" : "○"}</span>
-                            <span class="option-content">
-                              <span class="option-label">{opt.label}</span>
-                              {#if opt.description}
-                                <span class="option-desc">{opt.description}</span>
-                              {/if}
-                            </span>
-                          </button>
-                        {:else}
-                          <button
-                            type="button"
-                            class="question-option"
-                            disabled={disabled}
-                            onclick={() => submitOption(qKey, opt.label)}
-                          >
-                            <span class="option-content">
-                              <span class="option-label">{opt.label}</span>
-                              {#if opt.description}
-                                <span class="option-desc">{opt.description}</span>
-                              {/if}
-                            </span>
-                          </button>
-                        {/if}
-                      {/each}
-                      {#if !answered}
+                  <div class="question-answers-summary">
+                    {#each parsed as q, qi}
+                      <div class="answer-summary-row">
+                        <span class="answer-summary-label">{q.header || q.question || `Q${qi + 1}`}</span>
+                        <span class="question-answer-pill">{bAnswers?.get(qi)}</span>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {:else}
+                <!-- Expanded: individual question cards -->
+                {#each parsed as q, qi}
+                  {@const qKey = `${block.msgId}:${block.ci}:${qi}`}
+                  {@const isMulti = q.multiSelect === true}
+                  {@const answerText = bAnswers?.get(qi)}
+                  {@const hasAnswer = answerText != null}
+                  {@const selected = selectedOptions.get(qKey) ?? new SvelteSet()}
+                  {@const customText = customInputs.get(qKey) ?? ""}
+                  {@const showCustom = showCustomInput.has(qKey)}
+                  <div class="question-card">
+                    <div class="question-header">
+                      <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
+                      <span class="question-label">{q.header || "Question"}</span>
+                      {#if isMulti}
+                        <span class="question-multi-badge">Multi-select</span>
+                      {/if}
+                      {#if hasAnswer}
+                        <span class="question-answer-pill">{answerText}</span>
+                      {/if}
+                    </div>
+                    {#if q.question}
+                      <div class="question-text">{q.question}</div>
+                    {/if}
+                    {#if q.options && q.options.length > 0}
+                      <div class="question-options">
+                        {#each q.options as opt}
+                          {#if isMulti}
+                            <button
+                              type="button"
+                              class="question-option"
+                              class:selected={selected.has(opt.label)}
+                              disabled={sending}
+                              onclick={() => toggleOption(qKey, opt.label)}
+                            >
+                              <span class="option-check">{selected.has(opt.label) ? "◉" : "○"}</span>
+                              <span class="option-content">
+                                <span class="option-label">{opt.label}</span>
+                                {#if opt.description}
+                                  <span class="option-desc">{opt.description}</span>
+                                {/if}
+                              </span>
+                            </button>
+                          {:else}
+                            <button
+                              type="button"
+                              class="question-option"
+                              class:selected-answer={hasAnswer && answerText === opt.label}
+                              disabled={sending}
+                              onclick={() => submitOption(qKey, opt.label, totalQ)}
+                            >
+                              <span class="option-content">
+                                <span class="option-label">{opt.label}</span>
+                                {#if opt.description}
+                                  <span class="option-desc">{opt.description}</span>
+                                {/if}
+                              </span>
+                            </button>
+                          {/if}
+                        {/each}
                         {#if showCustom}
                           <div class="custom-input-row">
                             <input
@@ -583,14 +674,14 @@
                               placeholder="Type your answer…"
                               value={customText}
                               disabled={sending}
-                              oninput={(e) => { customInputs.set(qKey, (e.target as HTMLInputElement).value); customInputs = new Map(customInputs); }}
-                              onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); isMulti ? submitMultiSelect(qKey) : submitCustomInput(qKey); } }}
+                              oninput={(e) => customInputs.set(qKey, (e.target as HTMLInputElement).value)}
+                              onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); isMulti ? submitMultiSelect(qKey, totalQ) : submitCustomInput(qKey, totalQ); } }}
                             />
                             <button
                               type="button"
                               class="custom-submit-btn"
                               disabled={sending || (!customText.trim() && (!isMulti || selected.size === 0))}
-                              onclick={() => isMulti ? submitMultiSelect(qKey) : submitCustomInput(qKey)}
+                              onclick={() => isMulti ? submitMultiSelect(qKey, totalQ) : submitCustomInput(qKey, totalQ)}
                             >
                               <ArrowUp size={14} strokeWidth={2.5} />
                             </button>
@@ -599,8 +690,8 @@
                           <button
                             type="button"
                             class="question-option other-option"
-                            disabled={disabled}
-                            onclick={() => { showCustomInput.add(qKey); showCustomInput = new Set(showCustomInput); }}
+                            disabled={sending}
+                            onclick={() => showCustomInput.add(qKey)}
                           >
                             <span class="option-content">
                               <span class="option-label">Other</span>
@@ -608,21 +699,36 @@
                             </span>
                           </button>
                         {/if}
-                      {/if}
-                      {#if isMulti && selected.size > 0 && !answered}
-                        <button
-                          type="button"
-                          class="multi-submit-btn"
-                          disabled={sending}
-                          onclick={() => submitMultiSelect(qKey)}
-                        >
-                          Submit ({selected.size} selected)
-                        </button>
-                      {/if}
-                    </div>
-                  {/if}
-                </div>
-              {/each}
+                        {#if isMulti && selected.size > 0}
+                          <button
+                            type="button"
+                            class="multi-submit-btn"
+                            disabled={sending}
+                            onclick={() => submitMultiSelect(qKey, totalQ)}
+                          >
+                            Submit ({selected.size} selected)
+                          </button>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+                {#if totalQ > 1 && answeredInBatch >= totalQ}
+                  <button
+                    type="button"
+                    class="batch-submit-btn"
+                    disabled={sending}
+                    onclick={() => submitBatch(bKey, totalQ)}
+                  >
+                    <ArrowUp size={14} strokeWidth={2.5} />
+                    Submit all {totalQ} answers
+                  </button>
+                {:else if totalQ > 1 && answeredInBatch > 0}
+                  <div class="batch-progress">
+                    {answeredInBatch} of {totalQ} questions answered
+                  </div>
+                {/if}
+              {/if}
             {:else}
               <div class="question-card">
                 <div class="question-header">
@@ -645,7 +751,6 @@
                 } else {
                   collapsedDiffs.add(diffKey);
                 }
-                collapsedDiffs = new Set(collapsedDiffs);
               }}>
                 <span class="edit-diff-chevron" class:collapsed={isCollapsed}>▾</span>
                 <span class="edit-diff-icon"><Pencil size={13} strokeWidth={2} /></span>
@@ -1268,7 +1373,8 @@
   }
 
   .question-card.answered {
-    opacity: 0.6;
+    opacity: 0.65;
+    border-color: color-mix(in srgb, var(--accent) 15%, transparent);
   }
 
   .question-header {
@@ -1448,6 +1554,114 @@
   .multi-submit-btn:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  /* ── Selected single-select answer highlight ──── */
+  .question-option.selected-answer {
+    background: color-mix(in srgb, var(--accent) 15%, var(--bg-base));
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+
+  /* ── Answer pill shown in header after answering ──── */
+  .question-answer-pill {
+    margin-left: auto;
+    font-size: 0.68rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-bright);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    padding: 0.12rem 0.5rem;
+    border-radius: 8px;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Batch submit button (multi-question) ──── */
+  .batch-submit-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    margin-top: 0.3rem;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+    border-radius: 8px;
+    color: var(--accent);
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .batch-submit-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 25%, transparent);
+    border-color: var(--accent);
+  }
+
+  .batch-submit-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  /* ── Collapsed answer summary (after submission) ──── */
+  .question-answers-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.35rem 0.75rem 0.45rem;
+  }
+
+  .answer-summary-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+  }
+
+  .answer-summary-label {
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  /* ── Change button in collapsed header ──── */
+  .question-change-btn {
+    margin-left: auto;
+    background: none;
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.65rem;
+    font-weight: 500;
+    padding: 0.1rem 0.45rem;
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: 0;
+    transition: all 0.15s ease;
+  }
+
+  .question-change-btn:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+
+  .question-change-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  /* ── Batch progress indicator ──── */
+  .batch-progress {
+    text-align: center;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    padding: 0.4rem 0 0.1rem;
   }
 
   /* ── Thinking indicator (while streaming) ──── */
