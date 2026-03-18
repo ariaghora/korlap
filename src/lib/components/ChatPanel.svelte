@@ -232,7 +232,7 @@
                     <span class="tool-icon">
                       <ToolIcon size={13} strokeWidth={2} />
                     </span>
-                    {#if chunk.input}{chunk.input}{/if}
+                    {chunk.input || chunk.name}
                   </span>
                 </div>
               {/if}
