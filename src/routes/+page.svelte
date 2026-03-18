@@ -51,16 +51,32 @@
 
   const DEFAULT_REVIEW_PROMPT = `## Code Review Instructions
 
+**IMPORTANT — Output format:** Do not narrate your process, do not describe what you're about to do, and do not print intermediate status updates. Your only output should be the final list of validated issues (step 8). If no issues were found, output only: "No issues found."
+
+**Getting the workspace diff:** All diff commands below use the merge-base to capture every change on this branch (committed and uncommitted) relative to the target:
+
+\`\`\`bash
+MERGE_BASE=$(git merge-base origin/{{base_branch}} HEAD)
+# File list
+git diff $MERGE_BASE --name-only
+# Full diff
+git diff $MERGE_BASE
+\`\`\`
+
+Do NOT separate committed vs uncommitted changes — review them as a single unified diff.
+
+---
+
 1. Launch a haiku agent to return a list of file paths (not their contents) for all relevant CLAUDE.md files including:
 
     - The root CLAUDE.md file, if it exists
-    - Any CLAUDE.md files in directories containing files modified by the workspace diff (use \`git diff origin/{{base_branch}}...HEAD --name-only\`)
+    - Any CLAUDE.md files in directories containing files modified by the workspace diff (use the \`git diff $MERGE_BASE --name-only\` command above)
 
 2. If this workspace has an associated PR, read the title and description (but not the changes). This will be helpful context.
 
-3. In parallel with step 2, launch a sonnet agent to view the changes, using \`git diff origin/{{base_branch}}...HEAD\`, and return a summary of the changes
+3. In parallel with step 2, launch a sonnet agent to view the workspace diff and return a summary of the changes.
 
-4. Launch 4 agents in parallel to independently review the changes using \`git diff origin/{{base_branch}}...HEAD\`. Each agent should return the list of issues, where each issue includes a description and the reason it was flagged (e.g. "CLAUDE.md adherence", "bug"). The agents should do the following:
+4. Launch 4 agents in parallel to independently review the workspace diff. Each agent should return the list of issues, where each issue includes a description and the reason it was flagged (e.g. "CLAUDE.md adherence", "bug"). The agents should do the following:
 
     Agents 1 + 2: CLAUDE.md or AGENTS.md compliance sonnet agents
     Audit changes for CLAUDE.md or AGENTS.md compliance in parallel. Note: When evaluating CLAUDE.md or AGENTS.md compliance for a file, you should only consider CLAUDE.md or AGENTS.md files that share a file path with the file or parents.
@@ -131,20 +147,7 @@ If you don't have subagents, perform all the steps above yourself sequentially i
 
 ## Fallback: if you don't have access to the workspace diff tool
 
-If you don't have access to a workspace diff tool, use the following git commands to get the diff:
-
-\`\`\`bash
-# Get the merge base between this branch and the target
-MERGE_BASE=$(git merge-base origin/{{base_branch}} HEAD)
-
-# Get the committed diff against the merge base
-git diff $MERGE_BASE HEAD
-
-# Get any uncommitted changes (staged and unstaged)
-git diff HEAD
-\`\`\`
-
-Review the combination of both outputs: the first shows all committed changes on this branch relative to the target, and the second shows any uncommitted work in progress.
+If you don't have access to a workspace diff tool, use the git commands from the top of this prompt to get the workspace diff.
 
 No need to mention in your report whether or not you used one of the fallback strategies; it's usually irrelevant.`;
 
@@ -965,8 +968,7 @@ No need to mention in your report whether or not you used one of the fallback st
                     }}
                     onSendToChat={(markdown) => {
                       reviewByWorkspace.delete(ws.id);
-                      addActionMessage(ws.id, crypto.randomUUID(), "Addressing review");
-                      sendPrompt(ws.id, `Address all issues from this code review:\n\n${markdown}`).catch((e) => { error = String(e); });
+                      sendPrompt(ws.id, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { error = String(e); });
                       activeTab = "chat";
                     }}
                   />
