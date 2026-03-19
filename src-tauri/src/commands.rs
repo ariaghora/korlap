@@ -399,6 +399,21 @@ fn parse_stream_line(
                             (None, None)
                         };
 
+                        // ExitPlanMode carries the full plan in input.plan —
+                        // extract it as a text block so the plan renders in the chat.
+                        if name == "ExitPlanMode" {
+                            if let Some(plan) = block
+                                .get("input")
+                                .and_then(|input| input.get("plan"))
+                                .and_then(|p| p.as_str())
+                            {
+                                let plan = plan.trim();
+                                if !plan.is_empty() {
+                                    text_parts.push(plan.to_string());
+                                }
+                            }
+                        }
+
                         tool_uses.push(ToolUseInfo {
                             name,
                             input_preview,
