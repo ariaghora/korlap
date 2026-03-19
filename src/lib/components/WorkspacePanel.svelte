@@ -131,7 +131,12 @@
         {:else if prStatus?.state === "merged"}
           <span class="status-label merged"><Check size={10} class="status-icon" /> Done</span>
         {:else if wsChanges && (wsChanges.additions > 0 || wsChanges.deletions > 0)}
-          <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
+          <div class="action-group">
+            <button class="action-badge review" onclick={onReview} disabled={isBusy}>
+              <Eye size={11} /> Review
+            </button>
+            <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
+          </div>
         {/if}
       </div>
     </div>
