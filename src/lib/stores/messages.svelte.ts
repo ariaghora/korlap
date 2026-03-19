@@ -23,6 +23,7 @@ export interface Message {
   imageDataUrls?: string[]; // data URLs for attached image thumbnails (user messages only)
   mentions?: MessageMention[]; // @-mentioned files/folders (user messages only)
   planMode?: boolean; // true if this message was sent in plan mode
+  hidden?: boolean; // true to hide from chat display (e.g. auto-sent TODO prompts)
 }
 
 // ── State ──────────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ export function addUserMessage(
   imageDataUrls?: string[],
   mentions?: MessageMention[],
   planMode?: boolean,
+  hidden?: boolean,
 ) {
   pushMessage(workspaceId, {
     id,
@@ -80,6 +82,7 @@ export function addUserMessage(
     imageDataUrls: imageDataUrls && imageDataUrls.length > 0 ? imageDataUrls : undefined,
     mentions: mentions && mentions.length > 0 ? mentions : undefined,
     planMode: planMode || undefined,
+    hidden: hidden || undefined,
   });
   persistMessages(workspaceId);
 }

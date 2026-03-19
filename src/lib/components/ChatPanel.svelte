@@ -184,6 +184,8 @@
     }
 
     for (const msg of msgs) {
+      if (msg.hidden) continue;
+
       if (msg.role === "user" || msg.role === "action") {
         flushTools();
         blocks.push({
