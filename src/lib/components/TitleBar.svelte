@@ -17,14 +17,15 @@
     onPrAction: () => void;
     onReview: () => void;
     reviewRunning: boolean;
+    operationInProgress: boolean;
     highlightedRepoIndex: number;
     onDropdownClose?: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning, highlightedRepoIndex, onDropdownClose }: Props =
+  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning, operationInProgress, highlightedRepoIndex, onDropdownClose }: Props =
     $props();
 
-  let isBusy = $derived(selectedWs?.status === "running" || reviewRunning);
+  let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
 
   let dropdownRef: Dropdown | undefined = $state();
 
@@ -140,17 +141,17 @@
           {:else if prStatus.checks === "pending"}
             <span class="status-label checks-pending"><Loader size={10} class="status-icon spinning" /> Checks pending</span>
           {:else if (prStatus.ahead_by ?? 0) > 0}
-            <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}><ArrowUp size={11} /> Push</button>
+            <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Push</button>
           {:else if wsChanges && (wsChanges.additions !== prStatus.additions || wsChanges.deletions !== prStatus.deletions)}
-            <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}><ArrowUp size={11} /> Commit & push</button>
+            <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Commit & push</button>
           {:else}
-            <button class="action-badge mergeable" onclick={onPrAction} disabled={isBusy}><GitMerge size={11} /> Merge</button>
+            <button class="action-badge mergeable" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitMerge size={11} />{/if} Merge</button>
           {/if}
         </div>
       {:else if prStatus?.state === "merged"}
         <span class="status-label merged"><Check size={10} class="status-icon" /> Done</span>
       {:else if wsChanges && (wsChanges.additions > 0 || wsChanges.deletions > 0)}
-        <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}><GitPullRequestCreate size={11} /> Push & create PR</button>
+        <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
       {/if}
     {/if}
   </div>

@@ -155,6 +155,58 @@ fn inject_shell_env(cmd: &mut std::process::Command) {
     }
 }
 
+/// Resolve the GH token for a given profile via `gh auth token`.
+/// Returns None if no profile is set or the token cannot be obtained.
+fn resolve_gh_token(profile: &Option<String>) -> Option<String> {
+    let profile = profile.as_ref()?;
+    let mut cmd = std::process::Command::new("gh");
+    cmd.args(["auth", "token", "--user", profile]);
+    inject_shell_env(&mut cmd);
+    cmd.output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// Build a `git` Command with HTTPS URL rewriting for GH token auth.
+fn git_cmd_with_auth(
+    worktree_path: &std::path::Path,
+    gh_token: &Option<String>,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    if let Some(ref token) = gh_token {
+        cmd.args([
+            "-c",
+            &format!(
+                "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
+                token
+            ),
+            "-c",
+            &format!(
+                "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
+                token
+            ),
+        ]);
+    }
+    cmd.current_dir(worktree_path);
+    inject_shell_env(&mut cmd);
+    cmd
+}
+
+/// Build a `gh` Command with GH_TOKEN env injected.
+fn gh_cmd_with_auth(
+    worktree_path: &std::path::Path,
+    gh_token: &Option<String>,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new("gh");
+    cmd.current_dir(worktree_path);
+    inject_shell_env(&mut cmd);
+    if let Some(ref token) = gh_token {
+        cmd.env("GH_TOKEN", token);
+    }
+    cmd
+}
+
 // ── Random workspace names ───────────────────────────────────────────
 
 const ADJECTIVES: &[&str] = &[
@@ -1232,6 +1284,258 @@ pub async fn get_diff(
 
         Ok(diff_text)
     }).await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+// ── Direct git/gh commands ───────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct CommitResult {
+    pub hash: String,
+    pub message: String,
+}
+
+#[tauri::command]
+pub async fn git_commit(
+    workspace_id: String,
+    message: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<CommitResult, String> {
+    if message.trim().is_empty() {
+        return Err("Commit message cannot be empty".into());
+    }
+
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    let msg = message.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Stage all changes
+        let add_output = std::process::Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to run git add: {}", e))?;
+        if !add_output.status.success() {
+            let stderr = String::from_utf8_lossy(&add_output.stderr);
+            return Err(format!("git add failed: {}", stderr.trim()));
+        }
+
+        // Check if there's anything to commit
+        let diff_check = std::process::Command::new("git")
+            .args(["diff", "--cached", "--quiet"])
+            .current_dir(&worktree_path)
+            .status()
+            .map_err(|e| format!("Failed to check staged changes: {}", e))?;
+        if diff_check.success() {
+            return Err("Nothing to commit — working tree is clean".into());
+        }
+
+        // Commit
+        let commit_output = std::process::Command::new("git")
+            .args(["commit", "-m", &msg])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to run git commit: {}", e))?;
+        if !commit_output.status.success() {
+            let stderr = String::from_utf8_lossy(&commit_output.stderr);
+            return Err(format!("git commit failed: {}", stderr.trim()));
+        }
+
+        // Get the short hash of the new commit
+        let hash_output = std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to get commit hash: {}", e))?;
+        let hash = String::from_utf8_lossy(&hash_output.stdout).trim().to_string();
+
+        Ok(CommitResult { hash, message: msg })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn git_push(
+    workspace_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let (worktree_path, branch, gh_profile) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        (ws.worktree_path.clone(), ws.branch.clone(), repo.gh_profile.clone())
+    };
+
+    let gh_token = resolve_gh_token(&gh_profile);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = git_cmd_with_auth(&worktree_path, &gh_token);
+        cmd.args(["push", "-u", "origin", &branch]);
+
+        let output = cmd.output().map_err(|e| format!("Failed to run git push: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git push failed: {}", stderr.trim()));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn gh_pr_merge(
+    workspace_id: String,
+    pr_number: i64,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let (worktree_path, gh_profile) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        (ws.worktree_path.clone(), repo.gh_profile.clone())
+    };
+
+    let gh_token = resolve_gh_token(&gh_profile);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = gh_cmd_with_auth(&worktree_path, &gh_token);
+        cmd.args(["pr", "merge", &pr_number.to_string(), "--squash", "--delete-branch=false"]);
+
+        let output = cmd.output().map_err(|e| format!("Failed to run gh pr merge: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("gh pr merge failed: {}", stderr.trim()));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn generate_commit_message(
+    workspace_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let (worktree_path, base_branch) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        (ws.worktree_path.clone(), base)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // Stage everything first
+        let _ = std::process::Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(&worktree_path)
+            .output();
+
+        // Get staged diff
+        let diff_output = std::process::Command::new("git")
+            .args(["diff", "--cached"])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to get diff: {}", e))?;
+
+        let mut diff = String::from_utf8_lossy(&diff_output.stdout).to_string();
+
+        // If diff is too large, fall back to stat summary
+        if diff.len() > 50_000 {
+            let stat_output = std::process::Command::new("git")
+                .args(["diff", "--cached", "--stat"])
+                .current_dir(&worktree_path)
+                .output()
+                .map_err(|e| format!("Failed to get diff stat: {}", e))?;
+            diff = format!(
+                "[Diff too large for full context. Summary:]\n{}",
+                String::from_utf8_lossy(&stat_output.stdout)
+            );
+        }
+
+        // Also get the log of commits vs base for context
+        let log_output = std::process::Command::new("git")
+            .args(["log", "--oneline", &format!("origin/{}..HEAD", base_branch)])
+            .current_dir(&worktree_path)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        let prompt = if log_output.is_empty() {
+            format!(
+                "Write a conventional commit message for this diff. First line under 72 chars. \
+                 Use conventional commit format (feat:, fix:, chore:, etc). \
+                 Output ONLY the commit message, nothing else.\n\n{}",
+                diff
+            )
+        } else {
+            format!(
+                "Write a conventional commit message for the latest staged changes. \
+                 First line under 72 chars. Use conventional commit format (feat:, fix:, chore:, etc). \
+                 Output ONLY the commit message, nothing else.\n\n\
+                 Previous commits on this branch:\n{}\n\nStaged diff:\n{}",
+                log_output, diff
+            )
+        };
+
+        // Spawn claude CLI for one-shot message generation
+        let claude_bin = get_shell_env()
+            .claude_path
+            .as_deref()
+            .unwrap_or("claude");
+
+        let mut cmd = std::process::Command::new(claude_bin);
+        cmd.arg("-p").arg(&prompt);
+        cmd.args(["--output-format", "text"]);
+        cmd.current_dir(&worktree_path);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+        inject_shell_env(&mut cmd);
+
+        let child = cmd.spawn().map_err(|e| format!("Failed to spawn claude: {}", e))?;
+
+        // Wait with 30s timeout
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let output = child.wait_with_output();
+            let _ = tx.send(output);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(Ok(output)) if output.status.success() => {
+                let msg = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if msg.is_empty() {
+                    Ok("chore: update files".to_string())
+                } else {
+                    Ok(msg)
+                }
+            }
+            Ok(Ok(output)) => {
+                tracing::warn!("claude exited with non-zero for commit message generation");
+                Ok("chore: update files".to_string())
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("claude failed for commit message: {}", e);
+                Ok("chore: update files".to_string())
+            }
+            Err(_) => {
+                tracing::warn!("claude timed out generating commit message");
+                // Kill the timed-out process
+                drop(handle);
+                Ok("chore: update files".to_string())
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 // ── File search commands ─────────────────────────────────────────────

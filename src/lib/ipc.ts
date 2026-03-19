@@ -243,6 +243,37 @@ export async function getDiff(
   return invoke<string>("get_diff", { workspaceId, filePath });
 }
 
+// ── Direct Git/GH Operations ────────────────────────────────────────
+
+export interface CommitResult {
+  hash: string;
+  message: string;
+}
+
+export async function gitCommit(
+  workspaceId: string,
+  message: string,
+): Promise<CommitResult> {
+  return invoke<CommitResult>("git_commit", { workspaceId, message });
+}
+
+export async function gitPush(workspaceId: string): Promise<void> {
+  return invoke("git_push", { workspaceId });
+}
+
+export async function ghPrMerge(
+  workspaceId: string,
+  prNumber: number,
+): Promise<void> {
+  return invoke("gh_pr_merge", { workspaceId, prNumber });
+}
+
+export async function generateCommitMessage(
+  workspaceId: string,
+): Promise<string> {
+  return invoke<string>("generate_commit_message", { workspaceId });
+}
+
 // ── Terminal ─────────────────────────────────────────────────────────
 
 export async function openTerminal(
