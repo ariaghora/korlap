@@ -1,6 +1,6 @@
 <script lang="ts">
   import { renderMarkdown } from "$lib/markdown";
-  import { Loader2, X } from "lucide-svelte";
+  import { CircleCheck, CircleX, Loader2, X } from "lucide-svelte";
 
   export interface ReviewState {
     status: "running" | "complete";
@@ -16,15 +16,36 @@
 
   let { state, onCancel, onSendToChat }: Props = $props();
 
+  // Classify the result: "clean" (no issues), "failed", or "issues"
+  let resultKind = $derived.by(() => {
+    if (state.status !== "complete") return null;
+    const text = state.resultMarkdown.trim().toLowerCase();
+    if (text.startsWith("**review failed:**")) return "failed" as const;
+    if (text === "no issues found." || text === "no issues found") return "clean" as const;
+    return "issues" as const;
+  });
+
   let renderedHtml = $derived(
-    state.status === "complete" && state.resultMarkdown
+    state.status === "complete" && resultKind === "issues"
       ? renderMarkdown(state.resultMarkdown)
+      : ""
+  );
+
+  let failedMessage = $derived(
+    resultKind === "failed"
+      ? state.resultMarkdown.replace(/^\*\*Review failed:\*\*\s*/i, "").trim()
       : ""
   );
 </script>
 
-<div class="review-pill" class:complete={state.status === "complete"}>
+<div
+  class="review-pill"
+  class:complete={state.status === "complete" && resultKind === "issues"}
+  class:clean={resultKind === "clean"}
+  class:failed={resultKind === "failed"}
+>
   {#if state.status === "running"}
+    <!-- Running: compact pill with spinner -->
     <div class="pill-running">
       <Loader2 size={13} class="spinner" />
       <span class="task-text">{state.currentTask}</span>
@@ -32,9 +53,28 @@
         <X size={12} />
       </button>
     </div>
+  {:else if resultKind === "clean"}
+    <!-- No issues: compact success pill -->
+    <div class="pill-clean">
+      <CircleCheck size={14} class="check-icon" />
+      <span class="clean-text">No issues found</span>
+      <button class="pill-btn dismiss" onclick={onCancel} title="Dismiss">
+        <X size={12} />
+      </button>
+    </div>
+  {:else if resultKind === "failed"}
+    <!-- Failed: compact error pill -->
+    <div class="pill-failed">
+      <CircleX size={14} class="error-icon" />
+      <span class="failed-text">{failedMessage}</span>
+      <button class="pill-btn dismiss" onclick={onCancel} title="Dismiss">
+        <X size={12} />
+      </button>
+    </div>
   {:else}
+    <!-- Issues found: full card -->
     <div class="pill-header">
-      <span class="pill-title">Code Review</span>
+      <span class="pill-title">Review</span>
       <button class="pill-btn dismiss" onclick={onCancel} title="Dismiss">
         <X size={12} />
       </button>
@@ -65,14 +105,6 @@
     min-width: 200px;
   }
 
-  .review-pill.complete {
-    border-radius: 12px;
-    padding: 0;
-    max-height: 60vh;
-    display: flex;
-    flex-direction: column;
-  }
-
   /* ── Running state ─────────────────────────── */
 
   .pill-running {
@@ -101,7 +133,66 @@
     min-width: 0;
   }
 
-  /* ── Complete state ────────────────────────── */
+  /* ── Clean (no issues) ─────────────────────── */
+
+  .review-pill.clean {
+    border-color: color-mix(in srgb, #7e9e6b 40%, transparent);
+  }
+
+  .pill-clean {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .pill-clean :global(.check-icon) {
+    color: #7e9e6b;
+    flex-shrink: 0;
+  }
+
+  .clean-text {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #7e9e6b;
+    flex: 1;
+  }
+
+  /* ── Failed ────────────────────────────────── */
+
+  .review-pill.failed {
+    border-color: color-mix(in srgb, #b5564e 40%, transparent);
+  }
+
+  .pill-failed {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .pill-failed :global(.error-icon) {
+    color: #b5564e;
+    flex-shrink: 0;
+  }
+
+  .failed-text {
+    font-size: 0.75rem;
+    color: #b5564e;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* ── Issues found (full card) ──────────────── */
+
+  .review-pill.complete {
+    border-radius: 12px;
+    padding: 0;
+    max-height: 60vh;
+    display: flex;
+    flex-direction: column;
+  }
 
   .pill-header {
     display: flex;
