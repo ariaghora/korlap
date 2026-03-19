@@ -190,7 +190,7 @@ No need to mention in your report whether or not you used one of the fallback st
     repo_id: string;
     title: string;
     description: string;
-    images?: PastedImage[];
+    imagePaths?: string[];
     created_at: number;
   }
   let todos = $state<TodoItem[]>([]);
@@ -496,27 +496,44 @@ No need to mention in your report whether or not you used one of the fallback st
     saveTodos(activeRepo.id, todos).catch((e) => addToast(String(e)));
   }
 
-  function handleNewTodo(title: string, description: string, images: PastedImage[]) {
-    if (!activeRepo) return;
-    if (!title.trim() && images.length === 0) return;
-    todos.push({
-      id: crypto.randomUUID(),
-      repo_id: activeRepo.id,
-      title: title.trim(),
-      description: description.trim(),
-      images: images.length > 0 ? images : undefined,
-      created_at: Date.now() / 1000,
-    });
-    persistTodos();
+  async function saveTodoImages(newImages: PastedImage[]): Promise<string[]> {
+    if (!activeRepo || newImages.length === 0) return [];
+    const namespace = `todo-${activeRepo.id}`;
+    return Promise.all(newImages.map((img) => saveImage(namespace, img.base64, img.extension)));
   }
 
-  function handleEditTodo(todoId: string, title: string, description: string, images: PastedImage[]) {
-    const todo = todos.find((t) => t.id === todoId);
-    if (todo) {
-      todo.title = title.trim();
-      todo.description = description.trim();
-      todo.images = images.length > 0 ? images : undefined;
+  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[] }) {
+    if (!activeRepo) return;
+    if (!data.title.trim() && data.newImages.length === 0 && data.existingPaths.length === 0) return;
+    try {
+      const savedPaths = await saveTodoImages(data.newImages);
+      const allPaths = [...data.existingPaths, ...savedPaths];
+      todos.push({
+        id: crypto.randomUUID(),
+        repo_id: activeRepo.id,
+        title: data.title.trim(),
+        description: data.description.trim(),
+        imagePaths: allPaths.length > 0 ? allPaths : undefined,
+        created_at: Date.now() / 1000,
+      });
       persistTodos();
+    } catch (e) {
+      addToast(`Failed to save images: ${e}`);
+    }
+  }
+
+  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[] }) {
+    const todo = todos.find((t) => t.id === todoId);
+    if (!todo) return;
+    try {
+      const savedPaths = await saveTodoImages(data.newImages);
+      const allPaths = [...data.existingPaths, ...savedPaths];
+      todo.title = data.title.trim();
+      todo.description = data.description.trim();
+      todo.imagePaths = allPaths.length > 0 ? allPaths : undefined;
+      persistTodos();
+    } catch (e) {
+      addToast(`Failed to save images: ${e}`);
     }
   }
 
@@ -566,36 +583,26 @@ No need to mention in your report whether or not you used one of the fallback st
         ? `${todo.title}\n\n${todo.description}`
         : todo.title;
 
-      // Save images to workspace dir if any, build fullPrompt with image refs
-      const todoImages = todo.images ?? [];
+      // Images are already saved to disk — reference paths directly
+      const todoPaths = todo.imagePaths ?? [];
       let fullPrompt = promptText;
-      if (todoImages.length > 0) {
-        try {
-          const imagePaths = await Promise.all(
-            todoImages.map((img) => saveImage(ws.id, img.base64, img.extension)),
-          );
-          const refs = imagePaths.join("\n");
-          const imageInstructions =
-            imagePaths.length === 1
-              ? `I've attached an image. Read it using the Read tool:\n${refs}`
-              : `I've attached ${imagePaths.length} images. Read each using the Read tool:\n${refs}`;
-          fullPrompt = fullPrompt
-            ? `${imageInstructions}\n\n${fullPrompt}`
-            : imageInstructions;
-        } catch (e) {
-          addToast(`Failed to save images: ${e}`);
-        }
+      if (todoPaths.length > 0) {
+        const refs = todoPaths.join("\n");
+        const imageInstructions =
+          todoPaths.length === 1
+            ? `I've attached an image. Read it using the Read tool:\n${refs}`
+            : `I've attached ${todoPaths.length} images. Read each using the Read tool:\n${refs}`;
+        fullPrompt = fullPrompt
+          ? `${imageInstructions}\n\n${fullPrompt}`
+          : imageInstructions;
       }
-
-      const dataUrls = todoImages.length > 0 ? todoImages.map((img) => img.dataUrl) : undefined;
 
       // Send the todo task as the initial prompt
       routeMessage(ws.id, {
         id: crypto.randomUUID(),
         prompt: promptText,
         fullPrompt,
-        images: todoImages,
-        imageDataUrls: dataUrls,
+        images: [],
         mentions: [],
         planMode: false,
         thinkingMode: repoSettings?.default_thinking ?? false,

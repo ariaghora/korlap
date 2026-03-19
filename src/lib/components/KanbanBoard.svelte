@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { type PastedImage } from "./ChatPanel.svelte";
+  import type { PastedImage } from "./ChatPanel.svelte";
   import KanbanColumn from "./KanbanColumn.svelte";
   import KanbanCard from "./KanbanCard.svelte";
   import TaskPopover, { type TaskData } from "./TaskPopover.svelte";
@@ -11,7 +11,7 @@
     repo_id: string;
     title: string;
     description: string;
-    images?: PastedImage[];
+    imagePaths?: string[];
     created_at: number;
   }
 
@@ -27,8 +27,8 @@
     repoName?: string;
     onCardClick: (wsId: string) => void;
     onSpawnAgent: (todoId: string) => void;
-    onNewTodo: (title: string, description: string, images: PastedImage[]) => void;
-    onEditTodo: (todoId: string, title: string, description: string, images: PastedImage[]) => void;
+    onNewTodo: (data: TaskData) => void;
+    onEditTodo: (todoId: string, data: TaskData) => void;
     onRemoveTodo: (todoId: string) => void;
     onRemoveWorkspace: (wsId: string) => void;
   }
@@ -55,13 +55,13 @@
   let editingTodo = $state<TodoItem | null>(null);
 
   function handleAddSubmit(data: TaskData) {
-    onNewTodo(data.title, data.description, data.images);
+    onNewTodo(data);
     showAddDialog = false;
   }
 
   function handleEditSubmit(data: TaskData) {
     if (editingTodo) {
-      onEditTodo(editingTodo.id, data.title, data.description, data.images);
+      onEditTodo(editingTodo.id, data);
       editingTodo = null;
     }
   }
@@ -75,7 +75,7 @@
         todoId={todo.id}
         title={todo.title}
         description={todo.description}
-        images={todo.images}
+        imagePaths={todo.imagePaths}
         {repoName}
         onAction={() => onSpawnAgent(todo.id)}
         onEdit={() => { editingTodo = todo; }}
@@ -153,7 +153,7 @@
   <TaskPopover
     initialTitle={editingTodo.title}
     initialDescription={editingTodo.description}
-    initialImages={editingTodo.images}
+    initialImagePaths={editingTodo.imagePaths}
     submitLabel="Save"
     onSubmit={handleEditSubmit}
     onCancel={() => { editingTodo = null; }}

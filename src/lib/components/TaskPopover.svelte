@@ -1,17 +1,19 @@
 <script lang="ts">
   import { type PastedImage } from "./ChatPanel.svelte";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { X } from "lucide-svelte";
 
   export interface TaskData {
     title: string;
     description: string;
-    images: PastedImage[];
+    newImages: PastedImage[];
+    existingPaths: string[];
   }
 
   interface Props {
     initialTitle?: string;
     initialDescription?: string;
-    initialImages?: PastedImage[];
+    initialImagePaths?: string[];
     submitLabel?: string;
     onSubmit: (data: TaskData) => void;
     onCancel: () => void;
@@ -20,7 +22,7 @@
   let {
     initialTitle = "",
     initialDescription = "",
-    initialImages = [],
+    initialImagePaths = [],
     submitLabel = "Add",
     onSubmit,
     onCancel,
@@ -28,7 +30,8 @@
 
   let title = $state(initialTitle);
   let description = $state(initialDescription);
-  let images = $state<PastedImage[]>([...initialImages]);
+  let existingPaths = $state<string[]>([...initialImagePaths]);
+  let newImages = $state<PastedImage[]>([]);
   let titleRef: HTMLInputElement | undefined = $state();
   let descRef: HTMLTextAreaElement | undefined = $state();
 
@@ -36,11 +39,11 @@
     requestAnimationFrame(() => titleRef?.focus());
   });
 
-  let canSubmit = $derived(title.trim().length > 0 || images.length > 0);
+  let canSubmit = $derived(title.trim().length > 0 || existingPaths.length > 0 || newImages.length > 0);
 
   function submit() {
     if (!canSubmit) return;
-    onSubmit({ title: title.trim(), description: description.trim(), images: [...images] });
+    onSubmit({ title: title.trim(), description: description.trim(), newImages: [...newImages], existingPaths: [...existingPaths] });
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -79,14 +82,18 @@
       reader.onload = () => {
         const dataUrl = reader.result as string;
         const base64 = dataUrl.split(",")[1] ?? "";
-        images = [...images, { id: crypto.randomUUID(), dataUrl, base64, extension: ext }];
+        newImages = [...newImages, { id: crypto.randomUUID(), dataUrl, base64, extension: ext }];
       };
       reader.readAsDataURL(file);
     }
   }
 
-  function removeImage(id: string) {
-    images = images.filter((i) => i.id !== id);
+  function removeNewImage(id: string) {
+    newImages = newImages.filter((i) => i.id !== id);
+  }
+
+  function removeExistingPath(path: string) {
+    existingPaths = existingPaths.filter((p) => p !== path);
   }
 </script>
 
@@ -111,12 +118,20 @@
       rows={6}
       placeholder="Description (optional) — paste images here"
     ></textarea>
-    {#if images.length > 0}
+    {#if existingPaths.length > 0 || newImages.length > 0}
       <div class="image-strip">
-        {#each images as img (img.id)}
+        {#each existingPaths as path (path)}
+          <div class="image-thumb">
+            <img src={convertFileSrc(path)} alt="Attached" />
+            <button class="image-remove" onclick={() => removeExistingPath(path)}>
+              <X size={8} />
+            </button>
+          </div>
+        {/each}
+        {#each newImages as img (img.id)}
           <div class="image-thumb">
             <img src={img.dataUrl} alt="Attached" />
-            <button class="image-remove" onclick={() => removeImage(img.id)}>
+            <button class="image-remove" onclick={() => removeNewImage(img.id)}>
               <X size={8} />
             </button>
           </div>

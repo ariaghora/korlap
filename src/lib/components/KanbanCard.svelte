@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { type PastedImage } from "./ChatPanel.svelte";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { Play, X, Pencil } from "lucide-svelte";
 
   interface Props {
@@ -9,7 +9,7 @@
     todoId?: string;
     title?: string;
     description?: string;
-    images?: PastedImage[];
+    imagePaths?: string[];
     repoName?: string;
     // Workspace fields
     workspace?: WorkspaceInfo;
@@ -29,7 +29,7 @@
     todoId,
     title,
     description,
-    images,
+    imagePaths,
     repoName,
     workspace,
     prStatus,
@@ -68,10 +68,10 @@
     {#if description}
       <span class="card-desc">{description}</span>
     {/if}
-    {#if images && images.length > 0}
+    {#if imagePaths && imagePaths.length > 0}
       <div class="card-images">
-        {#each images as img (img.id)}
-          <img class="card-image-thumb" src={img.dataUrl} alt="Attached" />
+        {#each imagePaths as path (path)}
+          <img class="card-image-thumb" src={convertFileSrc(path)} alt="Attached" />
         {/each}
       </div>
     {/if}
