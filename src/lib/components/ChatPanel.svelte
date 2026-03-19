@@ -5,6 +5,7 @@
   import { renderMarkdown } from "$lib/markdown";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
+  import VirtualScroller from "./VirtualScroller.svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
   const toolIcons: Record<string, typeof Settings> = {
@@ -93,7 +94,8 @@
     return segments;
   }
 
-  let messages = $derived(messagesByWorkspace.get(workspaceId) ?? []);
+  let messagesMap = $derived(messagesByWorkspace.get(workspaceId));
+  let messages = $derived(messagesMap ? [...messagesMap.values()] : []);
   let sending = $derived(sendingByWorkspace.get(workspaceId) ?? false);
 
   // Elapsed timer for "thinking" indicator
@@ -121,7 +123,6 @@
   });
 
   let pastedImages = $state<PastedImage[]>([]);
-  let chatArea: HTMLDivElement | undefined = $state();
   let userScrolledUp = $state(false);
   let inputEl: HTMLDivElement | undefined = $state();
 
@@ -230,6 +231,7 @@
 
   let visualBlocks = $derived(buildVisualBlocks(messages));
 
+
   // AskUserQuestion: multi-select toggles and custom input per question
   // qKey = "msgId:chunkIdx:questionIdx" — identifies a single question
   // batchKey = "msgId:chunkIdx" — identifies the entire AskUserQuestion tool call
@@ -337,21 +339,6 @@
   // Tracks the message count when user clicked Revise — hides plan actions until new messages arrive
   let planActionsHiddenAt = $state<number | null>(null);
 
-  function handleScroll(e: Event) {
-    const el = e.target as HTMLElement;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-    userScrolledUp = !atBottom;
-  }
-
-  $effect(() => {
-    messages.length;
-    sending;
-    if (!userScrolledUp && chatArea) {
-      requestAnimationFrame(() => {
-        chatArea!.scrollTop = chatArea!.scrollHeight;
-      });
-    }
-  });
 
   // Show "Execute plan" button only when the most recent user-or-action message
   // is a plan-mode user message and Claude has responded after it.
@@ -391,6 +378,13 @@
     }
     return files;
   });
+
+  // Footer items (file pills, plan actions, thinking) rendered as a single
+  // extra item at the end of the virtual list so they scroll naturally.
+  let hasFooter = $derived(
+    (recentFiles.length > 0 && !sending) || showExecutePlan || sending,
+  );
+  let virtualCount = $derived(visualBlocks.length + (hasFooter ? 1 : 0));
 
   function handleMentionSubmit(value: MentionInputValue) {
     if (creating) return;
@@ -493,360 +487,374 @@
 </script>
 
 <div class="chat-panel">
-  <div class="chat-area" bind:this={chatArea} onscroll={handleScroll}>
-    {#if creating}
+  {#if creating}
+    <div class="chat-area-static">
       <div class="chat-empty">
         <div class="creating-spinner"></div>
         <p class="creating-text">Setting up workspace...</p>
       </div>
-    {:else if messages.length === 0 && !sending}
+    </div>
+  {:else if messages.length === 0 && !sending}
+    <div class="chat-area-static">
       <div class="chat-empty">
         <p>Send a message to start the agent.</p>
       </div>
-    {:else}
-      {#each visualBlocks as block, bi (block.key)}
-        {#if block.kind === "action"}
-          <div class="action-msg">
-            <span class="action-indicator">{block.msg.actionLabel ?? "Action"}</span>
-          </div>
-        {:else if block.kind === "user"}
-          <div class="user-msg">
-            {#if block.msg.imageDataUrls && block.msg.imageDataUrls.length > 0}
-              <div class="user-images">
-                {#each block.msg.imageDataUrls as dataUrl}
-                  <div class="user-image-thumb">
-                    <img src={dataUrl} alt="Attached" />
-                  </div>
-                {/each}
+    </div>
+  {:else}
+    <VirtualScroller
+      count={virtualCount}
+      estimatedHeight={60}
+      gap={10}
+      overscan={5}
+      stickToBottom={!userScrolledUp}
+      onscrolledUp={(v) => { userScrolledUp = v; }}
+    >
+      {#snippet children(index)}
+        {#if index < visualBlocks.length}
+          {@const block = visualBlocks[index]}
+          {@const bi = index}
+          <div class="virtual-block">
+            {#if block.kind === "action"}
+              <div class="action-msg">
+                <span class="action-indicator">{block.msg.actionLabel ?? "Action"}</span>
               </div>
-            {/if}
-            {#if block.msg.planMode}
-              <div class="plan-badge-row">
-                <span class="plan-badge">
-                  <BookOpen size={11} strokeWidth={2} />
-                  Plan
-                </span>
-              </div>
-            {/if}
-            <div class="user-bubble">
-              {#each block.msg.chunks as chunk}
-                {#if chunk.type === "text"}
-                  {#if block.msg.mentions && block.msg.mentions.length > 0}
-                    {#each splitTextWithMentions(chunk.content, block.msg.mentions) as seg}
-                      {#if seg.kind === "text"}{seg.value}{:else}
-                        <button
-                          class="msg-mention-chip"
-                          onclick={() => onMentionClick?.(seg.mention.path)}
-                        >@{seg.mention.displayName}</button>
-                      {/if}
-                    {/each}
-                  {:else}
-                    {chunk.content}
-                  {/if}
-                {/if}
-              {/each}
-            </div>
-          </div>
-        {:else if block.kind === "assistant-label"}
-          <!-- no label needed -->
-        {:else if block.kind === "thinking"}
-          <div class="assistant-msg">
-            <details class="thinking-block">
-              <summary class="thinking-summary">
-                <span class="thinking-icon">
-                  <Lightbulb size={14} strokeWidth={2} />
-                </span>
-                <span class="thinking-label">Thinking</span>
-                <span class="thinking-chevron"></span>
-              </summary>
-              <div class="thinking-content">
-                <p class="thinking-text">{block.chunk.content}</p>
-              </div>
-            </details>
-          </div>
-        {:else if block.kind === "text"}
-          <div class="assistant-msg">
-            <div class="assistant-card">
-              <div class="assistant-text markdown-body">{@html renderMarkdown(block.chunk.content)}</div>
-            </div>
-          </div>
-        {:else if block.kind === "tool-group"}
-          {@const isExpanded = expandedGroups.has(block.key)}
-          {@const lastTool = block.tools[block.tools.length - 1].chunk}
-          {@const LastIcon = toolIcons[lastTool.name] ?? Settings}
-          {@const isActive = sending && bi === visualBlocks.length - 1}
-          {@const count = block.tools.length}
-          <div class="assistant-msg">
-            <div class="tool-group" class:expanded={isExpanded}>
-              <button class="tool-group-header" onclick={() => toggleGroup(block.key)}>
-                {#if isActive}
-                  <span class="tool-group-spinner"><Loader2 size={13} strokeWidth={2} /></span>
-                {:else}
-                  <span class="tool-group-gear"><Settings size={13} strokeWidth={2} /></span>
-                {/if}
-                <span class="tool-group-latest">
-                  <span class="tool-group-latest-icon"><LastIcon size={12} strokeWidth={2} /></span>
-                  <span class="tool-group-latest-label">{lastTool.input || lastTool.name}</span>
-                </span>
-                {#if count > 1}
-                  <span class="tool-group-count">{count} actions</span>
-                {/if}
-                <span class="tool-group-chevron" class:expanded={isExpanded}>▾</span>
-              </button>
-              {#if isExpanded}
-                <div class="tool-group-body">
-                  {#each block.tools as t}
-                    {@const ToolIcon = toolIcons[t.chunk.name] ?? Settings}
-                    <span class="tool-pill">
-                      <span class="tool-icon"><ToolIcon size={13} strokeWidth={2} /></span>
-                      {t.chunk.input || t.chunk.name}
-                    </span>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          </div>
-        {:else if block.kind === "special-tool" && block.chunk.name === "AskUserQuestion"}
-          {@const chunk = block.chunk}
-          {@const parsed = (() => { try { return JSON.parse(chunk.input); } catch { return null; } })()}
-          {@const bKey = `${block.msgId}:${block.ci}`}
-          {@const totalQ = parsed && Array.isArray(parsed) ? parsed.length : 0}
-          {@const batchSubmitted = submittedBatches.has(bKey)}
-          {@const bAnswers = batchAnswers.get(bKey)}
-          {@const answeredInBatch = bAnswers?.size ?? 0}
-          <div class="assistant-msg">
-            {#if parsed && Array.isArray(parsed)}
-              {#if batchSubmitted}
-                <!-- Collapsed summary after submission -->
-                <div class="question-card answered">
-                  <div class="question-header">
-                    <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
-                    <span class="question-label">{totalQ === 1 ? (parsed[0].header || "Question") : `${totalQ} questions`}</span>
-                    <button
-                      type="button"
-                      class="question-change-btn"
-                      disabled={sending}
-                      onclick={() => unsubmitBatch(bKey)}
-                    >Change</button>
-                  </div>
-                  <div class="question-answers-summary">
-                    {#each parsed as q, qi}
-                      <div class="answer-summary-row">
-                        <span class="answer-summary-label">{q.header || q.question || `Q${qi + 1}`}</span>
-                        <span class="question-answer-pill">{bAnswers?.get(qi)}</span>
+            {:else if block.kind === "user"}
+              <div class="user-msg">
+                {#if block.msg.imageDataUrls && block.msg.imageDataUrls.length > 0}
+                  <div class="user-images">
+                    {#each block.msg.imageDataUrls as dataUrl, di (di)}
+                      <div class="user-image-thumb">
+                        <img src={dataUrl} alt="Attached" />
                       </div>
                     {/each}
                   </div>
+                {/if}
+                {#if block.msg.planMode}
+                  <div class="plan-badge-row">
+                    <span class="plan-badge">
+                      <BookOpen size={11} strokeWidth={2} />
+                      Plan
+                    </span>
+                  </div>
+                {/if}
+                <div class="user-bubble">
+                  {#each block.msg.chunks as chunk, ci (ci)}
+                    {#if chunk.type === "text"}
+                      {#if block.msg.mentions && block.msg.mentions.length > 0}
+                        {#each splitTextWithMentions(chunk.content, block.msg.mentions) as seg, si (si)}
+                          {#if seg.kind === "text"}{seg.value}{:else}
+                            <button
+                              class="msg-mention-chip"
+                              onclick={() => onMentionClick?.(seg.mention.path)}
+                            >@{seg.mention.displayName}</button>
+                          {/if}
+                        {/each}
+                      {:else}
+                        {chunk.content}
+                      {/if}
+                    {/if}
+                  {/each}
                 </div>
-              {:else}
-                <!-- Expanded: individual question cards -->
-                {#each parsed as q, qi}
-                  {@const qKey = `${block.msgId}:${block.ci}:${qi}`}
-                  {@const isMulti = q.multiSelect === true}
-                  {@const answerText = bAnswers?.get(qi)}
-                  {@const hasAnswer = answerText != null}
-                  {@const selected = selectedOptions.get(qKey) ?? new SvelteSet()}
-                  {@const customText = customInputs.get(qKey) ?? ""}
-                  {@const showCustom = showCustomInput.has(qKey)}
+              </div>
+            {:else if block.kind === "assistant-label"}
+              <!-- no label needed -->
+            {:else if block.kind === "thinking"}
+              <div class="assistant-msg">
+                <details class="thinking-block">
+                  <summary class="thinking-summary">
+                    <span class="thinking-icon">
+                      <Lightbulb size={14} strokeWidth={2} />
+                    </span>
+                    <span class="thinking-label">Thinking</span>
+                    <span class="thinking-chevron"></span>
+                  </summary>
+                  <div class="thinking-content">
+                    <p class="thinking-text">{block.chunk.content}</p>
+                  </div>
+                </details>
+              </div>
+            {:else if block.kind === "text"}
+              <div class="assistant-msg">
+                <div class="assistant-card">
+                  <div class="assistant-text markdown-body">{@html renderMarkdown(block.chunk.content)}</div>
+                </div>
+              </div>
+            {:else if block.kind === "tool-group"}
+              {@const isExpanded = expandedGroups.has(block.key)}
+              {@const lastTool = block.tools[block.tools.length - 1].chunk}
+              {@const LastIcon = toolIcons[lastTool.name] ?? Settings}
+              {@const isActive = sending && bi === visualBlocks.length - 1}
+              {@const toolCount = block.tools.length}
+              <div class="assistant-msg">
+                <div class="tool-group" class:expanded={isExpanded}>
+                  <button class="tool-group-header" onclick={() => toggleGroup(block.key)}>
+                    {#if isActive}
+                      <span class="tool-group-spinner"><Loader2 size={13} strokeWidth={2} /></span>
+                    {:else}
+                      <span class="tool-group-gear"><Settings size={13} strokeWidth={2} /></span>
+                    {/if}
+                    <span class="tool-group-latest">
+                      <span class="tool-group-latest-icon"><LastIcon size={12} strokeWidth={2} /></span>
+                      <span class="tool-group-latest-label">{lastTool.input || lastTool.name}</span>
+                    </span>
+                    {#if toolCount > 1}
+                      <span class="tool-group-count">{toolCount} actions</span>
+                    {/if}
+                    <span class="tool-group-chevron" class:expanded={isExpanded}>▾</span>
+                  </button>
+                  {#if isExpanded}
+                    <div class="tool-group-body">
+                      {#each block.tools as t (`${t.msgId}:${t.ci}`)}
+                        {@const ToolIcon = toolIcons[t.chunk.name] ?? Settings}
+                        <span class="tool-pill">
+                          <span class="tool-icon"><ToolIcon size={13} strokeWidth={2} /></span>
+                          {t.chunk.input || t.chunk.name}
+                        </span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {:else if block.kind === "special-tool" && block.chunk.name === "AskUserQuestion"}
+              {@const chunk = block.chunk}
+              {@const parsed = (() => { try { return JSON.parse(chunk.input); } catch { return null; } })()}
+              {@const bKey = `${block.msgId}:${block.ci}`}
+              {@const totalQ = parsed && Array.isArray(parsed) ? parsed.length : 0}
+              {@const batchSubmitted = submittedBatches.has(bKey)}
+              {@const bAnswers = batchAnswers.get(bKey)}
+              {@const answeredInBatch = bAnswers?.size ?? 0}
+              <div class="assistant-msg">
+                {#if parsed && Array.isArray(parsed)}
+                  {#if batchSubmitted}
+                    <div class="question-card answered">
+                      <div class="question-header">
+                        <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
+                        <span class="question-label">{totalQ === 1 ? (parsed[0].header || "Question") : `${totalQ} questions`}</span>
+                        <button
+                          type="button"
+                          class="question-change-btn"
+                          disabled={sending}
+                          onclick={() => unsubmitBatch(bKey)}
+                        >Change</button>
+                      </div>
+                      <div class="question-answers-summary">
+                        {#each parsed as q, qi (qi)}
+                          <div class="answer-summary-row">
+                            <span class="answer-summary-label">{q.header || q.question || `Q${qi + 1}`}</span>
+                            <span class="question-answer-pill">{bAnswers?.get(qi)}</span>
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {:else}
+                    {#each parsed as q, qi (qi)}
+                      {@const qKey = `${block.msgId}:${block.ci}:${qi}`}
+                      {@const isMulti = q.multiSelect === true}
+                      {@const answerText = bAnswers?.get(qi)}
+                      {@const hasAnswer = answerText != null}
+                      {@const selected = selectedOptions.get(qKey) ?? new SvelteSet()}
+                      {@const customText = customInputs.get(qKey) ?? ""}
+                      {@const showCustom = showCustomInput.has(qKey)}
+                      <div class="question-card">
+                        <div class="question-header">
+                          <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
+                          <span class="question-label">{q.header || "Question"}</span>
+                          {#if isMulti}
+                            <span class="question-multi-badge">Multi-select</span>
+                          {/if}
+                          {#if hasAnswer}
+                            <span class="question-answer-pill">{answerText}</span>
+                          {/if}
+                        </div>
+                        {#if q.question}
+                          <div class="question-text">{q.question}</div>
+                        {/if}
+                        {#if q.options && q.options.length > 0}
+                          <div class="question-options">
+                            {#each q.options as opt (opt.label)}
+                              {#if isMulti}
+                                <button
+                                  type="button"
+                                  class="question-option"
+                                  class:selected={selected.has(opt.label)}
+                                  disabled={sending}
+                                  onclick={() => toggleOption(qKey, opt.label)}
+                                >
+                                  <span class="option-check">{selected.has(opt.label) ? "◉" : "○"}</span>
+                                  <span class="option-content">
+                                    <span class="option-label">{opt.label}</span>
+                                    {#if opt.description}
+                                      <span class="option-desc">{opt.description}</span>
+                                    {/if}
+                                  </span>
+                                </button>
+                              {:else}
+                                <button
+                                  type="button"
+                                  class="question-option"
+                                  class:selected-answer={hasAnswer && answerText === opt.label}
+                                  disabled={sending}
+                                  onclick={() => submitOption(qKey, opt.label, totalQ)}
+                                >
+                                  <span class="option-content">
+                                    <span class="option-label">{opt.label}</span>
+                                    {#if opt.description}
+                                      <span class="option-desc">{opt.description}</span>
+                                    {/if}
+                                  </span>
+                                </button>
+                              {/if}
+                            {/each}
+                            {#if showCustom}
+                              <div class="custom-input-row">
+                                <input
+                                  type="text"
+                                  class="custom-input"
+                                  placeholder="Type your answer…"
+                                  value={customText}
+                                  disabled={sending}
+                                  oninput={(e) => customInputs.set(qKey, (e.target as HTMLInputElement).value)}
+                                  onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); isMulti ? submitMultiSelect(qKey, totalQ) : submitCustomInput(qKey, totalQ); } }}
+                                />
+                                <button
+                                  type="button"
+                                  class="custom-submit-btn"
+                                  disabled={sending || (!customText.trim() && (!isMulti || selected.size === 0))}
+                                  onclick={() => isMulti ? submitMultiSelect(qKey, totalQ) : submitCustomInput(qKey, totalQ)}
+                                >
+                                  <ArrowUp size={14} strokeWidth={2.5} />
+                                </button>
+                              </div>
+                            {:else}
+                              <button
+                                type="button"
+                                class="question-option other-option"
+                                disabled={sending}
+                                onclick={() => showCustomInput.add(qKey)}
+                              >
+                                <span class="option-content">
+                                  <span class="option-label">Other</span>
+                                  <span class="option-desc">Type a custom answer</span>
+                                </span>
+                              </button>
+                            {/if}
+                            {#if isMulti && selected.size > 0}
+                              <button
+                                type="button"
+                                class="multi-submit-btn"
+                                disabled={sending}
+                                onclick={() => submitMultiSelect(qKey, totalQ)}
+                              >
+                                Submit ({selected.size} selected)
+                              </button>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                    {#if totalQ > 1 && answeredInBatch >= totalQ}
+                      <button
+                        type="button"
+                        class="batch-submit-btn"
+                        disabled={sending}
+                        onclick={() => submitBatch(bKey, totalQ)}
+                      >
+                        <ArrowUp size={14} strokeWidth={2.5} />
+                        Submit all {totalQ} answers
+                      </button>
+                    {:else if totalQ > 1 && answeredInBatch > 0}
+                      <div class="batch-progress">
+                        {answeredInBatch} of {totalQ} questions answered
+                      </div>
+                    {/if}
+                  {/if}
+                {:else}
                   <div class="question-card">
                     <div class="question-header">
                       <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
-                      <span class="question-label">{q.header || "Question"}</span>
-                      {#if isMulti}
-                        <span class="question-multi-badge">Multi-select</span>
-                      {/if}
-                      {#if hasAnswer}
-                        <span class="question-answer-pill">{answerText}</span>
-                      {/if}
+                      <span class="question-label">Question</span>
                     </div>
-                    {#if q.question}
-                      <div class="question-text">{q.question}</div>
-                    {/if}
-                    {#if q.options && q.options.length > 0}
-                      <div class="question-options">
-                        {#each q.options as opt}
-                          {#if isMulti}
-                            <button
-                              type="button"
-                              class="question-option"
-                              class:selected={selected.has(opt.label)}
-                              disabled={sending}
-                              onclick={() => toggleOption(qKey, opt.label)}
-                            >
-                              <span class="option-check">{selected.has(opt.label) ? "◉" : "○"}</span>
-                              <span class="option-content">
-                                <span class="option-label">{opt.label}</span>
-                                {#if opt.description}
-                                  <span class="option-desc">{opt.description}</span>
-                                {/if}
-                              </span>
-                            </button>
-                          {:else}
-                            <button
-                              type="button"
-                              class="question-option"
-                              class:selected-answer={hasAnswer && answerText === opt.label}
-                              disabled={sending}
-                              onclick={() => submitOption(qKey, opt.label, totalQ)}
-                            >
-                              <span class="option-content">
-                                <span class="option-label">{opt.label}</span>
-                                {#if opt.description}
-                                  <span class="option-desc">{opt.description}</span>
-                                {/if}
-                              </span>
-                            </button>
-                          {/if}
-                        {/each}
-                        {#if showCustom}
-                          <div class="custom-input-row">
-                            <input
-                              type="text"
-                              class="custom-input"
-                              placeholder="Type your answer…"
-                              value={customText}
-                              disabled={sending}
-                              oninput={(e) => customInputs.set(qKey, (e.target as HTMLInputElement).value)}
-                              onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); isMulti ? submitMultiSelect(qKey, totalQ) : submitCustomInput(qKey, totalQ); } }}
-                            />
-                            <button
-                              type="button"
-                              class="custom-submit-btn"
-                              disabled={sending || (!customText.trim() && (!isMulti || selected.size === 0))}
-                              onclick={() => isMulti ? submitMultiSelect(qKey, totalQ) : submitCustomInput(qKey, totalQ)}
-                            >
-                              <ArrowUp size={14} strokeWidth={2.5} />
-                            </button>
-                          </div>
-                        {:else}
-                          <button
-                            type="button"
-                            class="question-option other-option"
-                            disabled={sending}
-                            onclick={() => showCustomInput.add(qKey)}
-                          >
-                            <span class="option-content">
-                              <span class="option-label">Other</span>
-                              <span class="option-desc">Type a custom answer</span>
-                            </span>
-                          </button>
-                        {/if}
-                        {#if isMulti && selected.size > 0}
-                          <button
-                            type="button"
-                            class="multi-submit-btn"
-                            disabled={sending}
-                            onclick={() => submitMultiSelect(qKey, totalQ)}
-                          >
-                            Submit ({selected.size} selected)
-                          </button>
-                        {/if}
-                      </div>
-                    {/if}
-                  </div>
-                {/each}
-                {#if totalQ > 1 && answeredInBatch >= totalQ}
-                  <button
-                    type="button"
-                    class="batch-submit-btn"
-                    disabled={sending}
-                    onclick={() => submitBatch(bKey, totalQ)}
-                  >
-                    <ArrowUp size={14} strokeWidth={2.5} />
-                    Submit all {totalQ} answers
-                  </button>
-                {:else if totalQ > 1 && answeredInBatch > 0}
-                  <div class="batch-progress">
-                    {answeredInBatch} of {totalQ} questions answered
+                    <div class="question-text">{chunk.input}</div>
                   </div>
                 {/if}
-              {/if}
-            {:else}
-              <div class="question-card">
-                <div class="question-header">
-                  <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
-                  <span class="question-label">Question</span>
+              </div>
+            {:else if block.kind === "special-tool" && block.chunk.oldString != null && block.chunk.newString != null}
+              {@const chunk = block.chunk}
+              {@const diffKey = `${block.msgId}:${block.ci}`}
+              {@const isCollapsed = collapsedDiffs.has(diffKey)}
+              <div class="assistant-msg">
+                <div class="edit-diff-block">
+                  <button class="edit-diff-header" onclick={() => {
+                    if (collapsedDiffs.has(diffKey)) {
+                      collapsedDiffs.delete(diffKey);
+                    } else {
+                      collapsedDiffs.add(diffKey);
+                    }
+                  }}>
+                    <span class="edit-diff-chevron" class:collapsed={isCollapsed}>▾</span>
+                    <span class="edit-diff-icon"><Pencil size={13} strokeWidth={2} /></span>
+                    <span class="edit-diff-label">{chunk.input}</span>
+                  </button>
+                  {#if !isCollapsed}
+                    <div class="edit-diff-body">
+                      {#each (chunk.oldString ?? "").split("\n") as line, li (li)}
+                        <div class="diff-line remove"><span class="diff-ln">{li + 1}</span><span class="diff-prefix">-</span><span class="diff-code">{line}</span></div>
+                      {/each}
+                      {#each (chunk.newString ?? "").split("\n") as line, li (li)}
+                        <div class="diff-line add"><span class="diff-ln">{li + 1}</span><span class="diff-prefix">+</span><span class="diff-code">{line}</span></div>
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
-                <div class="question-text">{chunk.input}</div>
               </div>
             {/if}
           </div>
-        {:else if block.kind === "special-tool" && block.chunk.oldString != null && block.chunk.newString != null}
-          {@const chunk = block.chunk}
-          {@const diffKey = `${block.msgId}:${block.ci}`}
-          {@const isCollapsed = collapsedDiffs.has(diffKey)}
-          <div class="assistant-msg">
-            <div class="edit-diff-block">
-              <button class="edit-diff-header" onclick={() => {
-                if (collapsedDiffs.has(diffKey)) {
-                  collapsedDiffs.delete(diffKey);
-                } else {
-                  collapsedDiffs.add(diffKey);
-                }
-              }}>
-                <span class="edit-diff-chevron" class:collapsed={isCollapsed}>▾</span>
-                <span class="edit-diff-icon"><Pencil size={13} strokeWidth={2} /></span>
-                <span class="edit-diff-label">{chunk.input}</span>
-              </button>
-              {#if !isCollapsed}
-                <div class="edit-diff-body">
-                  {#each (chunk.oldString ?? "").split("\n") as line, li}
-                    <div class="diff-line remove"><span class="diff-ln">{li + 1}</span><span class="diff-prefix">-</span><span class="diff-code">{line}</span></div>
-                  {/each}
-                  {#each (chunk.newString ?? "").split("\n") as line, li}
-                    <div class="diff-line add"><span class="diff-ln">{li + 1}</span><span class="diff-prefix">+</span><span class="diff-code">{line}</span></div>
-                  {/each}
+        {:else}
+          <!-- Footer: file pills + plan actions + thinking indicator -->
+          <div class="virtual-block virtual-footer">
+            {#if recentFiles.length > 0 && !sending}
+              <div class="file-pills-row">
+                {#each recentFiles as file (file)}
+                  <span class="file-pill">
+                    <span class="file-pill-icon">∞</span>
+                    {file}
+                  </span>
+                {/each}
+              </div>
+            {/if}
+            {#if showExecutePlan}
+              <div class="plan-actions-row">
+                <button
+                  type="button"
+                  class="plan-action-btn execute"
+                  onclick={() => onExecutePlan?.()}
+                >
+                  <Play size={14} strokeWidth={2} />
+                  Execute plan
+                </button>
+                <button
+                  type="button"
+                  class="plan-action-btn revise"
+                  onclick={() => { planActionsHiddenAt = messages.length; mentionInputApi?.focus(); }}
+                >
+                  <Pencil size={14} strokeWidth={2} />
+                  Revise
+                </button>
+              </div>
+            {/if}
+            {#if sending}
+              <div class="assistant-msg">
+                <div class="thinking">
+                  <Timer size={13} strokeWidth={2} />
+                  <span class="thinking-timer">{thinkingElapsed}s</span>
                 </div>
-              {/if}
-            </div>
+              </div>
+            {/if}
           </div>
         {/if}
-      {/each}
-
-      <!-- File pills after last assistant turn -->
-      {#if recentFiles.length > 0 && !sending}
-        <div class="file-pills-row">
-          {#each recentFiles as file}
-            <span class="file-pill">
-              <span class="file-pill-icon">∞</span>
-              {file}
-            </span>
-          {/each}
-        </div>
-      {/if}
-
-      <!-- Plan approval buttons after a plan-mode response -->
-      {#if showExecutePlan}
-        <div class="plan-actions-row">
-          <button
-            type="button"
-            class="plan-action-btn execute"
-            onclick={() => onExecutePlan?.()}
-          >
-            <Play size={14} strokeWidth={2} />
-            Execute plan
-          </button>
-          <button
-            type="button"
-            class="plan-action-btn revise"
-            onclick={() => { planActionsHiddenAt = messages.length; mentionInputApi?.focus(); }}
-          >
-            <Pencil size={14} strokeWidth={2} />
-            Revise
-          </button>
-        </div>
-      {/if}
-
-      {#if sending}
-        <div class="assistant-msg">
-          <div class="thinking">
-            <Timer size={13} strokeWidth={2} />
-            <span class="thinking-timer">{thinkingElapsed}s</span>
-          </div>
-        </div>
-      {/if}
-    {/if}
-  </div>
+      {/snippet}
+    </VirtualScroller>
+  {/if}
 
   {#if queue.length > 0}
     <div class="queue-strip">
@@ -959,10 +967,20 @@
     min-height: 0;
   }
 
-  .chat-area {
+  .chat-area-static {
     flex: 1;
     overflow-y: auto;
     padding: 1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .virtual-block {
+    padding: 0 1.25rem;
+  }
+
+  .virtual-footer {
     display: flex;
     flex-direction: column;
     gap: 0.6rem;

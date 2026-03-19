@@ -56,6 +56,57 @@
   import Toasts from "$lib/components/Toasts.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
 
+  // ── PR Status Cache (localStorage) ─────────────────────
+  const PR_CACHE_KEY = "korlap:pr-status-cache";
+
+  function loadPrStatusCache(): Record<string, PrStatus> {
+    try {
+      const raw = localStorage.getItem(PR_CACHE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function savePrStatusCache() {
+    try {
+      const obj: Record<string, PrStatus> = {};
+      for (const [k, v] of prStatusMap) obj[k] = v;
+      localStorage.setItem(PR_CACHE_KEY, JSON.stringify(obj));
+    } catch {
+      // localStorage full or unavailable — non-critical
+    }
+  }
+
+  function hydratePrStatusFromCache(workspaceIds: string[]) {
+    const cache = loadPrStatusCache();
+    for (const wsId of workspaceIds) {
+      if (cache[wsId] && !prStatusMap.has(wsId)) {
+        prStatusMap.set(wsId, cache[wsId]);
+      }
+    }
+  }
+
+  function removePrStatusCacheEntry(wsId: string) {
+    try {
+      const cache = loadPrStatusCache();
+      delete cache[wsId];
+      localStorage.setItem(PR_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      // non-critical
+    }
+  }
+
+  function clearPrStatusCacheForRepo(workspaceIds: string[]) {
+    try {
+      const cache = loadPrStatusCache();
+      for (const wsId of workspaceIds) delete cache[wsId];
+      localStorage.setItem(PR_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      // non-critical
+    }
+  }
+
   const DEFAULT_REVIEW_PROMPT = `## Code Review Instructions
 
 **CRITICAL — Output format:** Do NOT produce any text output until you reach step 8. No narration, no status updates, no "let me do X" messages. Use tool calls silently. Your ONLY text output must be the final result from step 8. If no issues survived validation, your entire text output must be exactly: "No issues found." — nothing else.
@@ -416,6 +467,8 @@ No need to mention in your report whether or not you used one of the fallback st
 
     listWorkspaces(repo.id).then((ws) => {
       workspaces = ws;
+      // Hydrate PR statuses from cache immediately so cards render in correct columns
+      hydratePrStatusFromCache(ws.map((w) => w.id));
       ws.forEach((w) => loadPersistedMessages(w.id));
       ws.forEach((w) => {
         refreshChangeCounts(w.id);
@@ -438,11 +491,13 @@ No need to mention in your report whether or not you used one of the fallback st
     try {
       await removeRepo(repoId);
       showSettings = false;
+      const removedWsIds = workspaces.map((w) => w.id);
       repos = repos.filter((r) => r.id !== repoId);
       workspaces = [];
       selectedWsId = null;
       sendingByWorkspace.clear();
       prStatusMap.clear();
+      clearPrStatusCacheForRepo(removedWsIds);
       changeCounts.clear();
       planModeByWorkspace.clear();
       thinkingModeByWorkspace.clear();
@@ -650,6 +705,7 @@ No need to mention in your report whether or not you used one of the fallback st
     queueByWorkspace.delete(wsId);
     pendingDrain.delete(wsId);
     prStatusMap.delete(wsId);
+    removePrStatusCacheEntry(wsId);
     changeCounts.delete(wsId);
     planModeByWorkspace.delete(wsId);
     thinkingModeByWorkspace.delete(wsId);
@@ -1136,6 +1192,7 @@ No need to mention in your report whether or not you used one of the fallback st
         return; // No change — skip reactive update
       }
       prStatusMap.set(wsId, pr);
+      savePrStatusCache();
     } catch {
       // gh not installed or no remote
     }
@@ -1204,81 +1261,85 @@ No need to mention in your report whether or not you used one of the fallback st
       />
     {/if}
 
-    {#if appMode === "work"}
-      <div class="main-layout">
-        <Sidebar
-          {workspaces}
-          {selectedWsId}
-          {creatingWsId}
-          {prStatusMap}
-          {reviewingWsIds}
-          onSelect={selectWorkspace}
-          onNewWorkspace={handleNewWorkspace}
-          onRename={handleRename}
-          onRemove={handleRemove}
-        />
+    <div class="mode-stack">
+      <div class="mode-layer" class:mode-visible={appMode === "work"} inert={appMode !== "work"}>
+        <div class="main-layout">
+          <Sidebar
+            {workspaces}
+            {selectedWsId}
+            {creatingWsId}
+            {prStatusMap}
+            {reviewingWsIds}
+            onSelect={selectWorkspace}
+            onNewWorkspace={handleNewWorkspace}
+            onRename={handleRename}
+            onRemove={handleRemove}
+          />
 
-        <WorkspacePanel
-          bind:activeTab
-          bind:fileNavigatePath
-          {selectedWs}
-          {selectedWsId}
-          {activeWorkspaces}
-          {creatingWsId}
+          <WorkspacePanel
+            bind:activeTab
+            bind:fileNavigatePath
+            {selectedWs}
+            {selectedWsId}
+            {activeWorkspaces}
+            {creatingWsId}
+            {changeCounts}
+            {planModeByWorkspace}
+            {thinkingModeByWorkspace}
+            {reviewByWorkspace}
+            {repoSettings}
+            {diffRefreshTrigger}
+            getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
+              id: q.id,
+              prompt: q.prompt,
+              imageCount: q.images.length,
+              mentionCount: q.mentions.length,
+              planMode: q.planMode,
+            }))}
+            onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
+            onSendImmediate={(prompt) => handleSendImmediate(prompt)}
+            onStop={handleStop}
+            onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
+            onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
+            onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
+            onExecutePlan={(wsId) => {
+              planModeByWorkspace.set(wsId, false);
+              sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
+            }}
+            onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
+            onReviewCancel={(wsId) => {
+              const wasRunning = reviewByWorkspace.get(wsId)?.status === "running";
+              reviewByWorkspace.delete(wsId);
+              if (wasRunning) stopAgent(wsId).catch((e) => { addToast(String(e)); });
+            }}
+            onReviewSendToChat={(wsId, markdown) => {
+              reviewByWorkspace.delete(wsId);
+              sendPrompt(wsId, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { addToast(String(e)); });
+            }}
+          />
+        </div>
+      </div>
+
+      <div class="mode-layer" class:mode-visible={appMode === "plan"} inert={appMode !== "plan"}>
+        <KanbanBoard
+          todos={todoItems}
+          inProgress={inProgressWs}
+          review={reviewWs}
+          done={doneWs}
+          {prStatusMap}
           {changeCounts}
-          {planModeByWorkspace}
-          {thinkingModeByWorkspace}
-          {reviewByWorkspace}
-          {repoSettings}
-          {diffRefreshTrigger}
-          getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
-            id: q.id,
-            prompt: q.prompt,
-            imageCount: q.images.length,
-            mentionCount: q.mentions.length,
-            planMode: q.planMode,
-          }))}
-          onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
-          onSendImmediate={(prompt) => handleSendImmediate(prompt)}
-          onStop={handleStop}
-          onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
-          onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
-          onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
-          onExecutePlan={(wsId) => {
-            planModeByWorkspace.set(wsId, false);
-            sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
-          }}
-          onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
-          onReviewCancel={(wsId) => {
-            const wasRunning = reviewByWorkspace.get(wsId)?.status === "running";
-            reviewByWorkspace.delete(wsId);
-            if (wasRunning) stopAgent(wsId).catch((e) => { addToast(String(e)); });
-          }}
-          onReviewSendToChat={(wsId, markdown) => {
-            reviewByWorkspace.delete(wsId);
-            sendPrompt(wsId, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { addToast(String(e)); });
-          }}
+          {reviewingWsIds}
+          {creatingWsId}
+          repoName={activeRepo.display_name}
+          onCardClick={handleKanbanCardClick}
+          onSpawnAgent={handleSpawnFromTodo}
+          onNewTodo={handleNewTodo}
+          onEditTodo={handleEditTodo}
+          onRemoveTodo={handleRemoveTodo}
+          onRemoveWorkspace={handleRemove}
         />
       </div>
-    {:else}
-      <KanbanBoard
-        todos={todoItems}
-        inProgress={inProgressWs}
-        review={reviewWs}
-        done={doneWs}
-        {prStatusMap}
-        {changeCounts}
-        {reviewingWsIds}
-        {creatingWsId}
-        repoName={activeRepo.display_name}
-        onCardClick={handleKanbanCardClick}
-        onSpawnAgent={handleSpawnFromTodo}
-        onNewTodo={handleNewTodo}
-        onEditTodo={handleEditTodo}
-        onRemoveTodo={handleRemoveTodo}
-        onRemoveWorkspace={handleRemove}
-      />
-    {/if}
+    </div>
 
     <AgentActivityBar
       running={activitySummary.running}
@@ -1447,6 +1508,27 @@ No need to mention in your report whether or not you used one of the fallback st
     flex: 1;
     display: flex;
     min-height: 0;
+  }
+
+  .mode-stack {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+  }
+
+  .mode-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    visibility: hidden;
+    pointer-events: none;
+    background: var(--bg-base);
+  }
+
+  .mode-layer.mode-visible {
+    visibility: visible;
+    pointer-events: auto;
+    z-index: 1;
   }
 
 </style>
