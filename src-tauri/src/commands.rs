@@ -1381,100 +1381,132 @@ pub async fn grep_workspace(
     }
 
     let wt = worktree_path.clone();
-    let output = tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new("rg");
-        cmd.arg("--json")
-            .arg(if case_sensitive { "--case-sensitive" } else { "--smart-case" })
-            .arg("--max-count=5")
-            .arg("--max-columns=500")
-            .arg("--max-filesize=1M");
+    tauri::async_runtime::spawn_blocking(move || {
+        use grep_matcher::Matcher;
+        use grep_regex::RegexMatcherBuilder;
+        use grep_searcher::sinks::UTF8;
+        use grep_searcher::SearcherBuilder;
+        use ignore::WalkBuilder;
 
-        if !is_regex {
-            cmd.arg("--fixed-strings");
+        // Build the regex matcher with the same semantics as `rg`
+        let escaped_pattern = if is_regex {
+            pattern_trimmed.clone()
+        } else {
+            regex::escape(&pattern_trimmed)
+        };
+
+        let mut builder = RegexMatcherBuilder::new();
+        if case_sensitive {
+            // Strict case: defaults are fine (case_insensitive=false, case_smart=false)
+        } else {
+            // Smart case: case-insensitive unless pattern has uppercase
+            builder.case_smart(true);
+        }
+        let matcher = builder
+            .build(&escaped_pattern)
+            .map_err(|e| format!("Invalid pattern: {}", e))?;
+
+        let mut searcher = SearcherBuilder::new()
+            .line_number(true)
+            .build();
+
+        let max_results: usize = 100;
+        let max_matches_per_file: usize = 5;
+        let max_line_len: usize = 500;
+        let max_filesize: u64 = 1_048_576; // 1MB
+
+        let mut results: Vec<GrepMatch> = Vec::new();
+        let mut truncated = false;
+        let worktree_prefix = wt.to_string_lossy().to_string();
+
+        let walker = WalkBuilder::new(&wt)
+            .hidden(true) // respect hidden files like rg default (skip .hidden)
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true)
+            .max_filesize(Some(max_filesize))
+            .build();
+
+        'outer: for entry in walker {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            // Skip directories and symlinks
+            let ft = match entry.file_type() {
+                Some(ft) => ft,
+                None => continue,
+            };
+            if !ft.is_file() {
+                continue;
+            }
+
+            let path = entry.path().to_path_buf();
+
+            let mut file_match_count = 0usize;
+
+            let search_result = searcher.search_path(
+                &matcher,
+                &path,
+                UTF8(|line_number, line_content| {
+                    if results.len() >= max_results {
+                        truncated = true;
+                        return Ok(false); // stop searching
+                    }
+                    if file_match_count >= max_matches_per_file {
+                        return Ok(false); // stop this file
+                    }
+                    file_match_count += 1;
+
+                    let raw_path = path.to_string_lossy();
+                    let rel_path = raw_path
+                        .strip_prefix(&worktree_prefix)
+                        .unwrap_or(&raw_path)
+                        .trim_start_matches('/');
+
+                    // Find column of first match in the line
+                    let column = matcher
+                        .find(line_content.as_bytes())
+                        .ok()
+                        .flatten()
+                        .map(|m| m.start() as u32)
+                        .unwrap_or(0);
+
+                    let mut content = line_content.trim_end().to_string();
+                    if content.len() > max_line_len {
+                        content.truncate(max_line_len);
+                        content.push_str("…");
+                    }
+
+                    results.push(GrepMatch {
+                        path: rel_path.to_string(),
+                        line_number: line_number as u32,
+                        column,
+                        line_content: content,
+                    });
+
+                    Ok(true)
+                }),
+            );
+
+            // Silently skip files that can't be searched (binary, encoding issues, etc.)
+            if let Err(_) = search_result {
+                continue;
+            }
+
+            if truncated {
+                break 'outer;
+            }
         }
 
-        cmd.arg("--").arg(&pattern_trimmed).current_dir(&wt);
-        cmd.output()
+        Ok(GrepResult {
+            matches: results,
+            truncated,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            "ripgrep (rg) not found — install via 'brew install ripgrep'".to_string()
-        } else {
-            format!("Failed to run rg: {}", e)
-        }
-    })?;
-
-    // Exit code 1 = no matches (not an error), 2 = regex error or similar
-    if !output.status.success() && output.status.code() != Some(1) {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("rg error: {}", stderr.trim()));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut matches = Vec::new();
-    let mut truncated = false;
-    let max_results = 100;
-
-    let worktree_prefix = worktree_path.to_string_lossy();
-
-    for line in stdout.lines() {
-        if matches.len() >= max_results {
-            truncated = true;
-            break;
-        }
-
-        let parsed: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        if parsed.get("type").and_then(|t| t.as_str()) != Some("match") {
-            continue;
-        }
-
-        let data = match parsed.get("data") {
-            Some(d) => d,
-            None => continue,
-        };
-
-        let raw_path = data
-            .pointer("/path/text")
-            .and_then(|p| p.as_str())
-            .unwrap_or("");
-        // Make path relative to worktree
-        let rel_path = raw_path
-            .strip_prefix(worktree_prefix.as_ref())
-            .unwrap_or(raw_path)
-            .trim_start_matches('/');
-
-        let line_number = data
-            .get("line_number")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(0) as u32;
-
-        let line_content = data
-            .pointer("/lines/text")
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .trim_end()
-            .to_string();
-
-        let column = data
-            .pointer("/submatches/0/start")
-            .and_then(|s| s.as_u64())
-            .unwrap_or(0) as u32;
-
-        matches.push(GrepMatch {
-            path: rel_path.to_string(),
-            line_number,
-            column,
-            line_content,
-        });
-    }
-
-    Ok(GrepResult { matches, truncated })
 }
 
 #[tauri::command]
