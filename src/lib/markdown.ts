@@ -80,11 +80,20 @@ marked.setOptions({
   breaks: false,
 });
 
+// Cache rendered HTML keyed by raw markdown string.
+// Messages are immutable once added, so cache entries never go stale.
+const renderCache = new Map<string, string>();
+
 /**
  * Render a markdown string to sanitized HTML.
  * Synchronous — safe to call inline in Svelte templates.
+ * Results are cached so re-renders skip parsing/highlighting entirely.
  */
 export function renderMarkdown(raw: string): string {
+  const cached = renderCache.get(raw);
+  if (cached !== undefined) return cached;
   const html = marked.parse(raw) as string;
-  return DOMPurify.sanitize(html);
+  const sanitized = DOMPurify.sanitize(html);
+  renderCache.set(raw, sanitized);
+  return sanitized;
 }
