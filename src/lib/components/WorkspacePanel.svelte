@@ -1,9 +1,11 @@
 <script lang="ts">
   import { SvelteMap } from "svelte/reactivity";
-  import type { WorkspaceInfo, RepoSettings } from "$lib/ipc";
+  import type { WorkspaceInfo, RepoSettings, PrStatus } from "$lib/ipc";
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/components/ChatPanel.svelte";
   import type { Mention } from "$lib/components/MentionInput.svelte";
+  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, AlertTriangle, Wrench, Eye } from "lucide-svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
@@ -25,6 +27,12 @@
     reviewByWorkspace: SvelteMap<string, ReviewState>;
     repoSettings: RepoSettings | null;
     diffRefreshTrigger: number;
+    prStatus: PrStatus | undefined;
+    wsChanges: { additions: number; deletions: number } | undefined;
+    onPrAction: () => void;
+    onReview: () => void;
+    reviewRunning: boolean;
+    operationInProgress: boolean;
     getQueueItems: (wsId: string) => QueueDisplayItem[];
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
     onSendImmediate: (prompt: string) => void;
@@ -51,6 +59,12 @@
     reviewByWorkspace,
     repoSettings,
     diffRefreshTrigger,
+    prStatus,
+    wsChanges,
+    onPrAction,
+    onReview,
+    reviewRunning,
+    operationInProgress,
     getQueueItems,
     onSend,
     onSendImmediate,
@@ -63,6 +77,8 @@
     onReviewCancel,
     onReviewSendToChat,
   }: Props = $props();
+
+  let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
 </script>
 
 <main class="panel">
@@ -87,6 +103,36 @@
             {/if}
           </button>
         {/each}
+      </div>
+
+      <div class="tab-actions">
+        {#if prStatus?.state === "open"}
+          <div class="action-group">
+            <button class="pr-link-btn" onclick={() => openUrl(prStatus!.url)} title="Open PR #{prStatus.number} in browser">
+              <ExternalLink size={12} />
+            </button>
+            <button class="action-badge review" onclick={onReview} disabled={isBusy}>
+              <Eye size={11} /> Review
+            </button>
+            {#if prStatus.mergeable === "conflicting"}
+              <button class="action-badge conflicts" onclick={onPrAction} disabled={isBusy}><AlertTriangle size={11} /> Conflicts</button>
+            {:else if prStatus.checks === "failing"}
+              <button class="action-badge checks-fail" onclick={onPrAction} disabled={isBusy}><Wrench size={11} /> Fix issues</button>
+            {:else if prStatus.checks === "pending"}
+              <span class="status-label checks-pending"><Loader size={10} class="status-icon spinning" /> Checks pending</span>
+            {:else if (prStatus.ahead_by ?? 0) > 0}
+              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Push</button>
+            {:else if wsChanges && (wsChanges.additions !== prStatus.additions || wsChanges.deletions !== prStatus.deletions)}
+              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Commit & push</button>
+            {:else}
+              <button class="action-badge mergeable" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitMerge size={11} />{/if} Merge</button>
+            {/if}
+          </div>
+        {:else if prStatus?.state === "merged"}
+          <span class="status-label merged"><Check size={10} class="status-icon" /> Done</span>
+        {:else if wsChanges && (wsChanges.additions > 0 || wsChanges.deletions > 0)}
+          <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
+        {/if}
       </div>
     </div>
 
@@ -241,6 +287,159 @@
   .tab.active {
     color: var(--text-bright);
     background: var(--border);
+  }
+
+  /* ── Tab actions (right side of tab bar) ────────── */
+
+  .tab-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .action-group {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--border-light);
+    border-radius: 5px;
+  }
+
+  .pr-link-btn {
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.35rem 0.45rem;
+    border: none;
+    border-right: 1px solid var(--border-light);
+    border-radius: 4px 0 0 4px;
+    display: flex;
+    align-items: center;
+  }
+
+  .pr-link-btn:hover {
+    color: var(--text-primary);
+    background: var(--border);
+  }
+
+  .action-badge {
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.3rem 0.5rem;
+    border-radius: 5px;
+    border: 1px solid;
+    cursor: pointer;
+    font-family: inherit;
+    background: transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .action-group .action-badge,
+  .action-group .status-label {
+    border: none;
+    border-radius: 0 4px 4px 0;
+  }
+
+  .action-badge:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .action-badge.create-pr,
+  .action-badge.push-needed {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+
+  .action-badge.create-pr:hover:not(:disabled),
+  .action-badge.push-needed:hover:not(:disabled) {
+    filter: brightness(1.2);
+  }
+
+  .action-badge.mergeable {
+    color: var(--status-ok);
+    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
+    background: color-mix(in srgb, var(--status-ok) 7%, transparent);
+  }
+
+  .action-badge.mergeable:hover:not(:disabled) {
+    filter: brightness(1.2);
+  }
+
+  .action-badge.checks-fail {
+    color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 40%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 7%, transparent);
+  }
+
+  .action-badge.checks-fail:hover:not(:disabled) {
+    filter: brightness(1.2);
+  }
+
+  .action-badge.review {
+    color: var(--text-secondary);
+    border-color: var(--border-light);
+    background: var(--bg-card);
+    border-left: none;
+    border-right: 1px solid var(--border-light);
+    border-radius: 0;
+  }
+
+  .action-badge.review:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--border);
+  }
+
+  .action-badge.conflicts {
+    color: #c87e7e;
+    border-color: color-mix(in srgb, #c87e7e 40%, transparent);
+    background: color-mix(in srgb, #c87e7e 7%, transparent);
+  }
+
+  .action-badge.conflicts:hover:not(:disabled) {
+    filter: brightness(1.2);
+  }
+
+  .status-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .action-group .status-label {
+    padding: 0.3rem 0.5rem;
+  }
+
+  .status-label.merged {
+    color: var(--status-ok);
+  }
+
+  .status-label.checks-pending {
+    animation: badge-pulse 2s ease-in-out infinite;
+  }
+
+  .status-label :global(.status-icon) {
+    flex-shrink: 0;
+  }
+
+  .status-label :global(.status-icon.spinning) {
+    animation: spin 1.5s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes badge-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
   }
 
   /* ── Tab content ──────────────────────────────────── */

@@ -1234,17 +1234,11 @@ No need to mention in your report whether or not you used one of the fallback st
       highlightedRepoIndex={repoDropdownIndex}
       onDropdownClose={() => (repoDropdownIndex = -1)}
       {selectedWs}
-      prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
-      wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}
       {appMode}
       onModeChange={(m) => { appMode = m; }}
       onSelectRepo={selectRepo}
       onAddRepo={handleOpenRepo}
       onSettings={() => (showSettings = true)}
-      onPrAction={handlePrAction}
-      onReview={handleReview}
-      reviewRunning={selectedWsId ? reviewByWorkspace.get(selectedWsId)?.status === "running" : false}
-      operationInProgress={selectedWsId ? gitOpInProgress.get(selectedWsId) ?? false : false}
     />
 
     {#if reviewAlertWs}
@@ -1287,6 +1281,12 @@ No need to mention in your report whether or not you used one of the fallback st
             {reviewByWorkspace}
             {repoSettings}
             {diffRefreshTrigger}
+            prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
+            wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}
+            onPrAction={handlePrAction}
+            onReview={handleReview}
+            reviewRunning={selectedWsId ? reviewByWorkspace.get(selectedWsId)?.status === "running" : false}
+            operationInProgress={selectedWsId ? gitOpInProgress.get(selectedWsId) ?? false : false}
             getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
               id: q.id,
               prompt: q.prompt,
