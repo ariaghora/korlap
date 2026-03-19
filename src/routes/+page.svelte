@@ -619,9 +619,7 @@ No need to mention in your report whether or not you used one of the fallback st
     };
     creatingWsId = tempId;
     workspaces.push(placeholder);
-    appMode = "work";
     selectWorkspace(tempId);
-    activeTab = "chat";
 
     try {
       const ws = await createWorkspace(repoId);
