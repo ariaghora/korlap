@@ -46,6 +46,8 @@
   import SearchModal from "$lib/components/SearchModal.svelte";
   import ReviewPill, { type ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi } from "$lib/components/ChatPanel.svelte";
+  import Toasts from "$lib/components/Toasts.svelte";
+  import { addToast } from "$lib/stores/toasts.svelte";
 
   type PanelTab = "chat" | "diff" | "files" | "terminal";
 
@@ -157,7 +159,6 @@ No need to mention in your report whether or not you used one of the fallback st
   let workspaces = $state<WorkspaceInfo[]>([]);
   let activeRepo = $state<RepoDetail | null>(null);
   let selectedWsId = $state<string | null>(null);
-  let error = $state("");
   let activeTab = $state<PanelTab>("chat");
   let diffRefreshTrigger = $state(0);
   let showSettings = $state(false);
@@ -207,7 +208,7 @@ No need to mention in your report whether or not you used one of the fallback st
       listRepos().then((r) => {
         repos = r;
         if (r.length > 0) selectRepo(r[0]);
-      }).catch((e) => { error = String(e); });
+      }).catch((e) => { addToast(String(e)); });
 
       unlistenStatus = await onAgentStatus((event) => {
         const isReviewing = reviewByWorkspace.has(event.workspace_id);
@@ -293,7 +294,7 @@ No need to mention in your report whether or not you used one of the fallback st
   // ── Handlers ───────────────────────────────────────────
 
   async function handleOpenRepo() {
-    error = "";
+
     try {
       const selected = await open({
         directory: true,
@@ -306,14 +307,14 @@ No need to mention in your report whether or not you used one of the fallback st
       }
       await selectRepo(repo);
     } catch (e) {
-      error = String(e);
+      addToast(String(e));
     }
   }
 
   function selectRepo(repo: RepoDetail) {
     activeRepo = repo;
     selectedWsId = null;
-    error = "";
+
 
     listWorkspaces(repo.id).then((ws) => {
       workspaces = ws;
@@ -322,7 +323,7 @@ No need to mention in your report whether or not you used one of the fallback st
         refreshChangeCounts(w.id);
         refreshPrStatus(w.id);
       });
-    }).catch((e) => { error = String(e); });
+    }).catch((e) => { addToast(String(e)); });
 
     getRepoSettings(repo.id).then((s) => { repoSettings = s; }).catch(() => {});
   }
@@ -330,7 +331,7 @@ No need to mention in your report whether or not you used one of the fallback st
   async function handleRemoveRepo() {
     if (!activeRepo) return;
     const repoId = activeRepo.id;
-    error = "";
+
 
     try {
       await removeRepo(repoId);
@@ -346,13 +347,13 @@ No need to mention in your report whether or not you used one of the fallback st
       activeRepo = repos.length > 0 ? repos[0] : null;
       if (activeRepo) selectRepo(activeRepo);
     } catch (e) {
-      error = String(e);
+      addToast(String(e));
     }
   }
 
   function handleNewWorkspace() {
     if (!activeRepo || creatingWsId) return;
-    error = "";
+
 
     const tempId = `creating-${crypto.randomUUID()}`;
     const repoId = activeRepo.id;
@@ -382,7 +383,7 @@ No need to mention in your report whether or not you used one of the fallback st
       if (failIdx >= 0) workspaces.splice(failIdx, 1);
       if (selectedWsId === tempId) selectedWsId = null;
       creatingWsId = null;
-      error = String(e);
+      addToast(String(e));
     });
   }
 
@@ -396,7 +397,7 @@ No need to mention in your report whether or not you used one of the fallback st
     );
     if (!confirmed) return;
 
-    error = "";
+
 
     // Optimistic: remove from UI immediately
     const idx = workspaces.findIndex((w) => w.id === wsId);
@@ -416,7 +417,7 @@ No need to mention in your report whether or not you used one of the fallback st
     removeWorkspace(wsId).catch((e) => {
       // Restore on failure
       if (removed) workspaces.push(removed);
-      error = String(e);
+      addToast(String(e));
     });
   }
 
@@ -424,7 +425,7 @@ No need to mention in your report whether or not you used one of the fallback st
 
   /** Core send — assumes caller has verified it's safe to send. */
   async function sendDirect(wsId: string, msg: QueuedMessage) {
-    error = "";
+
     setSending(wsId, true);
 
     if (msg.actionLabel) {
@@ -480,13 +481,13 @@ No need to mention in your report whether or not you used one of the fallback st
           }
           pendingDrain.set(wsId, true);
         } else if (event.type === "error") {
-          error = event.message;
+          addToast(event.message);
           setSending(wsId, false);
           pendingDrain.delete(wsId);
         }
       }, msg.planMode, msg.thinkingMode);
     } catch (e) {
-      error = String(e);
+      addToast(String(e));
       setSending(wsId, false);
       pendingDrain.delete(wsId);
     }
@@ -556,7 +557,7 @@ No need to mention in your report whether or not you used one of the fallback st
           images.map((img) => saveImage(wsId, img.base64, img.extension)),
         );
       } catch (e) {
-        error = `Failed to save images: ${e}`;
+        addToast(`Failed to save images: ${e}`);
         return;
       }
     }
@@ -635,7 +636,7 @@ No need to mention in your report whether or not you used one of the fallback st
         workspaces[idx] = updated;
       }
     } catch (e) {
-      error = String(e);
+      addToast(String(e));
     }
   }
 
@@ -709,7 +710,7 @@ No need to mention in your report whether or not you used one of the fallback st
       await stopAgent(selectedWsId);
       setSending(selectedWsId, false);
     } catch (e) {
-      error = String(e);
+      addToast(String(e));
     }
   }
 
@@ -858,9 +859,6 @@ No need to mention in your report whether or not you used one of the fallback st
         </div>
       {/if}
     </div>
-    {#if error}
-      <div class="error">{error}</div>
-    {/if}
   </div>
 {:else}
   <div class="app">
@@ -877,13 +875,6 @@ No need to mention in your report whether or not you used one of the fallback st
       onReview={handleReview}
       reviewRunning={selectedWsId ? reviewByWorkspace.get(selectedWsId)?.status === "running" : false}
     />
-
-    {#if error}
-      <div class="error">
-        {error}
-        <button class="error-dismiss" onclick={() => (error = "")}>×</button>
-      </div>
-    {/if}
 
     <div class="main-layout">
       <Sidebar
@@ -964,11 +955,11 @@ No need to mention in your report whether or not you used one of the fallback st
                     onCancel={() => {
                       const wasRunning = reviewByWorkspace.get(ws.id)?.status === "running";
                       reviewByWorkspace.delete(ws.id);
-                      if (wasRunning) stopAgent(ws.id).catch((e) => { error = String(e); });
+                      if (wasRunning) stopAgent(ws.id).catch((e) => { addToast(String(e)); });
                     }}
                     onSendToChat={(markdown) => {
                       reviewByWorkspace.delete(ws.id);
-                      sendPrompt(ws.id, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { error = String(e); });
+                      sendPrompt(ws.id, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { addToast(String(e)); });
                       activeTab = "chat";
                     }}
                   />
@@ -1054,6 +1045,8 @@ No need to mention in your report whether or not you used one of the fallback st
     {/if}
   </div>
 {/if}
+
+<Toasts />
 
 <style>
   /* ── Empty state ─────────────────────────────────── */
@@ -1314,26 +1307,4 @@ No need to mention in your report whether or not you used one of the fallback st
     font-size: 0.85rem;
   }
 
-  /* ── Error ──────────────────────────────────────── */
-
-  .error {
-    background: var(--error-bg);
-    color: var(--error);
-    padding: 0.4rem 0.75rem;
-    font-size: 0.8rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .error-dismiss {
-    background: none;
-    border: none;
-    color: var(--error);
-    cursor: pointer;
-    font-size: 1.1rem;
-    padding: 0 0.25rem;
-  }
 </style>
