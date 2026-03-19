@@ -258,6 +258,7 @@ No need to mention in your report whether or not you used one of the fallback st
     planMode: boolean;
     thinkingMode: boolean;
     actionLabel?: string;
+    hidden?: boolean;      // hide user message from chat (e.g. auto-sent TODO prompts)
   }
   const queueByWorkspace = new SvelteMap<string, QueuedMessage[]>();
   /** Set to true by Channel `done` event; checked by `agent-status: waiting` to trigger drain. */
@@ -652,7 +653,7 @@ No need to mention in your report whether or not you used one of the fallback st
           : imageInstructions;
       }
 
-      // Send the todo task as the initial prompt
+      // Send the todo task as the initial prompt (hidden — user already saw it on the card)
       routeMessage(ws.id, {
         id: crypto.randomUUID(),
         prompt: promptText,
@@ -661,6 +662,7 @@ No need to mention in your report whether or not you used one of the fallback st
         mentions: [],
         planMode: false,
         thinkingMode: repoSettings?.default_thinking ?? false,
+        hidden: true,
       });
     } catch (e) {
       const failIdx = workspaces.findIndex((w) => w.id === tempId);
@@ -725,7 +727,7 @@ No need to mention in your report whether or not you used one of the fallback st
     if (msg.actionLabel) {
       addActionMessage(wsId, crypto.randomUUID(), msg.actionLabel);
     } else {
-      addUserMessage(wsId, crypto.randomUUID(), msg.prompt || "(images attached)", msg.imageDataUrls, msg.msgMentions, msg.planMode || undefined);
+      addUserMessage(wsId, crypto.randomUUID(), msg.prompt || "(images attached)", msg.imageDataUrls, msg.msgMentions, msg.planMode || undefined, msg.hidden);
     }
 
     try {
