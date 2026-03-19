@@ -5,19 +5,30 @@
   interface Props {
     trigger: Snippet;
     children: Snippet;
+    onclose?: () => void;
   }
 
-  let { trigger, children }: Props = $props();
+  let { trigger, children, onclose }: Props = $props();
 
   let open = $state(false);
   let rootEl: HTMLDivElement | undefined = $state();
+  let prevOpen = false;
 
-  function toggle() {
-    open = !open;
-  }
+  $effect(() => {
+    if (prevOpen && !open) onclose?.();
+    prevOpen = open;
+  });
 
   export function close() {
     open = false;
+  }
+
+  export function toggle() {
+    open = !open;
+  }
+
+  export function isOpen() {
+    return open;
   }
 
   function handleClickOutside(e: MouseEvent) {
