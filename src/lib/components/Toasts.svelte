@@ -1,8 +1,16 @@
 <script lang="ts">
   import { getToasts, removeToast, type Toast } from "$lib/stores/toasts.svelte";
+  import { Copy, Check, X } from "lucide-svelte";
 
   const toasts = getToasts();
   let list = $derived([...toasts.values()].reverse());
+  let copied = $state<string | null>(null);
+
+  function copyMessage(toast: Toast) {
+    navigator.clipboard.writeText(toast.message);
+    copied = toast.id;
+    setTimeout(() => { if (copied === toast.id) copied = null; }, 1200);
+  }
 </script>
 
 {#if list.length > 0}
@@ -10,7 +18,12 @@
     {#each list as toast (toast.id)}
       <div class="toast toast-{toast.type}">
         <span class="toast-msg">{toast.message}</span>
-        <button class="toast-dismiss" onclick={() => removeToast(toast.id)} aria-label="Dismiss">×</button>
+        <button class="toast-btn" onclick={() => copyMessage(toast)} aria-label="Copy">
+          {#if copied === toast.id}<Check size={13} />{:else}<Copy size={13} />{/if}
+        </button>
+        <button class="toast-btn" onclick={() => removeToast(toast.id)} aria-label="Dismiss">
+          <X size={13} />
+        </button>
       </div>
     {/each}
   </div>
@@ -19,13 +32,13 @@
 <style>
   .toast-container {
     position: fixed;
-    bottom: 8px;
-    right: 8px;
+    bottom: 12px;
+    right: 12px;
     z-index: 9999;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    max-width: 400px;
+    gap: 8px;
+    max-width: 380px;
     pointer-events: none;
   }
 
@@ -33,14 +46,18 @@
     pointer-events: auto;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0.4rem 0.75rem;
+    gap: 10px;
+    padding: 10px 14px;
     font-size: 0.8rem;
     font-family: var(--font-sans);
-    line-height: 1.4;
+    line-height: 1.35;
     word-break: break-word;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
+    border-radius: 10px;
+    background: rgba(30, 27, 24, 0.78);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border: 0.5px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
   }
 
   .toast-error {
@@ -48,7 +65,7 @@
   }
 
   .toast-info {
-    color: var(--text-secondary);
+    color: var(--text-primary);
   }
 
   .toast-success {
@@ -60,18 +77,18 @@
     min-width: 0;
   }
 
-  .toast-dismiss {
+  .toast-btn {
     flex-shrink: 0;
     background: none;
     border: none;
     color: var(--text-muted);
     cursor: pointer;
-    font-size: 1rem;
+    font-size: 0.75rem;
     padding: 0;
     line-height: 1;
   }
 
-  .toast-dismiss:hover {
+  .toast-btn:hover {
     color: var(--text-secondary);
   }
 </style>
