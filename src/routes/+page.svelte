@@ -1202,81 +1202,85 @@ No need to mention in your report whether or not you used one of the fallback st
       />
     {/if}
 
-    {#if appMode === "work"}
-      <div class="main-layout">
-        <Sidebar
-          {workspaces}
-          {selectedWsId}
-          {creatingWsId}
-          {prStatusMap}
-          {reviewingWsIds}
-          onSelect={selectWorkspace}
-          onNewWorkspace={handleNewWorkspace}
-          onRename={handleRename}
-          onRemove={handleRemove}
-        />
+    <div class="mode-stack">
+      <div class="mode-layer" class:mode-visible={appMode === "work"} inert={appMode !== "work"}>
+        <div class="main-layout">
+          <Sidebar
+            {workspaces}
+            {selectedWsId}
+            {creatingWsId}
+            {prStatusMap}
+            {reviewingWsIds}
+            onSelect={selectWorkspace}
+            onNewWorkspace={handleNewWorkspace}
+            onRename={handleRename}
+            onRemove={handleRemove}
+          />
 
-        <WorkspacePanel
-          bind:activeTab
-          bind:fileNavigatePath
-          {selectedWs}
-          {selectedWsId}
-          {activeWorkspaces}
-          {creatingWsId}
+          <WorkspacePanel
+            bind:activeTab
+            bind:fileNavigatePath
+            {selectedWs}
+            {selectedWsId}
+            {activeWorkspaces}
+            {creatingWsId}
+            {changeCounts}
+            {planModeByWorkspace}
+            {thinkingModeByWorkspace}
+            {reviewByWorkspace}
+            {repoSettings}
+            {diffRefreshTrigger}
+            getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
+              id: q.id,
+              prompt: q.prompt,
+              imageCount: q.images.length,
+              mentionCount: q.mentions.length,
+              planMode: q.planMode,
+            }))}
+            onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
+            onSendImmediate={(prompt) => handleSendImmediate(prompt)}
+            onStop={handleStop}
+            onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
+            onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
+            onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
+            onExecutePlan={(wsId) => {
+              planModeByWorkspace.set(wsId, false);
+              sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
+            }}
+            onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
+            onReviewCancel={(wsId) => {
+              const wasRunning = reviewByWorkspace.get(wsId)?.status === "running";
+              reviewByWorkspace.delete(wsId);
+              if (wasRunning) stopAgent(wsId).catch((e) => { addToast(String(e)); });
+            }}
+            onReviewSendToChat={(wsId, markdown) => {
+              reviewByWorkspace.delete(wsId);
+              sendPrompt(wsId, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { addToast(String(e)); });
+            }}
+          />
+        </div>
+      </div>
+
+      <div class="mode-layer" class:mode-visible={appMode === "plan"} inert={appMode !== "plan"}>
+        <KanbanBoard
+          todos={todoItems}
+          inProgress={inProgressWs}
+          review={reviewWs}
+          done={doneWs}
+          {prStatusMap}
           {changeCounts}
-          {planModeByWorkspace}
-          {thinkingModeByWorkspace}
-          {reviewByWorkspace}
-          {repoSettings}
-          {diffRefreshTrigger}
-          getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
-            id: q.id,
-            prompt: q.prompt,
-            imageCount: q.images.length,
-            mentionCount: q.mentions.length,
-            planMode: q.planMode,
-          }))}
-          onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
-          onSendImmediate={(prompt) => handleSendImmediate(prompt)}
-          onStop={handleStop}
-          onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
-          onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
-          onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
-          onExecutePlan={(wsId) => {
-            planModeByWorkspace.set(wsId, false);
-            sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
-          }}
-          onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
-          onReviewCancel={(wsId) => {
-            const wasRunning = reviewByWorkspace.get(wsId)?.status === "running";
-            reviewByWorkspace.delete(wsId);
-            if (wasRunning) stopAgent(wsId).catch((e) => { addToast(String(e)); });
-          }}
-          onReviewSendToChat={(wsId, markdown) => {
-            reviewByWorkspace.delete(wsId);
-            sendPrompt(wsId, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { addToast(String(e)); });
-          }}
+          {reviewingWsIds}
+          {creatingWsId}
+          repoName={activeRepo.display_name}
+          onCardClick={handleKanbanCardClick}
+          onSpawnAgent={handleSpawnFromTodo}
+          onNewTodo={handleNewTodo}
+          onEditTodo={handleEditTodo}
+          onRemoveTodo={handleRemoveTodo}
+          onRemoveWorkspace={handleRemove}
         />
       </div>
-    {:else}
-      <KanbanBoard
-        todos={todoItems}
-        inProgress={inProgressWs}
-        review={reviewWs}
-        done={doneWs}
-        {prStatusMap}
-        {changeCounts}
-        {reviewingWsIds}
-        {creatingWsId}
-        repoName={activeRepo.display_name}
-        onCardClick={handleKanbanCardClick}
-        onSpawnAgent={handleSpawnFromTodo}
-        onNewTodo={handleNewTodo}
-        onEditTodo={handleEditTodo}
-        onRemoveTodo={handleRemoveTodo}
-        onRemoveWorkspace={handleRemove}
-      />
-    {/if}
+    </div>
 
     <AgentActivityBar
       running={activitySummary.running}
@@ -1445,6 +1449,27 @@ No need to mention in your report whether or not you used one of the fallback st
     flex: 1;
     display: flex;
     min-height: 0;
+  }
+
+  .mode-stack {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+  }
+
+  .mode-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    visibility: hidden;
+    pointer-events: none;
+    background: var(--bg-base);
+  }
+
+  .mode-layer.mode-visible {
+    visibility: visible;
+    pointer-events: auto;
+    z-index: 1;
   }
 
 </style>
