@@ -1575,7 +1575,7 @@ pub async fn get_pr_status(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<PrStatus, String> {
-    let (worktree_path, branch, gh_token) = {
+    let (worktree_path, branch, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
@@ -1585,17 +1585,19 @@ pub async fn get_pr_status(
             .repos
             .get(&ws.repo_id)
             .ok_or("Repo not found")?;
-        let token = if let Some(ref profile) = repo.gh_profile {
-            let mut gh_auth_cmd = std::process::Command::new("gh");
-            gh_auth_cmd.args(["auth", "token", "--user", profile]);
-            inject_shell_env(&mut gh_auth_cmd);
-            gh_auth_cmd.output().ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        } else {
-            None
-        };
-        (ws.worktree_path.clone(), ws.branch.clone(), token)
+        (ws.worktree_path.clone(), ws.branch.clone(), repo.gh_profile.clone())
+    };
+
+    // Resolve GH token outside the lock to avoid blocking other commands
+    let gh_token = if let Some(ref profile) = gh_profile {
+        let mut gh_auth_cmd = std::process::Command::new("gh");
+        gh_auth_cmd.args(["auth", "token", "--user", profile]);
+        inject_shell_env(&mut gh_auth_cmd);
+        gh_auth_cmd.output().ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    } else {
+        None
     };
 
     // Run gh in a blocking thread so it doesn't hold up the IPC queue
