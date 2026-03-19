@@ -49,7 +49,7 @@
 
   const DEFAULT_REVIEW_PROMPT = `## Code Review Instructions
 
-**IMPORTANT — Output format:** Do not narrate your process, do not describe what you're about to do, and do not print intermediate status updates. Your only output should be the final list of validated issues (step 8). If no issues were found, output only: "No issues found."
+**CRITICAL — Output format:** Do NOT produce any text output until you reach step 8. No narration, no status updates, no "let me do X" messages. Use tool calls silently. Your ONLY text output must be the final result from step 8. If no issues survived validation, your entire text output must be exactly: "No issues found." — nothing else.
 
 **Getting the workspace diff:** All diff commands below use the merge-base to capture every change on this branch (committed and uncommitted) relative to the target:
 
@@ -813,7 +813,7 @@ No need to mention in your report whether or not you used one of the fallback st
             review.currentTask = formatToolTask(last.name, last.input_preview);
           }
           if (event.text.trim()) {
-            review.resultMarkdown += (review.resultMarkdown ? "\n\n" : "") + event.text.trim();
+            review.resultMarkdown = event.text.trim();
           }
           reviewByWorkspace.set(wsId, { ...review });
         } else if (event.type === "done") {
