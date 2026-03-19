@@ -19,6 +19,10 @@
     getPrTemplate,
     getChangedFiles,
     readWorkspaceFile,
+    gitCommit,
+    gitPush,
+    ghPrMerge,
+    generateCommitMessage,
     type RepoDetail,
     type RepoSettings,
     type WorkspaceInfo,
@@ -168,6 +172,7 @@ No need to mention in your report whether or not you used one of the fallback st
   let showSearchModal = $state(false);
   let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
   let reviewByWorkspace = new SvelteMap<string, ReviewState>();
+  let gitOpInProgress = new SvelteMap<string, boolean>();
   let titleBarRef: TitleBar | undefined = $state();
   let repoDropdownIndex = $state(-1);
 
@@ -688,65 +693,135 @@ No need to mention in your report whether or not you used one of the fallback st
   async function handlePrAction() {
     if (!selectedWs || !activeRepo) return;
     const wsId = selectedWs.id;
+    if (gitOpInProgress.get(wsId)) return;
+
     const pr = prStatusMap.get(wsId);
 
     if (pr && pr.state === "open") {
       const cc = changeCounts.get(wsId);
       const hasLocalChanges = cc && (cc.additions !== pr.additions || cc.deletions !== pr.deletions);
 
+      // ── Agent-delegated: conflicts & failing checks need reasoning ──
       if (pr.mergeable === "conflicting") {
         const baseBranch = activeRepo.default_branch;
         sendPrompt(wsId, `PR #${pr.number} has merge conflicts with ${baseBranch}.\n\nResolve them:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n5. Push\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving conflicts on PR #${pr.number}`);
-      } else if (pr.checks === "failing") {
+        activeTab = "chat";
+        return;
+      }
+      if (pr.checks === "failing") {
         sendPrompt(wsId, `PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`, `Fixing checks on PR #${pr.number}`);
-      } else if (hasLocalChanges) {
-        sendPrompt(wsId, `There are uncommitted local changes. Run \`git status\` and \`git diff\` to review them, commit with a descriptive message, and push to origin. Only say "Pushed successfully" on success. If it fails, explain why.`, `Committing & pushing to PR #${pr.number}`);
-      } else if (pr.ahead_by > 0) {
-        sendPrompt(wsId, `Push local commits to origin. Run \`git push\`. Only say "Pushed successfully" on success. If it fails, explain why.`, `Pushing to PR #${pr.number}`);
-      } else {
-        sendPrompt(wsId, `Merge PR #${pr.number} using \`gh pr merge ${pr.number} --squash --delete-branch=false\`. Only say "PR #${pr.number} merged successfully" on success. If it fails, explain why.`, `Merging PR #${pr.number}`);
+        activeTab = "chat";
+        return;
       }
-      activeTab = "chat";
-      return;
-    } else {
-      // Create PR
-      const files = await getChangedFiles(wsId).catch(() => []);
-      const baseBranch = activeRepo.default_branch;
-      const template = await getPrTemplate(activeRepo.id).catch(() => "");
 
-      let prompt: string;
-      const customMsg = repoSettings?.pr_message?.trim();
-
-      if (customMsg) {
-        // Interpolate template variables in custom PR message
-        prompt = customMsg
-          .replace(/\{\{branch\}\}/g, selectedWs.branch)
-          .replace(/\{\{base_branch\}\}/g, baseBranch)
-          .replace(/\{\{file_count\}\}/g, String(files.length))
-          .replace(/\{\{pr_template\}\}/g, template
-            ? `\n## PR Description Template\n\nThis workspace has a PR template. Use it:\n\n\`\`\`markdown\n${template}\n\`\`\`\n`
-            : "");
-      } else {
-        // Default prompt
-        prompt = `Create a pull request.\n\n`;
-        prompt += `There are ${files.length} uncommitted changes.\n`;
-        prompt += `The current branch is ${selectedWs.branch}.\n`;
-        prompt += `The target branch is origin/${baseBranch}.\n\n`;
-        prompt += `Follow these steps:\n`;
-        prompt += `1. Run \`git diff\` to review uncommitted changes\n`;
-        prompt += `2. Commit them with a descriptive message\n`;
-        prompt += `3. Push to origin\n`;
-        prompt += `4. Use \`gh pr create --base ${baseBranch}\` to create a PR. Keep the title under 80 characters. Keep the description under five sentences unless there's a template.\n\n`;
-        prompt += `If any step fails, explain the issue.\n`;
-
-        if (template) {
-          prompt += `\n## PR Description Template\n\nThis repo has a PR template. Use it:\n\n\`\`\`markdown\n${template}\n\`\`\`\n`;
+      // ── Direct CLI: commit & push ──
+      if (hasLocalChanges) {
+        gitOpInProgress.set(wsId, true);
+        addActionMessage(wsId, crypto.randomUUID(), `Committing & pushing to PR #${pr.number}`);
+        try {
+          const msg = await generateCommitMessage(wsId);
+          await gitCommit(wsId, msg);
+          await gitPush(wsId);
+          addToast("Pushed successfully");
+          refreshChangeCounts(wsId);
+          refreshPrStatus(wsId);
+        } catch (e) {
+          addToast(String(e));
+          activeTab = "chat";
+          sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
+        } finally {
+          gitOpInProgress.delete(wsId);
         }
+        return;
       }
 
-      activeTab = "chat";
-      sendPrompt(wsId, prompt, "Creating pull request");
+      // ── Direct CLI: push only ──
+      if (pr.ahead_by > 0) {
+        gitOpInProgress.set(wsId, true);
+        addActionMessage(wsId, crypto.randomUUID(), `Pushing to PR #${pr.number}`);
+        try {
+          await gitPush(wsId);
+          addToast("Pushed successfully");
+          refreshPrStatus(wsId);
+        } catch (e) {
+          addToast(String(e));
+          activeTab = "chat";
+          sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
+        } finally {
+          gitOpInProgress.delete(wsId);
+        }
+        return;
+      }
+
+      // ── Direct CLI: merge ──
+      gitOpInProgress.set(wsId, true);
+      addActionMessage(wsId, crypto.randomUUID(), `Merging PR #${pr.number}`);
+      try {
+        await ghPrMerge(wsId, pr.number);
+        addToast(`PR #${pr.number} merged`);
+        refreshPrStatus(wsId);
+      } catch (e) {
+        addToast(String(e));
+        activeTab = "chat";
+        sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
+      } finally {
+        gitOpInProgress.delete(wsId);
+      }
+      return;
     }
+
+    // ── No PR: commit & push directly, then agent creates PR (needs conversation context) ──
+    const baseBranch = activeRepo.default_branch;
+    const files = await getChangedFiles(wsId).catch(() => []);
+    const template = await getPrTemplate(activeRepo.id).catch(() => "");
+
+    gitOpInProgress.set(wsId, true);
+    try {
+      // Commit & push if there are local changes
+      if (files.length > 0) {
+        addActionMessage(wsId, crypto.randomUUID(), "Committing & pushing changes");
+        const msg = await generateCommitMessage(wsId);
+        await gitCommit(wsId, msg);
+        await gitPush(wsId);
+      } else {
+        // Just push any unpushed commits
+        addActionMessage(wsId, crypto.randomUUID(), "Pushing to origin");
+        await gitPush(wsId);
+      }
+    } catch (e) {
+      addToast(String(e));
+      activeTab = "chat";
+      sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
+      gitOpInProgress.delete(wsId);
+      return;
+    }
+    gitOpInProgress.delete(wsId);
+
+    // Agent creates PR — it has conversation context for a good description
+    activeTab = "chat";
+    let prompt: string;
+    const customMsg = repoSettings?.pr_message?.trim();
+
+    if (customMsg) {
+      prompt = customMsg
+        .replace(/\{\{branch\}\}/g, selectedWs.branch)
+        .replace(/\{\{base_branch\}\}/g, baseBranch)
+        .replace(/\{\{file_count\}\}/g, String(files.length))
+        .replace(/\{\{pr_template\}\}/g, template
+          ? `\n## PR Description Template\n\nThis workspace has a PR template. Use it:\n\n\`\`\`markdown\n${template}\n\`\`\`\n`
+          : "");
+    } else {
+      prompt = `The code is already committed and pushed to origin.\n\n`;
+      prompt += `Create a pull request using \`gh pr create --base ${baseBranch}\`.\n`;
+      prompt += `Keep the title under 80 characters. Keep the description under five sentences unless there's a template.\n`;
+      prompt += `Base your PR title and description on what we've been working on in this conversation.\n`;
+
+      if (template) {
+        prompt += `\n## PR Description Template\n\nThis repo has a PR template. Use it:\n\n\`\`\`markdown\n${template}\n\`\`\`\n`;
+      }
+    }
+
+    sendPrompt(wsId, prompt, "Creating pull request");
   }
 
   async function handleStop() {
@@ -922,6 +997,7 @@ No need to mention in your report whether or not you used one of the fallback st
       onPrAction={handlePrAction}
       onReview={handleReview}
       reviewRunning={selectedWsId ? reviewByWorkspace.get(selectedWsId)?.status === "running" : false}
+      operationInProgress={selectedWsId ? gitOpInProgress.get(selectedWsId) ?? false : false}
     />
 
     <div class="main-layout">
