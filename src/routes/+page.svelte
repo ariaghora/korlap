@@ -56,6 +56,57 @@
   import Toasts from "$lib/components/Toasts.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
 
+  // ── PR Status Cache (localStorage) ─────────────────────
+  const PR_CACHE_KEY = "korlap:pr-status-cache";
+
+  function loadPrStatusCache(): Record<string, PrStatus> {
+    try {
+      const raw = localStorage.getItem(PR_CACHE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function savePrStatusCache() {
+    try {
+      const obj: Record<string, PrStatus> = {};
+      for (const [k, v] of prStatusMap) obj[k] = v;
+      localStorage.setItem(PR_CACHE_KEY, JSON.stringify(obj));
+    } catch {
+      // localStorage full or unavailable — non-critical
+    }
+  }
+
+  function hydratePrStatusFromCache(workspaceIds: string[]) {
+    const cache = loadPrStatusCache();
+    for (const wsId of workspaceIds) {
+      if (cache[wsId] && !prStatusMap.has(wsId)) {
+        prStatusMap.set(wsId, cache[wsId]);
+      }
+    }
+  }
+
+  function removePrStatusCacheEntry(wsId: string) {
+    try {
+      const cache = loadPrStatusCache();
+      delete cache[wsId];
+      localStorage.setItem(PR_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      // non-critical
+    }
+  }
+
+  function clearPrStatusCacheForRepo(workspaceIds: string[]) {
+    try {
+      const cache = loadPrStatusCache();
+      for (const wsId of workspaceIds) delete cache[wsId];
+      localStorage.setItem(PR_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      // non-critical
+    }
+  }
+
   const DEFAULT_REVIEW_PROMPT = `## Code Review Instructions
 
 **CRITICAL — Output format:** Do NOT produce any text output until you reach step 8. No narration, no status updates, no "let me do X" messages. Use tool calls silently. Your ONLY text output must be the final result from step 8. If no issues survived validation, your entire text output must be exactly: "No issues found." — nothing else.
@@ -415,6 +466,8 @@ No need to mention in your report whether or not you used one of the fallback st
 
     listWorkspaces(repo.id).then((ws) => {
       workspaces = ws;
+      // Hydrate PR statuses from cache immediately so cards render in correct columns
+      hydratePrStatusFromCache(ws.map((w) => w.id));
       ws.forEach((w) => loadPersistedMessages(w.id));
       ws.forEach((w) => {
         refreshChangeCounts(w.id);
@@ -437,11 +490,13 @@ No need to mention in your report whether or not you used one of the fallback st
     try {
       await removeRepo(repoId);
       showSettings = false;
+      const removedWsIds = workspaces.map((w) => w.id);
       repos = repos.filter((r) => r.id !== repoId);
       workspaces = [];
       selectedWsId = null;
       sendingByWorkspace.clear();
       prStatusMap.clear();
+      clearPrStatusCacheForRepo(removedWsIds);
       changeCounts.clear();
       planModeByWorkspace.clear();
       thinkingModeByWorkspace.clear();
@@ -648,6 +703,7 @@ No need to mention in your report whether or not you used one of the fallback st
     queueByWorkspace.delete(wsId);
     pendingDrain.delete(wsId);
     prStatusMap.delete(wsId);
+    removePrStatusCacheEntry(wsId);
     changeCounts.delete(wsId);
     planModeByWorkspace.delete(wsId);
     thinkingModeByWorkspace.delete(wsId);
@@ -1134,6 +1190,7 @@ No need to mention in your report whether or not you used one of the fallback st
         return; // No change — skip reactive update
       }
       prStatusMap.set(wsId, pr);
+      savePrStatusCache();
     } catch {
       // gh not installed or no remote
     }
