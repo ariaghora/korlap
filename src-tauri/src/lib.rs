@@ -102,6 +102,8 @@ pub fn run() {
             commands::get_pr_template,
             commands::get_repo_settings,
             commands::save_repo_settings,
+            commands::save_todos,
+            commands::load_todos,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

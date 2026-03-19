@@ -195,6 +195,11 @@ impl AppState {
         self.data_dir.join("messages")
     }
 
+    /// Path where todos are stored (per-repo)
+    pub fn todos_dir(&self) -> PathBuf {
+        self.data_dir.join("todos")
+    }
+
     /// Delete all persisted data for a workspace (messages file, session entry, images).
     /// Call this when permanently removing a workspace.
     pub fn delete_workspace_data(&mut self, workspace_id: &str) {

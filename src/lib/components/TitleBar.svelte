@@ -5,12 +5,16 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Dropdown from "./Dropdown.svelte";
 
+  type AppMode = "work" | "plan";
+
   interface Props {
     repos: RepoDetail[];
     activeRepo: RepoDetail;
     selectedWs: WorkspaceInfo | undefined;
     prStatus: PrStatus | undefined;
     wsChanges: { additions: number; deletions: number } | undefined;
+    appMode: AppMode;
+    onModeChange: (mode: AppMode) => void;
     onSelectRepo: (repo: RepoDetail) => void;
     onAddRepo: () => void;
     onSettings: () => void;
@@ -22,7 +26,7 @@
     onDropdownClose?: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning, operationInProgress, highlightedRepoIndex, onDropdownClose }: Props =
+  let { repos, activeRepo, selectedWs, prStatus, wsChanges, appMode, onModeChange, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning, operationInProgress, highlightedRepoIndex, onDropdownClose }: Props =
     $props();
 
   let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
@@ -108,17 +112,21 @@
         <Settings size={14} />
       </button>
     </div>
+    <div class="mode-switcher">
+      <button class="mode-btn" class:active={appMode === "work"} onclick={() => onModeChange("work")}>
+        Work <kbd class="mode-hint">⌘1</kbd>
+      </button>
+      <button class="mode-btn" class:active={appMode === "plan"} onclick={() => onModeChange("plan")}>
+        Plan <kbd class="mode-hint">⌘2</kbd>
+      </button>
+    </div>
   </div>
 
   <div class="titlebar-center">
-    {#if selectedWs}
+    {#if appMode === "work" && selectedWs}
       <span class="breadcrumb">
         <span class="breadcrumb-branch">{selectedWs.branch}</span>
         <span class="breadcrumb-sep">›</span>
-        <span class="breadcrumb-base">{activeRepo.default_branch}</span>
-      </span>
-    {:else}
-      <span class="breadcrumb">
         <span class="breadcrumb-base">{activeRepo.default_branch}</span>
       </span>
     {/if}
@@ -195,6 +203,53 @@
 
   .titlebar-center .breadcrumb {
     pointer-events: auto;
+  }
+
+  .mode-switcher {
+    display: flex;
+    align-items: stretch;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  .mode-btn {
+    padding: 0.4rem 0.55rem;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .mode-btn:hover:not(.active) {
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+  }
+
+  .mode-btn.active {
+    background: var(--bg-active);
+    color: var(--accent);
+  }
+
+  .mode-btn + .mode-btn {
+    border-left: 1px solid var(--border);
+  }
+
+  .mode-hint {
+    font-size: 0.55rem;
+    font-family: inherit;
+    padding: 0.05rem 0.2rem;
+    border-radius: 2px;
+    background: var(--border);
+    color: var(--text-muted);
   }
 
   .titlebar-right {

@@ -23,6 +23,8 @@
     gitPush,
     ghPrMerge,
     generateCommitMessage,
+    saveTodos,
+    loadTodos,
     type RepoDetail,
     type RepoSettings,
     type WorkspaceInfo,
@@ -42,6 +44,9 @@
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import WorkspacePanel, { type PanelTab } from "$lib/components/WorkspacePanel.svelte";
+  import KanbanBoard from "$lib/components/KanbanBoard.svelte";
+  import AgentActivityBar from "$lib/components/AgentActivityBar.svelte";
+  import ReviewAlertBar from "$lib/components/ReviewAlertBar.svelte";
   import { type PastedImage } from "$lib/components/ChatPanel.svelte";
   import type { Mention } from "$lib/components/MentionInput.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
@@ -176,6 +181,20 @@ No need to mention in your report whether or not you used one of the fallback st
   let titleBarRef: TitleBar | undefined = $state();
   let repoDropdownIndex = $state(-1);
 
+  // ── App mode + Todos ────────────────────────────────────
+  type AppMode = "work" | "plan";
+  let appMode = $state<AppMode>("plan");
+
+  interface TodoItem {
+    id: string;
+    repo_id: string;
+    title: string;
+    description: string;
+    images?: PastedImage[];
+    created_at: number;
+  }
+  let todos = $state<TodoItem[]>([]);
+
   // ── Message queue ──────────────────────────────────────
   interface QueuedMessage {
     id: string;
@@ -200,6 +219,34 @@ No need to mention in your report whether or not you used one of the fallback st
   let activeWorkspaces = $derived(
     [...workspaces].sort((a, b) => a.created_at - b.created_at),
   );
+
+  // ── Kanban derived state ────────────────────────────────
+  let todoItems = $derived(todos.filter((t) => t.repo_id === activeRepo?.id));
+  let inProgressWs = $derived(
+    activeWorkspaces.filter((ws) => {
+      const pr = prStatusMap.get(ws.id);
+      return !pr || pr.state === "none";
+    }),
+  );
+  let reviewWs = $derived(
+    activeWorkspaces.filter((ws) => prStatusMap.get(ws.id)?.state === "open"),
+  );
+  let doneWs = $derived(
+    activeWorkspaces.filter((ws) => prStatusMap.get(ws.id)?.state === "merged"),
+  );
+  let activitySummary = $derived({
+    running: workspaces.filter((w) => w.status === "running").length,
+    review: reviewWs.length,
+    todo: todoItems.length,
+    done: doneWs.length,
+  });
+
+  // Review alert: show completed reviews (not running ones)
+  let completedReviewWs = $derived(
+    reviewWs.filter((ws) => reviewByWorkspace.get(ws.id)?.status === "complete"),
+  );
+  let reviewAlertWs = $derived(completedReviewWs.length > 0 ? completedReviewWs[0] : null);
+  let reviewAlertMore = $derived(Math.max(0, completedReviewWs.length - 1));
 
   // ── Lifecycle ──────────────────────────────────────────
 
@@ -311,14 +358,14 @@ No need to mention in your report whether or not you used one of the fallback st
             showSearchModal = true;
           }
           break;
-        default:
-          if (!inInput && e.key >= "1" && e.key <= "9") {
-            e.preventDefault();
-            const idx = parseInt(e.key) - 1;
-            if (idx < activeWorkspaces.length) {
-              selectWorkspace(activeWorkspaces[idx].id);
-            }
-          }
+        case "1":
+          e.preventDefault();
+          appMode = "work";
+          break;
+        case "2":
+          e.preventDefault();
+          appMode = "plan";
+          break;
       }
     }
 
@@ -376,6 +423,10 @@ No need to mention in your report whether or not you used one of the fallback st
     }).catch((e) => { addToast(String(e)); });
 
     getRepoSettings(repo.id).then((s) => { repoSettings = s; }).catch(() => {});
+
+    loadTodos(repo.id).then((raw) => {
+      todos = (raw as TodoItem[]) ?? [];
+    }).catch(() => { todos = []; });
   }
 
   async function handleRemoveRepo() {
@@ -394,6 +445,7 @@ No need to mention in your report whether or not you used one of the fallback st
       changeCounts.clear();
       planModeByWorkspace.clear();
       thinkingModeByWorkspace.clear();
+      todos = [];
       activeRepo = repos.length > 0 ? repos[0] : null;
       if (activeRepo) selectRepo(activeRepo);
     } catch (e) {
@@ -436,6 +488,135 @@ No need to mention in your report whether or not you used one of the fallback st
       addToast(String(e));
     });
   }
+
+  // ── Todo handlers ──────────────────────────────────────
+
+  function persistTodos() {
+    if (!activeRepo) return;
+    saveTodos(activeRepo.id, todos).catch((e) => addToast(String(e)));
+  }
+
+  function handleNewTodo(title: string, description: string, images: PastedImage[]) {
+    if (!activeRepo) return;
+    if (!title.trim() && images.length === 0) return;
+    todos.push({
+      id: crypto.randomUUID(),
+      repo_id: activeRepo.id,
+      title: title.trim(),
+      description: description.trim(),
+      images: images.length > 0 ? images : undefined,
+      created_at: Date.now() / 1000,
+    });
+    persistTodos();
+  }
+
+  function handleEditTodo(todoId: string, title: string, description: string, images: PastedImage[]) {
+    const todo = todos.find((t) => t.id === todoId);
+    if (todo) {
+      todo.title = title.trim();
+      todo.description = description.trim();
+      todo.images = images.length > 0 ? images : undefined;
+      persistTodos();
+    }
+  }
+
+  function handleRemoveTodo(todoId: string) {
+    const idx = todos.findIndex((t) => t.id === todoId);
+    if (idx >= 0) {
+      todos.splice(idx, 1);
+      persistTodos();
+    }
+  }
+
+  async function handleSpawnFromTodo(todoId: string) {
+    if (!activeRepo || creatingWsId) return;
+    const todo = todos.find((t) => t.id === todoId);
+    if (!todo) return;
+
+    const repoId = activeRepo.id;
+    const tempId = `creating-${crypto.randomUUID()}`;
+    const placeholder: WorkspaceInfo = {
+      id: tempId,
+      name: "Creating...",
+      branch: "",
+      worktree_path: "",
+      repo_id: repoId,
+      gh_profile: null,
+      status: "waiting",
+      created_at: Date.now() / 1000,
+    };
+    creatingWsId = tempId;
+    workspaces.push(placeholder);
+    appMode = "work";
+    selectWorkspace(tempId);
+    activeTab = "chat";
+
+    try {
+      const ws = await createWorkspace(repoId);
+      const idx = workspaces.findIndex((w) => w.id === tempId);
+      if (idx >= 0) workspaces[idx] = ws;
+      selectedWsId = ws.id;
+      creatingWsId = null;
+
+      // Remove the todo now that workspace exists
+      handleRemoveTodo(todoId);
+
+      // Build prompt from title + description
+      const promptText = todo.description
+        ? `${todo.title}\n\n${todo.description}`
+        : todo.title;
+
+      // Save images to workspace dir if any, build fullPrompt with image refs
+      const todoImages = todo.images ?? [];
+      let fullPrompt = promptText;
+      if (todoImages.length > 0) {
+        try {
+          const imagePaths = await Promise.all(
+            todoImages.map((img) => saveImage(ws.id, img.base64, img.extension)),
+          );
+          const refs = imagePaths.join("\n");
+          const imageInstructions =
+            imagePaths.length === 1
+              ? `I've attached an image. Read it using the Read tool:\n${refs}`
+              : `I've attached ${imagePaths.length} images. Read each using the Read tool:\n${refs}`;
+          fullPrompt = fullPrompt
+            ? `${imageInstructions}\n\n${fullPrompt}`
+            : imageInstructions;
+        } catch (e) {
+          addToast(`Failed to save images: ${e}`);
+        }
+      }
+
+      const dataUrls = todoImages.length > 0 ? todoImages.map((img) => img.dataUrl) : undefined;
+
+      // Send the todo task as the initial prompt
+      routeMessage(ws.id, {
+        id: crypto.randomUUID(),
+        prompt: promptText,
+        fullPrompt,
+        images: todoImages,
+        imageDataUrls: dataUrls,
+        mentions: [],
+        planMode: false,
+        thinkingMode: repoSettings?.default_thinking ?? false,
+      });
+    } catch (e) {
+      const failIdx = workspaces.findIndex((w) => w.id === tempId);
+      if (failIdx >= 0) workspaces.splice(failIdx, 1);
+      if (selectedWsId === tempId) selectedWsId = null;
+      creatingWsId = null;
+      addToast(String(e));
+    }
+  }
+
+  function handleKanbanCardClick(wsId: string) {
+    selectedWsId = wsId;
+    appMode = "work";
+    activeTab = "chat";
+    refreshPrStatus(wsId);
+  }
+
+  // ── Workspace handlers ────────────────────────────────
 
   async function handleRemove(wsId: string) {
     const ws = workspaces.find((w) => w.id === wsId);
@@ -991,6 +1172,8 @@ No need to mention in your report whether or not you used one of the fallback st
       {selectedWs}
       prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
       wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}
+      {appMode}
+      onModeChange={(m) => { appMode = m; }}
       onSelectRepo={selectRepo}
       onAddRepo={handleOpenRepo}
       onSettings={() => (showSettings = true)}
@@ -1000,61 +1183,100 @@ No need to mention in your report whether or not you used one of the fallback st
       operationInProgress={selectedWsId ? gitOpInProgress.get(selectedWsId) ?? false : false}
     />
 
-    <div class="main-layout">
-      <Sidebar
-        {workspaces}
-        {selectedWsId}
-        {creatingWsId}
-        {prStatusMap}
-        {reviewingWsIds}
-        onSelect={selectWorkspace}
-        onNewWorkspace={handleNewWorkspace}
-        onRename={handleRename}
-        onRemove={handleRemove}
+    {#if reviewAlertWs}
+      <ReviewAlertBar
+        workspace={reviewAlertWs}
+        moreCount={reviewAlertMore}
+        onReviewNow={() => {
+          selectedWsId = reviewAlertWs!.id;
+          appMode = "work";
+          activeTab = "diff";
+        }}
       />
+    {/if}
 
-      <WorkspacePanel
-        bind:activeTab
-        bind:fileNavigatePath
-        {selectedWs}
-        {selectedWsId}
-        {activeWorkspaces}
-        {creatingWsId}
+    {#if appMode === "work"}
+      <div class="main-layout">
+        <Sidebar
+          {workspaces}
+          {selectedWsId}
+          {creatingWsId}
+          {prStatusMap}
+          {reviewingWsIds}
+          onSelect={selectWorkspace}
+          onNewWorkspace={handleNewWorkspace}
+          onRename={handleRename}
+          onRemove={handleRemove}
+        />
+
+        <WorkspacePanel
+          bind:activeTab
+          bind:fileNavigatePath
+          {selectedWs}
+          {selectedWsId}
+          {activeWorkspaces}
+          {creatingWsId}
+          {changeCounts}
+          {planModeByWorkspace}
+          {thinkingModeByWorkspace}
+          {reviewByWorkspace}
+          {repoSettings}
+          {diffRefreshTrigger}
+          getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
+            id: q.id,
+            prompt: q.prompt,
+            imageCount: q.images.length,
+            mentionCount: q.mentions.length,
+            planMode: q.planMode,
+          }))}
+          onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
+          onSendImmediate={(prompt) => handleSendImmediate(prompt)}
+          onStop={handleStop}
+          onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
+          onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
+          onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
+          onExecutePlan={(wsId) => {
+            planModeByWorkspace.set(wsId, false);
+            sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
+          }}
+          onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
+          onReviewCancel={(wsId) => {
+            const wasRunning = reviewByWorkspace.get(wsId)?.status === "running";
+            reviewByWorkspace.delete(wsId);
+            if (wasRunning) stopAgent(wsId).catch((e) => { addToast(String(e)); });
+          }}
+          onReviewSendToChat={(wsId, markdown) => {
+            reviewByWorkspace.delete(wsId);
+            sendPrompt(wsId, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { addToast(String(e)); });
+          }}
+        />
+      </div>
+    {:else}
+      <KanbanBoard
+        todos={todoItems}
+        inProgress={inProgressWs}
+        review={reviewWs}
+        done={doneWs}
+        {prStatusMap}
         {changeCounts}
-        {planModeByWorkspace}
-        {thinkingModeByWorkspace}
-        {reviewByWorkspace}
-        {repoSettings}
-        {diffRefreshTrigger}
-        getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
-          id: q.id,
-          prompt: q.prompt,
-          imageCount: q.images.length,
-          mentionCount: q.mentions.length,
-          planMode: q.planMode,
-        }))}
-        onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
-        onSendImmediate={(prompt) => handleSendImmediate(prompt)}
-        onStop={handleStop}
-        onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
-        onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
-        onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
-        onExecutePlan={(wsId) => {
-          planModeByWorkspace.set(wsId, false);
-          sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
-        }}
-        onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
-        onReviewCancel={(wsId) => {
-          const wasRunning = reviewByWorkspace.get(wsId)?.status === "running";
-          reviewByWorkspace.delete(wsId);
-          if (wasRunning) stopAgent(wsId).catch((e) => { addToast(String(e)); });
-        }}
-        onReviewSendToChat={(wsId, markdown) => {
-          reviewByWorkspace.delete(wsId);
-          sendPrompt(wsId, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { addToast(String(e)); });
-        }}
+        {reviewingWsIds}
+        {creatingWsId}
+        repoName={activeRepo.display_name}
+        onCardClick={handleKanbanCardClick}
+        onSpawnAgent={handleSpawnFromTodo}
+        onNewTodo={handleNewTodo}
+        onEditTodo={handleEditTodo}
+        onRemoveTodo={handleRemoveTodo}
+        onRemoveWorkspace={handleRemove}
       />
-    </div>
+    {/if}
+
+    <AgentActivityBar
+      running={activitySummary.running}
+      review={activitySummary.review}
+      todo={activitySummary.todo}
+      done={activitySummary.done}
+    />
 
     {#if showSearchModal && selectedWsId}
       <SearchModal

@@ -2151,6 +2151,43 @@ pub fn load_messages(
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
+// ── Todo persistence ─────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn save_todos(
+    repo_id: String,
+    todos: serde_json::Value,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let todos_dir = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.todos_dir()
+    };
+    std::fs::create_dir_all(&todos_dir).map_err(|e| e.to_string())?;
+    let todos_file = todos_dir.join(format!("{}.json", repo_id));
+    let data = serde_json::to_string(&todos).map_err(|e| e.to_string())?;
+    std::fs::write(&todos_file, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn load_todos(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<serde_json::Value, String> {
+    let todos_file = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.todos_dir().join(format!("{}.json", repo_id))
+    };
+
+    if !todos_file.exists() {
+        return Ok(serde_json::json!([]));
+    }
+
+    let data = std::fs::read_to_string(&todos_file).map_err(|e| e.to_string())?;
+    serde_json::from_str(&data).map_err(|e| e.to_string())
+}
+
 // ── Image commands ───────────────────────────────────────────────────
 
 /// Save base64-encoded image data to the app data directory.
