@@ -108,7 +108,7 @@ fn get_shell_env() -> &'static ShellEnv {
         // Resolve absolute path to `claude` binary once, so we don't rely
         // on PATH lookup at every spawn (which can fail in sandboxed contexts).
         let claude_path = std::process::Command::new("zsh")
-            .args(["-lic", &format!("echo {delimiter}; which claude; echo {delimiter}")])
+            .args(["-lic", &format!("echo {delimiter}; whence -p claude; echo {delimiter}")])
             .stderr(std::process::Stdio::null())
             .output()
             .ok()
