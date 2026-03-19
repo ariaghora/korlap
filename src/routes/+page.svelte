@@ -918,6 +918,7 @@ No need to mention in your report whether or not you used one of the fallback st
       {repos}
       {activeRepo}
       highlightedRepoIndex={repoDropdownIndex}
+      onDropdownClose={() => (repoDropdownIndex = -1)}
       {selectedWs}
       prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
       wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}

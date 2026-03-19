@@ -18,9 +18,10 @@
     onReview: () => void;
     reviewRunning: boolean;
     highlightedRepoIndex: number;
+    onDropdownClose?: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning, highlightedRepoIndex }: Props =
+  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning, highlightedRepoIndex, onDropdownClose }: Props =
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
@@ -72,7 +73,7 @@
 >
   <div class="titlebar-left">
     <div class="btn-group">
-      <Dropdown bind:this={dropdownRef}>
+      <Dropdown bind:this={dropdownRef} onclose={onDropdownClose}>
         {#snippet trigger()}
           <span class="repo-name">{activeRepo.display_name}</span>
           <kbd class="shortcut-hint">⌘E</kbd>

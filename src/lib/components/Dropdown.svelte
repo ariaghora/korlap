@@ -5,12 +5,19 @@
   interface Props {
     trigger: Snippet;
     children: Snippet;
+    onclose?: () => void;
   }
 
-  let { trigger, children }: Props = $props();
+  let { trigger, children, onclose }: Props = $props();
 
   let open = $state(false);
   let rootEl: HTMLDivElement | undefined = $state();
+  let prevOpen = false;
+
+  $effect(() => {
+    if (prevOpen && !open) onclose?.();
+    prevOpen = open;
+  });
 
   export function close() {
     open = false;
