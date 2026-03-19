@@ -225,6 +225,7 @@ fn parse_stream_line(
     on_event: &Channel<AgentEvent>,
     session_id: &mut Option<String>,
     worktree_path: &str,
+    last_assistant_text: &mut String,
 ) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
@@ -373,12 +374,25 @@ fn parse_stream_line(
                 Some(thinking_parts.join("\n"))
             };
             if !text.is_empty() || !tool_uses.is_empty() || thinking.is_some() {
+                *last_assistant_text = text.clone();
                 let _ = on_event.send(AgentEvent::AssistantMessage { text, tool_uses, thinking });
             }
         }
         "result" => {
             if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
                 *session_id = Some(sid.to_string());
+            }
+            // The result message may contain final text (e.g. plan output) that wasn't
+            // in a preceding assistant message. Emit it so the frontend can display it.
+            if let Some(result_text) = v.get("result").and_then(|r| r.as_str()) {
+                let trimmed = result_text.trim().to_string();
+                if !trimmed.is_empty() && trimmed != *last_assistant_text {
+                    let _ = on_event.send(AgentEvent::AssistantMessage {
+                        text: trimmed,
+                        tool_uses: vec![],
+                        thinking: None,
+                    });
+                }
             }
             let _ = on_event.send(AgentEvent::Done);
         }
@@ -2090,11 +2104,12 @@ pub fn send_message(
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
         let mut new_session_id: Option<String> = None;
+        let mut last_assistant_text = String::new();
 
         for line in reader.lines() {
             match line {
                 Ok(line) if !line.is_empty() => {
-                    parse_stream_line(&line, &on_event, &mut new_session_id, &wt_path_str);
+                    parse_stream_line(&line, &on_event, &mut new_session_id, &wt_path_str, &mut last_assistant_text);
                 }
                 Ok(_) => {} // empty line, skip
                 Err(e) => {
