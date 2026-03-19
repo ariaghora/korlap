@@ -25,6 +25,8 @@
   let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning, operationInProgress, highlightedRepoIndex, onDropdownClose }: Props =
     $props();
 
+  let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
+
   let dropdownRef: Dropdown | undefined = $state();
 
   function selectRepo(repo: RepoDetail) {
@@ -129,27 +131,27 @@
           <button class="pr-link-btn" onclick={() => openUrl(prStatus!.url)} title="Open PR #{prStatus.number} in browser">
             <ExternalLink size={12} />
           </button>
-          <button class="action-badge review" onclick={onReview} disabled={selectedWs.status === "running" || reviewRunning || operationInProgress}>
+          <button class="action-badge review" onclick={onReview} disabled={isBusy}>
             <Eye size={11} /> Review
           </button>
           {#if prStatus.mergeable === "conflicting"}
-            <button class="action-badge conflicts" onclick={onPrAction} disabled={operationInProgress}><AlertTriangle size={11} /> Conflicts</button>
+            <button class="action-badge conflicts" onclick={onPrAction} disabled={isBusy}><AlertTriangle size={11} /> Conflicts</button>
           {:else if prStatus.checks === "failing"}
-            <button class="action-badge checks-fail" onclick={onPrAction} disabled={operationInProgress}><Wrench size={11} /> Fix issues</button>
+            <button class="action-badge checks-fail" onclick={onPrAction} disabled={isBusy}><Wrench size={11} /> Fix issues</button>
           {:else if prStatus.checks === "pending"}
             <span class="status-label checks-pending"><Loader size={10} class="status-icon spinning" /> Checks pending</span>
           {:else if (prStatus.ahead_by ?? 0) > 0}
-            <button class="action-badge push-needed" onclick={onPrAction} disabled={operationInProgress}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Push</button>
+            <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Push</button>
           {:else if wsChanges && (wsChanges.additions !== prStatus.additions || wsChanges.deletions !== prStatus.deletions)}
-            <button class="action-badge push-needed" onclick={onPrAction} disabled={operationInProgress}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Commit & push</button>
+            <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Commit & push</button>
           {:else}
-            <button class="action-badge mergeable" onclick={onPrAction} disabled={operationInProgress}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitMerge size={11} />{/if} Merge</button>
+            <button class="action-badge mergeable" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitMerge size={11} />{/if} Merge</button>
           {/if}
         </div>
       {:else if prStatus?.state === "merged"}
         <span class="status-label merged"><Check size={10} class="status-icon" /> Done</span>
       {:else if wsChanges && (wsChanges.additions > 0 || wsChanges.deletions > 0)}
-        <button class="action-badge create-pr" onclick={onPrAction} disabled={selectedWs.status === "running" || operationInProgress}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
+        <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
       {/if}
     {/if}
   </div>
@@ -379,6 +381,12 @@
     border-radius: 0 4px 4px 0;
   }
 
+  .action-badge:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
   .action-badge.create-pr {
     color: var(--accent);
     border-color: color-mix(in srgb, var(--accent) 40%, transparent);
@@ -389,18 +397,13 @@
     filter: brightness(1.2);
   }
 
-  .action-badge.create-pr:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
   .action-badge.push-needed {
     color: var(--accent);
     border-color: color-mix(in srgb, var(--accent) 40%, transparent);
     background: color-mix(in srgb, var(--accent) 7%, transparent);
   }
 
-  .action-badge.push-needed:hover {
+  .action-badge.push-needed:hover:not(:disabled) {
     filter: brightness(1.2);
   }
 
@@ -410,7 +413,7 @@
     background: color-mix(in srgb, var(--status-ok) 7%, transparent);
   }
 
-  .action-badge.mergeable:hover {
+  .action-badge.mergeable:hover:not(:disabled) {
     filter: brightness(1.2);
   }
 
@@ -420,7 +423,7 @@
     background: color-mix(in srgb, var(--diff-del) 7%, transparent);
   }
 
-  .action-badge.checks-fail:hover {
+  .action-badge.checks-fail:hover:not(:disabled) {
     filter: brightness(1.2);
   }
 
@@ -438,18 +441,13 @@
     background: var(--border);
   }
 
-  .action-badge.review:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
   .action-badge.conflicts {
     color: #c87e7e;
     border-color: color-mix(in srgb, #c87e7e 40%, transparent);
     background: color-mix(in srgb, #c87e7e 7%, transparent);
   }
 
-  .action-badge.conflicts:hover {
+  .action-badge.conflicts:hover:not(:disabled) {
     filter: brightness(1.2);
   }
 
