@@ -84,16 +84,52 @@ fn get_shell_env() -> &'static ShellEnv {
 
         let home = std::env::var("HOME").ok();
 
+        // Use interactive login shell (-lic) so .zshrc is sourced — this is
+        // where nvm/fnm/volta add their PATH entries.  Delimiters protect
+        // against noisy .zshrc output (motd, nvm "now using", etc.).
+        let delimiter = "__KORLAP_ENV__";
         let path = std::process::Command::new("zsh")
-            .args(["-l", "-c", "echo $PATH"])
+            .args([
+                "-lic",
+                &format!("echo {delimiter}; echo $PATH; echo {delimiter}"),
+            ])
+            .stderr(std::process::Stdio::null())
             .output()
             .ok()
             .and_then(|o| {
-                let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if s.is_empty() { None } else { Some(s) }
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let mut parts = stdout.split(delimiter);
+                let _before = parts.next(); // noise before first delimiter
+                let value = parts.next()?;  // the actual PATH
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() { None } else { Some(trimmed) }
             });
 
-        ShellEnv { ssh_auth_sock, home, path }
+        // Resolve absolute path to `claude` binary once, so we don't rely
+        // on PATH lookup at every spawn (which can fail in sandboxed contexts).
+        let claude_path = std::process::Command::new("zsh")
+            .args(["-lic", &format!("echo {delimiter}; whence -p claude; echo {delimiter}")])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .and_then(|o| {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let mut parts = stdout.split(delimiter);
+                let _before = parts.next();
+                let value = parts.next()?;
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() || trimmed.contains("not found") {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+
+        if claude_path.is_none() {
+            tracing::warn!("Could not resolve `claude` binary path — agent spawn will likely fail");
+        }
+
+        ShellEnv { ssh_auth_sock, home, path, claude_path }
     })
 }
 
@@ -101,6 +137,7 @@ struct ShellEnv {
     ssh_auth_sock: Option<String>,
     home: Option<String>,
     path: Option<String>,
+    claude_path: Option<String>,
 }
 
 /// Inject essential shell environment vars that Tauri apps launched from
@@ -1913,8 +1950,12 @@ pub fn send_message(
         None
     };
 
-    // Build claude command
-    let mut cmd = std::process::Command::new("claude");
+    // Build claude command — use resolved absolute path when available
+    let claude_bin = get_shell_env()
+        .claude_path
+        .as_deref()
+        .unwrap_or("claude");
+    let mut cmd = std::process::Command::new(claude_bin);
     cmd.arg("-p").arg(&prompt);
     cmd.args(["--output-format", "stream-json", "--verbose"]);
     // Permission mode: plan mode uses --permission-mode plan, otherwise bypass all
