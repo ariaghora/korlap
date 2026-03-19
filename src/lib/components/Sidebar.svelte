@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { Eye, ChevronRight } from "lucide-svelte";
+  import { Eye, ChevronRight, Plus } from "lucide-svelte";
   import { SvelteSet } from "svelte/reactivity";
 
   interface Props {
@@ -39,10 +39,10 @@
     [...workspaces].sort((a, b) => a.created_at - b.created_at),
   );
 
-  type GroupKey = "ready" | "review" | "done";
+  type GroupKey = "active" | "review" | "done";
 
   let groups = $derived.by(() => {
-    const ready: WorkspaceInfo[] = [];
+    const active: WorkspaceInfo[] = [];
     const review: WorkspaceInfo[] = [];
     const done: WorkspaceInfo[] = [];
 
@@ -53,12 +53,12 @@
       } else if (pr?.state === "open") {
         review.push(ws);
       } else {
-        ready.push(ws);
+        active.push(ws);
       }
     }
 
     return [
-      { key: "ready" as GroupKey, label: "Ready", items: ready },
+      { key: "active" as GroupKey, label: "In Progress", items: active },
       { key: "review" as GroupKey, label: "Review", items: review },
       { key: "done" as GroupKey, label: "Done", items: done },
     ];
@@ -168,9 +168,11 @@
       </div>
     {/each}
   </div>
-  <button class="new-ws-btn" onclick={onNewWorkspace} disabled={!!creatingWsId}>
-    + New workspace
-  </button>
+  <div class="sidebar-footer">
+    <button class="new-ws-btn" onclick={onNewWorkspace} disabled={!!creatingWsId}>
+      <Plus size={11} /> New workspace
+    </button>
+  </div>
 </aside>
 
 <style>
@@ -446,16 +448,26 @@
     min-width: 0;
   }
 
-  .new-ws-btn {
+  .sidebar-footer {
+    display: flex;
+    align-items: center;
     margin: 0.5rem;
-    padding: 0.4rem;
+  }
+
+  .new-ws-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0.35rem;
     background: transparent;
     border: 1px dashed var(--border-light);
     border-radius: 4px;
     color: var(--text-dim);
     cursor: pointer;
     font-family: inherit;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
   }
 
   .new-ws-btn:hover:not(:disabled) {

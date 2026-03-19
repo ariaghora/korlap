@@ -318,6 +318,21 @@ export async function loadMessages(
   return invoke<unknown[]>("load_messages", { workspaceId });
 }
 
+// ── Todos ────────────────────────────────────────────────────────────
+
+export async function saveTodos(
+  repoId: string,
+  todos: unknown[],
+): Promise<void> {
+  return invoke("save_todos", { repoId, todos });
+}
+
+export async function loadTodos(
+  repoId: string,
+): Promise<unknown[]> {
+  return invoke<unknown[]>("load_todos", { repoId });
+}
+
 // ── PR Status ────────────────────────────────────────────────────────
 
 export interface PrStatus {
