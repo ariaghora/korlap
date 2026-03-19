@@ -171,6 +171,8 @@ No need to mention in your report whether or not you used one of the fallback st
   let showSearchModal = $state(false);
   let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
   let reviewByWorkspace = new SvelteMap<string, ReviewState>();
+  let titleBarRef: TitleBar | undefined = $state();
+  let repoDropdownIndex = $state(-1);
 
   // ── Message queue ──────────────────────────────────────
   interface QueuedMessage {
@@ -235,6 +237,48 @@ No need to mention in your report whether or not you used one of the fallback st
 
     function handleKeydown(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
+
+      // ── Repo dropdown open: arrows, enter, number keys, escape ──
+      if (titleBarRef?.isRepoDropdownOpen()) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          titleBarRef.closeRepoDropdown();
+          repoDropdownIndex = -1;
+          return;
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          repoDropdownIndex = Math.min(repoDropdownIndex + 1, repos.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          repoDropdownIndex = Math.max(repoDropdownIndex - 1, 0);
+          return;
+        }
+        if (e.key === "Enter" && repoDropdownIndex >= 0) {
+          e.preventDefault();
+          if (repoDropdownIndex < repos.length) {
+            selectRepo(repos[repoDropdownIndex]);
+          } else {
+            handleOpenRepo();
+          }
+          titleBarRef.closeRepoDropdown();
+          repoDropdownIndex = -1;
+          return;
+        }
+        if (!mod && e.key >= "1" && e.key <= "9") {
+          e.preventDefault();
+          const idx = parseInt(e.key) - 1;
+          if (idx < repos.length) {
+            selectRepo(repos[idx]);
+          }
+          titleBarRef.closeRepoDropdown();
+          repoDropdownIndex = -1;
+          return;
+        }
+      }
+
       if (!mod) return;
 
       const target = e.target as HTMLElement;
@@ -245,6 +289,11 @@ No need to mention in your report whether or not you used one of the fallback st
         case ",":
           e.preventDefault();
           if (activeRepo) showSettings = !showSettings;
+          break;
+        case "e":
+          e.preventDefault();
+          repoDropdownIndex = -1;
+          titleBarRef?.toggleRepoDropdown();
           break;
         case "n":
           e.preventDefault();
@@ -865,8 +914,10 @@ No need to mention in your report whether or not you used one of the fallback st
 {:else}
   <div class="app">
     <TitleBar
+      bind:this={titleBarRef}
       {repos}
       {activeRepo}
+      highlightedRepoIndex={repoDropdownIndex}
       {selectedWs}
       prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
       wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}

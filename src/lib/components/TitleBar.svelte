@@ -17,9 +17,10 @@
     onPrAction: () => void;
     onReview: () => void;
     reviewRunning: boolean;
+    highlightedRepoIndex: number;
   }
 
-  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning }: Props =
+  let { repos, activeRepo, selectedWs, prStatus, wsChanges, onSelectRepo, onAddRepo, onSettings, onPrAction, onReview, reviewRunning, highlightedRepoIndex }: Props =
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
@@ -48,6 +49,18 @@
     if (target.closest('button, input, label, [role="button"]')) return;
     getCurrentWindow().toggleMaximize();
   }
+
+  export function toggleRepoDropdown() {
+    dropdownRef?.toggle();
+  }
+
+  export function isRepoDropdownOpen() {
+    return dropdownRef?.isOpen() ?? false;
+  }
+
+  export function closeRepoDropdown() {
+    dropdownRef?.close();
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -62,22 +75,27 @@
       <Dropdown bind:this={dropdownRef}>
         {#snippet trigger()}
           <span class="repo-name">{activeRepo.display_name}</span>
+          <kbd class="shortcut-hint">⌘E</kbd>
         {/snippet}
 
-        {#each repos as repo}
+        {#each repos as repo, i}
           <button
             class="dropdown-item"
             class:active={repo.id === activeRepo.id}
+            class:highlighted={i === highlightedRepoIndex}
             onclick={() => selectRepo(repo)}
           >
             <span class="dropdown-item-name">{repo.display_name}</span>
             {#if repo.id === activeRepo.id}
               <Check size={12} class="check-mark" />
             {/if}
+            {#if i < 9}
+              <span class="shortcut-pill">{i + 1}</span>
+            {/if}
           </button>
         {/each}
         <div class="dropdown-divider"></div>
-        <button class="dropdown-item add-item" onclick={handleAddRepo}>
+        <button class="dropdown-item add-item" class:highlighted={highlightedRepoIndex === repos.length} onclick={handleAddRepo}>
           <Plus size={12} />
           <span>Add repository</span>
         </button>
@@ -204,7 +222,8 @@
     text-align: left;
   }
 
-  .dropdown-item:hover {
+  .dropdown-item:hover,
+  .dropdown-item.highlighted {
     background: var(--border);
     color: var(--text-primary);
   }
@@ -223,6 +242,29 @@
   .dropdown-item :global(.check-mark) {
     color: var(--accent);
     flex-shrink: 0;
+  }
+
+  .shortcut-pill {
+    font-size: 0.6rem;
+    font-weight: 600;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    background: var(--border);
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  .shortcut-hint {
+    font-size: 0.6rem;
+    font-family: inherit;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    background: var(--border);
+    color: var(--text-dim);
   }
 
   .dropdown-divider {

@@ -12,12 +12,16 @@
   let open = $state(false);
   let rootEl: HTMLDivElement | undefined = $state();
 
-  function toggle() {
+  export function close() {
+    open = false;
+  }
+
+  export function toggle() {
     open = !open;
   }
 
-  export function close() {
-    open = false;
+  export function isOpen() {
+    return open;
   }
 
   function handleClickOutside(e: MouseEvent) {
