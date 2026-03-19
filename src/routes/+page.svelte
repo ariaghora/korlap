@@ -1098,7 +1098,6 @@ No need to mention in your report whether or not you used one of the fallback st
 
     if (sendingByWorkspace.get(wsId) || reviewByWorkspace.has(wsId)) return;
     const pr = prStatusMap.get(wsId);
-    if (!pr || pr.state !== "open") return;
 
     const baseBranch = activeRepo.default_branch;
 
@@ -1110,8 +1109,8 @@ No need to mention in your report whether or not you used one of the fallback st
     reviewPrompt = reviewPrompt
       .replace(/\{\{branch\}\}/g, selectedWs!.branch)
       .replace(/\{\{base_branch\}\}/g, baseBranch)
-      .replace(/\{\{pr_number\}\}/g, String(pr.number))
-      .replace(/\{\{pr_title\}\}/g, pr.title ?? "");
+      .replace(/\{\{pr_number\}\}/g, pr?.state === "open" ? String(pr.number) : "N/A")
+      .replace(/\{\{pr_title\}\}/g, pr?.state === "open" ? (pr.title ?? "") : "N/A");
 
     addActionMessage(wsId, crypto.randomUUID(), "Reviewing code");
 
