@@ -37,17 +37,13 @@
   import { onMount } from "svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import ChatPanel, { type PastedImage } from "$lib/components/ChatPanel.svelte";
+  import WorkspacePanel, { type PanelTab } from "$lib/components/WorkspacePanel.svelte";
+  import { type PastedImage } from "$lib/components/ChatPanel.svelte";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import DiffViewer from "$lib/components/DiffViewer.svelte";
-  import FileBrowser from "$lib/components/FileBrowser.svelte";
-  import TerminalView from "$lib/components/Terminal.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
   import SearchModal from "$lib/components/SearchModal.svelte";
-  import ReviewPill, { type ReviewState } from "$lib/components/ReviewPill.svelte";
+  import { type ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi } from "$lib/components/ChatPanel.svelte";
-
-  type PanelTab = "chat" | "diff" | "files" | "terminal";
 
   const DEFAULT_REVIEW_PROMPT = `## Code Review Instructions
 
@@ -898,121 +894,47 @@ No need to mention in your report whether or not you used one of the fallback st
         onRemove={handleRemove}
       />
 
-      <main class="panel">
-        {#if selectedWs}
-          <div class="tab-bar">
-            <div class="tabs">
-              {#each ["chat", "diff", "files", "terminal"] as tab}
-                <button
-                  class="tab"
-                  class:active={activeTab === tab}
-                  onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") fileNavigatePath = null; }}
-                >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  {#if tab === "diff" && changeCounts.get(selectedWs.id)}
-                    {@const cc = changeCounts.get(selectedWs.id)}
-                    {#if cc && (cc.additions > 0 || cc.deletions > 0)}
-                      <span class="diff-badge">
-                        <span class="diff-add">+{cc.additions}</span>
-                        <span class="diff-del">-{cc.deletions}</span>
-                      </span>
-                    {/if}
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <div class="tab-content">
-            <!-- Chat: always mounted, stacked via absolute positioning.
-                 Visibility toggle = no reflow. display:none → flex forces full layout recomputation. -->
-            {#each activeWorkspaces as ws (ws.id)}
-              {@const isVisible = activeTab === "chat" && ws.id === selectedWsId}
-              <div
-                class="ws-chat-layer"
-                class:visible={isVisible}
-                inert={!isVisible}
-              >
-                <ChatPanel
-                  workspaceId={ws.id}
-                  creating={ws.id === creatingWsId}
-                  planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
-                  thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
-                  queue={(queueByWorkspace.get(ws.id) ?? []).map(q => ({
-                    id: q.id,
-                    prompt: q.prompt,
-                    imageCount: q.images.length,
-                    mentionCount: q.mentions.length,
-                    planMode: q.planMode,
-                  }))}
-                  onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
-                  onSendImmediate={(prompt) => handleSendImmediate(prompt)}
-                  onStop={handleStop}
-                  onRemoveFromQueue={(id) => { if (ws.id) removeFromQueue(ws.id, id); }}
-                  onPlanModeChange={(enabled) => planModeByWorkspace.set(ws.id, enabled)}
-                  onThinkingModeChange={(enabled) => thinkingModeByWorkspace.set(ws.id, enabled)}
-                  onExecutePlan={() => {
-                    planModeByWorkspace.set(ws.id, false);
-                    sendPrompt(ws.id, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
-                  }}
-                  onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
-                  onReady={(api) => chatPanelApis.set(ws.id, api)}
-                />
-                {#if reviewByWorkspace.has(ws.id)}
-                  <ReviewPill
-                    state={reviewByWorkspace.get(ws.id)!}
-                    onCancel={() => {
-                      const wasRunning = reviewByWorkspace.get(ws.id)?.status === "running";
-                      reviewByWorkspace.delete(ws.id);
-                      if (wasRunning) stopAgent(ws.id).catch((e) => { error = String(e); });
-                    }}
-                    onSendToChat={(markdown) => {
-                      reviewByWorkspace.delete(ws.id);
-                      sendPrompt(ws.id, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { error = String(e); });
-                      activeTab = "chat";
-                    }}
-                  />
-                {/if}
-              </div>
-            {/each}
-
-            <!-- Diff/Terminal: mount on demand, positioned absolute to fill tab-content -->
-            {#if activeTab === "diff" && selectedWs}
-              <div class="ws-tab-container active-layer">
-                <DiffViewer
-                  workspaceId={selectedWs.id}
-                  refreshTrigger={diffRefreshTrigger}
-                />
-              </div>
-            {/if}
-
-            <!-- Files: mount on demand like diff -->
-            {#if activeTab === "files" && selectedWs}
-              <div class="ws-tab-container active-layer">
-                <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} />
-              </div>
-            {/if}
-
-            <!-- Terminal: always mounted per workspace, toggle display.
-                 Uses display:none (not visibility:hidden) so xterm.js only
-                 inits when it has real dimensions via ResizeObserver. -->
-            {#each activeWorkspaces as ws (ws.id)}
-              {@const isVisible = activeTab === "terminal" && ws.id === selectedWsId}
-              <div
-                class="ws-terminal-layer"
-                class:visible={isVisible}
-                inert={!isVisible}
-              >
-                <TerminalView workspaceId={ws.id} />
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <div class="panel-empty">
-            <p>Create a workspace to start an agent.</p>
-          </div>
-        {/if}
-      </main>
+      <WorkspacePanel
+        bind:activeTab
+        bind:fileNavigatePath
+        {selectedWs}
+        {selectedWsId}
+        {activeWorkspaces}
+        {creatingWsId}
+        {changeCounts}
+        {planModeByWorkspace}
+        {thinkingModeByWorkspace}
+        {reviewByWorkspace}
+        {repoSettings}
+        {diffRefreshTrigger}
+        getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
+          id: q.id,
+          prompt: q.prompt,
+          imageCount: q.images.length,
+          mentionCount: q.mentions.length,
+          planMode: q.planMode,
+        }))}
+        onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
+        onSendImmediate={(prompt) => handleSendImmediate(prompt)}
+        onStop={handleStop}
+        onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
+        onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
+        onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
+        onExecutePlan={(wsId) => {
+          planModeByWorkspace.set(wsId, false);
+          sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
+        }}
+        onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
+        onReviewCancel={(wsId) => {
+          const wasRunning = reviewByWorkspace.get(wsId)?.status === "running";
+          reviewByWorkspace.delete(wsId);
+          if (wasRunning) stopAgent(wsId).catch((e) => { error = String(e); });
+        }}
+        onReviewSendToChat={(wsId, markdown) => {
+          reviewByWorkspace.delete(wsId);
+          sendPrompt(wsId, `Address all issues from this code review:\n\n${markdown}`, "Addressing review").catch((e) => { error = String(e); });
+        }}
+      />
     </div>
 
     {#if showSearchModal && selectedWsId}
@@ -1173,145 +1095,6 @@ No need to mention in your report whether or not you used one of the fallback st
     flex: 1;
     display: flex;
     min-height: 0;
-  }
-
-  /* ── Main panel ──────────────────────────────────── */
-
-  .panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .panel-empty {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-dim);
-    font-size: 0.85rem;
-  }
-
-  /* ── Tab bar ───────────────────────────────────── */
-
-  .tab-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 1rem;
-    height: 38px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .tabs {
-    display: flex;
-    gap: 0.15rem;
-  }
-
-  .tab {
-    padding: 0.35rem 0.65rem;
-    background: transparent;
-    border: none;
-    border-radius: 5px;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.82rem;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
-
-  .diff-badge {
-    font-size: 0.65rem;
-    font-family: var(--font-mono);
-    display: flex;
-    gap: 0.2rem;
-  }
-
-  .diff-add {
-    color: var(--diff-add);
-  }
-
-  .diff-del {
-    color: var(--diff-del);
-  }
-
-  .tab:hover {
-    color: var(--text-primary);
-    background: var(--bg-hover);
-  }
-
-  .tab.active {
-    color: var(--text-bright);
-    background: var(--border);
-  }
-
-  /* ── Tab content ──────────────────────────────────── */
-
-  .tab-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    position: relative;
-  }
-
-  /* Chat layers: stacked absolutely so all stay laid out.
-     Switching = visibility toggle (compositor-only, no reflow). */
-  .ws-chat-layer {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    visibility: hidden;
-    pointer-events: none;
-    z-index: 0;
-  }
-
-  .ws-chat-layer.visible {
-    visibility: visible;
-    pointer-events: auto;
-    z-index: 1;
-  }
-
-  .ws-tab-container {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-
-  /* Diff/terminal: also absolute to coexist with stacked chat layers */
-  .ws-tab-container.active-layer {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-  }
-
-  /* Terminal layers: kept alive per workspace, toggled via display.
-     display:none gives zero dimensions so xterm.js defers init until visible. */
-  .ws-terminal-layer {
-    position: absolute;
-    inset: 0;
-    display: none;
-    flex-direction: column;
-    z-index: 0;
-  }
-
-  .ws-terminal-layer.visible {
-    display: flex;
-    z-index: 2;
-  }
-
-  .tab-placeholder {
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    font-size: 0.85rem;
   }
 
   /* ── Error ──────────────────────────────────────── */
