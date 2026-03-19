@@ -195,10 +195,11 @@ impl AppState {
         self.data_dir.join("messages")
     }
 
-    /// Delete all persisted data for a workspace (messages file, session entry).
+    /// Delete all persisted data for a workspace (messages file, session entry, images).
     /// Call this when permanently removing a workspace.
     pub fn delete_workspace_data(&mut self, workspace_id: &str) {
         let _ = std::fs::remove_file(self.messages_dir().join(format!("{}.json", workspace_id)));
+        let _ = std::fs::remove_dir_all(self.data_dir.join("images").join(workspace_id));
         self.session_ids.remove(workspace_id);
     }
 
