@@ -242,6 +242,7 @@ No need to mention in your report whether or not you used one of the fallback st
     title: string;
     description: string;
     imagePaths?: string[];
+    mentionPaths?: string[];
     created_at: number;
   }
   let todos = $state<TodoItem[]>([]);
@@ -558,18 +559,20 @@ No need to mention in your report whether or not you used one of the fallback st
     return Promise.all(newImages.map((img) => saveImage(namespace, img.base64, img.extension)));
   }
 
-  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[] }) {
+  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[] }) {
     if (!activeRepo) return;
     if (!data.title.trim() && data.newImages.length === 0 && data.existingPaths.length === 0) return;
     try {
       const savedPaths = await saveTodoImages(data.newImages);
       const allPaths = [...data.existingPaths, ...savedPaths];
+      const mentionPaths = data.mentions?.map((m) => m.path) ?? [];
       todos.push({
         id: crypto.randomUUID(),
         repo_id: activeRepo.id,
         title: data.title.trim(),
         description: data.description.trim(),
         imagePaths: allPaths.length > 0 ? allPaths : undefined,
+        mentionPaths: mentionPaths.length > 0 ? mentionPaths : undefined,
         created_at: Date.now() / 1000,
       });
       persistTodos();
@@ -578,15 +581,17 @@ No need to mention in your report whether or not you used one of the fallback st
     }
   }
 
-  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[] }) {
+  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[] }) {
     const todo = todos.find((t) => t.id === todoId);
     if (!todo) return;
     try {
       const savedPaths = await saveTodoImages(data.newImages);
       const allPaths = [...data.existingPaths, ...savedPaths];
+      const mentionPaths = data.mentions?.map((m) => m.path) ?? [];
       todo.title = data.title.trim();
       todo.description = data.description.trim();
       todo.imagePaths = allPaths.length > 0 ? allPaths : undefined;
+      todo.mentionPaths = mentionPaths.length > 0 ? mentionPaths : undefined;
       persistTodos();
     } catch (e) {
       addToast(`Failed to save images: ${e}`);
@@ -641,7 +646,17 @@ No need to mention in your report whether or not you used one of the fallback st
 
       // Images are already saved to disk — reference paths directly
       const todoPaths = todo.imagePaths ?? [];
+      const todoMentionPaths = todo.mentionPaths ?? [];
       let fullPrompt = promptText;
+
+      // Add mentioned file references
+      if (todoMentionPaths.length > 0) {
+        const mentionRefs = todoMentionPaths.map((p) => `@${p}`).join("\n");
+        fullPrompt = fullPrompt
+          ? `${fullPrompt}\n\nReferenced files:\n${mentionRefs}`
+          : `Referenced files:\n${mentionRefs}`;
+      }
+
       if (todoPaths.length > 0) {
         const refs = todoPaths.join("\n");
         const imageInstructions =
@@ -1329,6 +1344,7 @@ No need to mention in your report whether or not you used one of the fallback st
           {changeCounts}
           {reviewingWsIds}
           {creatingWsId}
+          repoId={activeRepo.id}
           repoName={activeRepo.display_name}
           onCardClick={handleKanbanCardClick}
           onSpawnAgent={handleSpawnFromTodo}

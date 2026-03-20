@@ -12,6 +12,7 @@
     title: string;
     description: string;
     imagePaths?: string[];
+    mentionPaths?: string[];
     created_at: number;
   }
 
@@ -24,6 +25,7 @@
     changeCounts: Map<string, { additions: number; deletions: number }>;
     reviewingWsIds: Set<string>;
     creatingWsId: string | null;
+    repoId?: string;
     repoName?: string;
     onCardClick: (wsId: string) => void;
     onSpawnAgent: (todoId: string) => void;
@@ -42,6 +44,7 @@
     changeCounts,
     reviewingWsIds,
     creatingWsId,
+    repoId,
     repoName,
     onCardClick,
     onSpawnAgent,
@@ -143,6 +146,7 @@
 
 {#if showAddDialog}
   <TaskPopover
+    {repoId}
     submitLabel="Add"
     onSubmit={handleAddSubmit}
     onCancel={() => { showAddDialog = false; }}
@@ -151,9 +155,11 @@
 
 {#if editingTodo}
   <TaskPopover
+    {repoId}
     initialTitle={editingTodo.title}
     initialDescription={editingTodo.description}
     initialImagePaths={editingTodo.imagePaths}
+    initialMentions={editingTodo.mentionPaths?.map((p: string) => ({ type: "file" as const, path: p, displayName: p.split("/").pop() ?? p }))}
     submitLabel="Save"
     onSubmit={handleEditSubmit}
     onCancel={() => { editingTodo = null; }}

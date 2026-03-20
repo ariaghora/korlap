@@ -1,55 +1,122 @@
 <script lang="ts">
   import { type PastedImage } from "./ChatPanel.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { X } from "lucide-svelte";
+  import { X, TextSearch } from "lucide-svelte";
+  import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
+  import MentionAutocomplete, { type MentionAutocompleteApi, type FileSearchResult } from "./MentionAutocomplete.svelte";
+  import SearchModal from "./SearchModal.svelte";
+  import { searchRepoFiles } from "$lib/ipc";
 
   export interface TaskData {
     title: string;
     description: string;
     newImages: PastedImage[];
     existingPaths: string[];
+    mentions: Mention[];
   }
 
   interface Props {
+    repoId?: string;
     initialTitle?: string;
     initialDescription?: string;
     initialImagePaths?: string[];
+    initialMentions?: Mention[];
     submitLabel?: string;
     onSubmit: (data: TaskData) => void;
     onCancel: () => void;
   }
 
   let {
+    repoId,
     initialTitle = "",
     initialDescription = "",
     initialImagePaths = [],
+    initialMentions = [],
     submitLabel = "Add",
     onSubmit,
     onCancel,
   }: Props = $props();
 
   let title = $state(initialTitle);
-  let description = $state(initialDescription);
   let existingPaths = $state<string[]>([...initialImagePaths]);
   let newImages = $state<PastedImage[]>([]);
+  let mentions = $state<Mention[]>([...initialMentions]);
   let titleRef: HTMLInputElement | undefined = $state();
-  let descRef: HTMLTextAreaElement | undefined = $state();
+
+  // Mention input + autocomplete state
+  let mentionInputApi: MentionInputApi | undefined = $state();
+  let autocompleteApi: MentionAutocompleteApi | undefined = $state();
+  let autocompleteVisible = $state(false);
+  let autocompleteResults = $state<FileSearchResult[]>([]);
+  let autocompleteLoading = $state(false);
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let descWrapperEl: HTMLDivElement | undefined = $state();
+
+  // SearchModal
+  let showSearchModal = $state(false);
 
   $effect(() => {
     requestAnimationFrame(() => titleRef?.focus());
   });
 
-  let canSubmit = $derived(title.trim().length > 0 || existingPaths.length > 0 || newImages.length > 0);
+  // Seed initial description text into MentionInput after mount
+  $effect(() => {
+    if (mentionInputApi && initialDescription) {
+      // MentionInput is contenteditable — set initial text by calling focus and relying on the DOM
+      // We do this once on mount
+      const el = descWrapperEl?.querySelector(".mention-input") as HTMLDivElement | null;
+      if (el && !el.textContent) {
+        el.textContent = initialDescription;
+      }
+    }
+  });
+
+  // Seed initial mentions as chips
+  $effect(() => {
+    if (mentionInputApi && initialMentions.length > 0) {
+      for (const m of initialMentions) {
+        mentionInputApi.appendMention(m);
+      }
+    }
+  });
+
+  let canSubmit = $derived(
+    title.trim().length > 0 ||
+    existingPaths.length > 0 ||
+    newImages.length > 0 ||
+    mentions.length > 0
+  );
 
   function submit() {
     if (!canSubmit) return;
-    onSubmit({ title: title.trim(), description: description.trim(), newImages: [...newImages], existingPaths: [...existingPaths] });
+    // Serialize description + inline mentions from MentionInput
+    const descValue = mentionInputApi?.getValue() ?? { text: "", mentions: [] };
+    // Merge inline mentions with separately-tracked mentions (from SearchModal, etc.)
+    const allMentions = [...mentions];
+    for (const m of descValue.mentions) {
+      if (!allMentions.some((existing) => existing.path === m.path)) {
+        allMentions.push(m);
+      }
+    }
+    onSubmit({
+      title: title.trim(),
+      description: descValue.text.trim(),
+      newImages: [...newImages],
+      existingPaths: [...existingPaths],
+      mentions: allMentions,
+    });
   }
 
-  function handleKeydown(e: KeyboardEvent) {
+  function handleOverlayKeydown(e: KeyboardEvent) {
+    if (showSearchModal) return; // SearchModal handles its own keys
     if (e.key === "Escape") {
       e.preventDefault();
-      onCancel();
+      if (autocompleteVisible) {
+        autocompleteVisible = false;
+        autocompleteResults = [];
+      } else {
+        onCancel();
+      }
     }
     if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
@@ -60,13 +127,20 @@
   function handleTitleKeydown(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.metaKey) {
       e.preventDefault();
-      descRef?.focus();
+      mentionInputApi?.focus();
     }
-    handleKeydown(e);
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+    if (e.key === "Enter" && e.metaKey) {
+      e.preventDefault();
+      submit();
+    }
   }
 
-  function handleDescKeydown(e: KeyboardEvent) {
-    handleKeydown(e);
+  function handleTitlePaste(e: ClipboardEvent) {
+    handlePaste(e);
   }
 
   function handlePaste(e: ClipboardEvent) {
@@ -95,10 +169,118 @@
   function removeExistingPath(path: string) {
     existingPaths = existingPaths.filter((p) => p !== path);
   }
+
+  function removeMention(path: string) {
+    mentions = mentions.filter((m) => m.path !== path);
+  }
+
+  // ── Mention autocomplete ────────────────────────────────────────
+
+  function handleQueryChange(query: string | null) {
+    if (!repoId) {
+      // No repo → no file search
+      autocompleteVisible = false;
+      return;
+    }
+    if (query === null) {
+      autocompleteVisible = false;
+      autocompleteResults = [];
+      autocompleteLoading = false;
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      return;
+    }
+
+    autocompleteVisible = true;
+    if (!query) {
+      autocompleteResults = [];
+      autocompleteLoading = false;
+      return;
+    }
+
+    autocompleteLoading = true;
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(async () => {
+      try {
+        const results = await searchRepoFiles(repoId!, query);
+        autocompleteResults = results;
+      } catch {
+        autocompleteResults = [];
+      }
+      autocompleteLoading = false;
+    }, 100);
+  }
+
+  function handleAutocompleteSelect(result: FileSearchResult) {
+    const mention: Mention = {
+      type: result.kind === "folder" ? "folder" : "file",
+      path: result.path,
+      displayName: result.name,
+    };
+    mentionInputApi?.insertMention(mention);
+    // Also track in our mentions array for TaskData
+    if (!mentions.some((m) => m.path === mention.path)) {
+      mentions = [...mentions, mention];
+    }
+    autocompleteVisible = false;
+    autocompleteResults = [];
+  }
+
+  function handleDescKeydown(e: KeyboardEvent) {
+    // When autocomplete is open, intercept arrow keys and Enter
+    if (autocompleteVisible && autocompleteResults.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        autocompleteApi?.moveUp();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        autocompleteApi?.moveDown();
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        autocompleteApi?.selectCurrent();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        autocompleteVisible = false;
+        autocompleteResults = [];
+      }
+      return;
+    }
+
+    // Cmd+Enter to submit
+    if (e.key === "Enter" && e.metaKey) {
+      e.preventDefault();
+      submit();
+    }
+    // Escape to cancel
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+  }
+
+  function handleMentionSubmit(value: MentionInputValue) {
+    // When Enter is pressed in MentionInput (without autocomplete), just submit the form
+    // Collect mentions from the serialized value
+    for (const m of value.mentions) {
+      if (!mentions.some((existing) => existing.path === m.path)) {
+        mentions = [...mentions, m];
+      }
+    }
+    submit();
+  }
+
+  function handleSearchAddToContext(path: string, displayName: string, lineNumber: number) {
+    showSearchModal = false;
+    const mention: Mention = { type: "file", path, displayName, lineNumber };
+    if (!mentions.some((m) => m.path === path)) {
+      mentions = [...mentions, mention];
+    }
+    mentionInputApi?.appendMention(mention);
+    mentionInputApi?.focus();
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onCancel} onkeydown={handleKeydown}>
+<div class="overlay" onclick={onCancel} onkeydown={handleOverlayKeydown}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="dialog" onclick={(e) => e.stopPropagation()}>
     <input
@@ -106,20 +288,32 @@
       bind:this={titleRef}
       bind:value={title}
       onkeydown={handleTitleKeydown}
-      onpaste={handlePaste}
+      onpaste={handleTitlePaste}
       placeholder="Task title"
     />
-    <textarea
-      class="task-desc"
-      bind:this={descRef}
-      bind:value={description}
-      onkeydown={handleDescKeydown}
-      onpaste={handlePaste}
-      rows={6}
-      placeholder="Description (optional) — paste images here"
-    ></textarea>
-    {#if existingPaths.length > 0 || newImages.length > 0}
-      <div class="image-strip">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="desc-wrapper" bind:this={descWrapperEl} onkeydown={handleDescKeydown}>
+      <MentionInput
+        placeholder={repoId ? "Description — @mention files, paste images" : "Description (optional) — paste images here"}
+        multiline
+        onSubmit={handleMentionSubmit}
+        onQueryChange={handleQueryChange}
+        onPaste={handlePaste}
+        bind:ref={mentionInputApi}
+      />
+    </div>
+
+    {#if existingPaths.length > 0 || newImages.length > 0 || mentions.length > 0}
+      <div class="attachment-strip">
+        {#each mentions as mention (mention.path)}
+          <div class="mention-pill">
+            <span class="mention-pill-icon">{mention.type === "folder" ? "📁" : "📄"}</span>
+            <span class="mention-pill-name">{mention.displayName}</span>
+            <button class="pill-remove" onclick={() => removeMention(mention.path)}>
+              <X size={8} />
+            </button>
+          </div>
+        {/each}
         {#each existingPaths as path (path)}
           <div class="image-thumb">
             <img src={convertFileSrc(path)} alt="Attached" />
@@ -139,14 +333,40 @@
       </div>
     {/if}
     <div class="dialog-footer">
-      <span class="footer-hint">⌘Enter to {submitLabel.toLowerCase()} · Esc cancel · Paste images</span>
+      <span class="footer-hint">⌘Enter to {submitLabel.toLowerCase()} · {repoId ? "@mention files · " : ""}Paste images</span>
       <div class="footer-actions">
+        {#if repoId}
+          <button
+            class="search-btn"
+            title="Search file contents (grep)"
+            onclick={() => { showSearchModal = true; }}
+          >
+            <TextSearch size={14} />
+          </button>
+        {/if}
         <button class="cancel-btn" onclick={onCancel}>Cancel</button>
         <button class="submit-btn" onclick={submit} disabled={!canSubmit}>{submitLabel}</button>
       </div>
     </div>
   </div>
+
+  <MentionAutocomplete
+    results={autocompleteResults}
+    visible={autocompleteVisible}
+    loading={autocompleteLoading}
+    anchorEl={descWrapperEl ?? null}
+    onSelect={handleAutocompleteSelect}
+    bind:ref={autocompleteApi}
+  />
 </div>
+
+{#if showSearchModal && repoId}
+  <SearchModal
+    {repoId}
+    onClose={() => { showSearchModal = false; }}
+    onAddToContext={handleSearchAddToContext}
+  />
+{/if}
 
 <style>
   .overlay {
@@ -199,36 +419,78 @@
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
   }
 
-  .task-desc {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 0.55rem 0.65rem;
+  .desc-wrapper {
     background: var(--input-inset-bg);
-    border: none;
     border-radius: 8px;
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 0.88rem;
-    line-height: 1.5;
-    outline: none;
-    resize: vertical;
     min-height: 120px;
+    max-height: 200px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
-  .task-desc::placeholder {
-    color: var(--text-muted);
+  .desc-wrapper :global(.mention-input) {
+    min-height: 100px;
+    max-height: none;
+    font-size: 0.88rem;
   }
 
-  .task-desc:focus {
+  .desc-wrapper:focus-within {
     background: var(--input-inset-focus);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
   }
 
-  .image-strip {
+  .attachment-strip {
     display: flex;
     gap: 0.4rem;
     flex-wrap: wrap;
     padding: 0.15rem 0;
+  }
+
+  .mention-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.15rem 0.45rem;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    border-radius: 5px;
+    font-size: 0.75rem;
+    color: var(--accent);
+    font-family: var(--font-mono);
+  }
+
+  .mention-pill-icon {
+    font-size: 0.65rem;
+    opacity: 0.7;
+  }
+
+  .mention-pill-name {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pill-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    margin-left: 0.1rem;
+    opacity: 0.5;
+  }
+
+  .pill-remove:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
   }
 
   .image-thumb {
@@ -283,6 +545,26 @@
   .footer-actions {
     display: flex;
     gap: 0.35rem;
+    align-items: center;
+  }
+
+  .search-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: var(--btn-subtle-bg);
+    border: none;
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .search-btn:hover {
+    background: var(--btn-subtle-hover);
+    color: var(--accent);
   }
 
   .cancel-btn {

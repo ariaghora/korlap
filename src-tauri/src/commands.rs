@@ -1091,6 +1091,51 @@ pub async fn read_file(
 }
 
 #[tauri::command]
+pub async fn read_repo_file(
+    repo_id: String,
+    relative_path: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let repo_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st
+            .repos
+            .get(&repo_id)
+            .ok_or("Repository not found")?;
+        repo.path.clone()
+    };
+
+    let target = repo_path.join(&relative_path);
+    let canonical = target
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+    let repo_canonical = repo_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve repo: {}", e))?;
+    if !canonical.starts_with(&repo_canonical) {
+        return Err("Path escapes repo boundary".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let metadata = std::fs::metadata(&canonical)
+            .map_err(|e| format!("Cannot stat file: {}", e))?;
+
+        // Limit to 2MB to avoid UI freezes
+        if metadata.len() > 2 * 1024 * 1024 {
+            return Err(format!(
+                "File too large ({} bytes). Max 2MB for preview.",
+                metadata.len()
+            ));
+        }
+
+        std::fs::read_to_string(&canonical)
+            .map_err(|e| format!("Cannot read file: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
 pub async fn write_file(
     workspace_id: String,
     relative_path: String,
@@ -1662,6 +1707,97 @@ pub fn search_workspace_files(
     Ok(results)
 }
 
+#[tauri::command]
+pub fn search_repo_files(
+    repo_id: String,
+    query: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<FileSearchResult>, String> {
+    let repo_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st
+            .repos
+            .get(&repo_id)
+            .ok_or("Repository not found")?;
+        repo.path.clone()
+    };
+
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let matcher = SkimMatcherV2::default();
+    let mut results: Vec<FileSearchResult> = Vec::new();
+    let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let walker = ignore::WalkBuilder::new(&repo_path)
+        .hidden(true) // respect hidden
+        .git_ignore(true) // respect .gitignore
+        .git_global(true)
+        .git_exclude(true)
+        .max_depth(Some(12))
+        .build();
+
+    for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let path = entry.path();
+        let rel_path = match path.strip_prefix(&repo_path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        // Skip the root itself and .git
+        let rel_str = rel_path.to_string_lossy();
+        if rel_str.is_empty() || rel_str.starts_with(".git") {
+            continue;
+        }
+
+        let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
+        let name = rel_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Match against filename and full path — take the better score
+        let score_name = matcher.fuzzy_match(&name, &query).unwrap_or(0);
+        let score_path = matcher.fuzzy_match(&rel_str, &query).unwrap_or(0);
+        let score = score_name.max(score_path);
+
+        if score > 0 {
+            if is_dir {
+                let dir_key = rel_str.to_string();
+                if !seen_dirs.insert(dir_key.clone()) {
+                    continue;
+                }
+                results.push(FileSearchResult {
+                    path: format!("{}/", rel_str),
+                    name: format!("{}/", name),
+                    kind: "folder".to_string(),
+                    score,
+                });
+            } else {
+                results.push(FileSearchResult {
+                    path: rel_str.to_string(),
+                    name,
+                    kind: "file".to_string(),
+                    score,
+                });
+            }
+        }
+    }
+
+    // Sort by score descending, limit to top 20
+    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.truncate(20);
+
+    Ok(results)
+}
+
 // ── Grep (content search) ────────────────────────────────────────────
 
 #[derive(Clone, serde::Serialize)]
@@ -1785,6 +1921,160 @@ pub async fn grep_workspace(
                     let raw_path = path.to_string_lossy();
                     let rel_path = raw_path
                         .strip_prefix(&worktree_prefix)
+                        .unwrap_or(&raw_path)
+                        .trim_start_matches('/');
+
+                    // Find column of first match in the line
+                    let column = matcher
+                        .find(line_content.as_bytes())
+                        .ok()
+                        .flatten()
+                        .map(|m| m.start() as u32)
+                        .unwrap_or(0);
+
+                    let mut content = line_content.trim_end().to_string();
+                    if content.len() > max_line_len {
+                        content.truncate(max_line_len);
+                        content.push_str("…");
+                    }
+
+                    results.push(GrepMatch {
+                        path: rel_path.to_string(),
+                        line_number: line_number as u32,
+                        column,
+                        line_content: content,
+                    });
+
+                    Ok(true)
+                }),
+            );
+
+            // Silently skip files that can't be searched (binary, encoding issues, etc.)
+            if let Err(_) = search_result {
+                continue;
+            }
+
+            if truncated {
+                break 'outer;
+            }
+        }
+
+        Ok(GrepResult {
+            matches: results,
+            truncated,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn grep_repo(
+    repo_id: String,
+    pattern: String,
+    is_regex: bool,
+    case_sensitive: bool,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<GrepResult, String> {
+    let repo_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st
+            .repos
+            .get(&repo_id)
+            .ok_or("Repository not found")?;
+        repo.path.clone()
+    };
+
+    let pattern_trimmed = pattern.trim().to_string();
+    if pattern_trimmed.is_empty() {
+        return Ok(GrepResult {
+            matches: vec![],
+            truncated: false,
+        });
+    }
+
+    let wt = repo_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use grep_matcher::Matcher;
+        use grep_regex::RegexMatcherBuilder;
+        use grep_searcher::sinks::UTF8;
+        use grep_searcher::SearcherBuilder;
+        use ignore::WalkBuilder;
+
+        // Build the regex matcher with the same semantics as `rg`
+        let escaped_pattern = if is_regex {
+            pattern_trimmed.clone()
+        } else {
+            regex::escape(&pattern_trimmed)
+        };
+
+        let mut builder = RegexMatcherBuilder::new();
+        if case_sensitive {
+            // Strict case: defaults are fine (case_insensitive=false, case_smart=false)
+        } else {
+            // Smart case: case-insensitive unless pattern has uppercase
+            builder.case_smart(true);
+        }
+        let matcher = builder
+            .build(&escaped_pattern)
+            .map_err(|e| format!("Invalid pattern: {}", e))?;
+
+        let mut searcher = SearcherBuilder::new()
+            .line_number(true)
+            .build();
+
+        let max_results: usize = 100;
+        let max_matches_per_file: usize = 5;
+        let max_line_len: usize = 500;
+        let max_filesize: u64 = 1_048_576; // 1MB
+
+        let mut results: Vec<GrepMatch> = Vec::new();
+        let mut truncated = false;
+        let repo_prefix = wt.to_string_lossy().to_string();
+
+        let walker = WalkBuilder::new(&wt)
+            .hidden(true) // respect hidden files like rg default (skip .hidden)
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true)
+            .max_filesize(Some(max_filesize))
+            .build();
+
+        'outer: for entry in walker {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            // Skip directories and symlinks
+            let ft = match entry.file_type() {
+                Some(ft) => ft,
+                None => continue,
+            };
+            if !ft.is_file() {
+                continue;
+            }
+
+            let path = entry.path().to_path_buf();
+
+            let mut file_match_count = 0usize;
+
+            let search_result = searcher.search_path(
+                &matcher,
+                &path,
+                UTF8(|line_number, line_content| {
+                    if results.len() >= max_results {
+                        truncated = true;
+                        return Ok(false); // stop searching
+                    }
+                    if file_match_count >= max_matches_per_file {
+                        return Ok(false); // stop this file
+                    }
+                    file_match_count += 1;
+
+                    let raw_path = path.to_string_lossy();
+                    let rel_path = raw_path
+                        .strip_prefix(&repo_prefix)
                         .unwrap_or(&raw_path)
                         .trim_start_matches('/');
 
