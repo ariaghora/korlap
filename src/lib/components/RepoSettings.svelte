@@ -1,23 +1,21 @@
 <script lang="ts">
   import {
     getRepoSettings, saveRepoSettings, type RepoSettings,
-    listGhProfiles, setRepoProfile, type GhProfile,
   } from "$lib/ipc";
   import { onMount } from "svelte";
-  import { ArrowLeft, Terminal, Bot, GitBranch } from "lucide-svelte";
+  import { ArrowLeft, Terminal, Bot } from "lucide-svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   interface Props {
     repoId: string;
     repoName: string;
     repoPath: string;
-    currentProfile: string | null;
     onClose: () => void;
   }
 
-  let { repoId, repoName, repoPath, currentProfile, onClose }: Props = $props();
+  let { repoId, repoName, repoPath, onClose }: Props = $props();
 
-  type Section = "scripts" | "agent" | "git";
+  type Section = "scripts" | "agent";
   let activeSection = $state<Section>("scripts");
   let settings = $state<RepoSettings>({
     setup_script: "",
@@ -31,12 +29,9 @@
   });
   let saveStatus = $state<"idle" | "saving" | "saved">("idle");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
-  let ghProfiles = $state<GhProfile[]>([]);
-  let selectedProfile = $state<string | null>(currentProfile);
 
   onMount(() => {
     getRepoSettings(repoId).then((s) => { settings = s; }).catch(() => {});
-    listGhProfiles().then((p) => { ghProfiles = p; }).catch(() => {});
 
     // ⌘, to close (standard macOS settings shortcut)
     function handleKey(e: KeyboardEvent) {
@@ -67,7 +62,6 @@
   const sections: { id: Section; label: string; icon: typeof Terminal }[] = [
     { id: "scripts", label: "Scripts", icon: Terminal },
     { id: "agent", label: "Agent", icon: Bot },
-    { id: "git", label: "Git", icon: GitBranch },
   ];
 </script>
 
@@ -282,52 +276,6 @@
         </div>
       </div>
 
-    {:else if activeSection === "git"}
-      <div class="section-header">
-        <h1>Git</h1>
-      </div>
-
-      <div class="setting-block">
-        <div class="setting-meta">
-          <span class="setting-name">GitHub account</span>
-          <span class="setting-desc">Used for git push, PR creation, and API calls in this repo's workspaces</span>
-        </div>
-        {#if ghProfiles.length > 0}
-          <div class="profile-list">
-            <button
-              class="profile-option"
-              class:selected={selectedProfile === null}
-              onclick={async () => {
-                selectedProfile = null;
-                await setRepoProfile(repoId, null);
-              }}
-            >
-              <span class="profile-name">None</span>
-              <span class="profile-hint">Use default SSH key</span>
-            </button>
-            {#each ghProfiles as profile}
-              <button
-                class="profile-option"
-                class:selected={selectedProfile === profile.login}
-                onclick={async () => {
-                  selectedProfile = profile.login;
-                  await setRepoProfile(repoId, profile.login);
-                }}
-              >
-                <span class="profile-name">{profile.login}</span>
-                {#if profile.active}
-                  <span class="profile-active">active in gh</span>
-                {/if}
-              </button>
-            {/each}
-          </div>
-          <p class="profile-note">
-            When a profile is selected, git operations use HTTPS with that account's token instead of SSH.
-          </p>
-        {:else}
-          <p class="coming-soon">No GitHub accounts found. Run <code>gh auth login</code> to add one.</p>
-        {/if}
-      </div>
     {/if}
   </main>
 
@@ -556,20 +504,6 @@
     border-radius: 4px;
   }
 
-  .coming-soon {
-    color: var(--text-dim);
-    font-size: 0.85rem;
-  }
-
-  .coming-soon code {
-    font-family: var(--font-mono);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
-    font-size: 0.78rem;
-  }
-
   /* ── Toggle switches ─────────────── */
 
   .toggle-group {
@@ -687,60 +621,6 @@
     border: 1px solid var(--border);
     padding: 0.1rem 0.35rem;
     border-radius: 3px;
-  }
-
-  .profile-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .profile-option {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    text-align: left;
-    padding: 0.55rem 0.75rem;
-    background: var(--bg-sidebar);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text-primary);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.82rem;
-  }
-
-  .profile-option:hover {
-    border-color: var(--border-light);
-  }
-
-  .profile-option.selected {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 5%, var(--bg-sidebar));
-  }
-
-  .profile-name {
-    font-weight: 600;
-  }
-
-  .profile-hint {
-    font-size: 0.72rem;
-    color: var(--text-dim);
-  }
-
-  .profile-active {
-    font-size: 0.65rem;
-    color: var(--status-ok);
-    background: color-mix(in srgb, var(--status-ok) 10%, transparent);
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
-  }
-
-  .profile-note {
-    margin-top: 0.5rem;
-    font-size: 0.72rem;
-    color: var(--text-dim);
   }
 
 </style>
