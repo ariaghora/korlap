@@ -977,6 +977,8 @@
   }
 
   .virtual-block {
+    display: flex;
+    flex-direction: column;
     padding: 0 1.25rem;
   }
 
