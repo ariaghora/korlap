@@ -395,6 +395,8 @@
   let suggestedReplies = $state<string[]>([]);
   let suggestionRequestId = 0; // monotonic counter to discard stale responses
 
+  const CONFIRM_RE = /\b(?:want me to|should i|shall i|would you like|do you want|can i|may i|like me to|ready to|proceed|go ahead|continue|fix (?:th|it|them))\b/i;
+
   function refreshSuggestions() {
     suggestedReplies = [];
 
@@ -416,10 +418,17 @@
 
     if (!lastText) return;
 
-    // Cheap gate: only call AI if any line ends with "?"
-    const hasQuestion = lastText.split("\n").some(line => line.trimEnd().endsWith("?"));
-    if (!hasQuestion) return;
+    // Find the last line that ends with "?"
+    const questionLine = lastText.split("\n").findLast(line => line.trimEnd().endsWith("?"));
+    if (!questionLine) return;
 
+    // Fast path: confirmation questions get instant Yes/No
+    const isConfirmation = CONFIRM_RE.test(questionLine);
+    if (isConfirmation) {
+      suggestedReplies = ["Yes", "No"];
+    }
+
+    // Always fire AI call — swaps in smarter suggestions when ready
     const requestId = ++suggestionRequestId;
     suggestReplies(lastText).then((replies) => {
       if (requestId === suggestionRequestId && replies.length > 0) {
