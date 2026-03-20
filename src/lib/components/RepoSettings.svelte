@@ -782,7 +782,7 @@
   }
 
   .remove-repo-btn:hover {
-    color: var(--error, #c87e7e);
+    color: var(--error);
   }
 
   /* ── Confirmation dialog ────────────── */
@@ -790,7 +790,7 @@
   .confirm-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.55);
+    background: var(--overlay-bg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -855,10 +855,10 @@
 
   .confirm-remove {
     padding: 0.4rem 0.85rem;
-    background: color-mix(in srgb, var(--error, #c87e7e) 15%, var(--bg-card));
-    border: 1px solid color-mix(in srgb, var(--error, #c87e7e) 40%, transparent);
+    background: color-mix(in srgb, var(--error) 15%, var(--bg-card));
+    border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
     border-radius: 6px;
-    color: var(--error, #c87e7e);
+    color: var(--error);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.82rem;
@@ -866,6 +866,6 @@
   }
 
   .confirm-remove:hover {
-    background: color-mix(in srgb, var(--error, #c87e7e) 25%, var(--bg-card));
+    background: color-mix(in srgb, var(--error) 25%, var(--bg-card));
   }
 </style>

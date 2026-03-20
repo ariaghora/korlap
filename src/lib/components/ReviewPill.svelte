@@ -136,7 +136,7 @@
   /* ── Clean (no issues) ─────────────────────── */
 
   .review-pill.clean {
-    border-color: color-mix(in srgb, #7e9e6b 40%, transparent);
+    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
   }
 
   .pill-clean {
@@ -146,21 +146,21 @@
   }
 
   .pill-clean :global(.check-icon) {
-    color: #7e9e6b;
+    color: var(--status-ok);
     flex-shrink: 0;
   }
 
   .clean-text {
     font-size: 0.75rem;
     font-weight: 500;
-    color: #7e9e6b;
+    color: var(--status-ok);
     flex: 1;
   }
 
   /* ── Failed ────────────────────────────────── */
 
   .review-pill.failed {
-    border-color: color-mix(in srgb, #b5564e 40%, transparent);
+    border-color: color-mix(in srgb, var(--status-fail) 40%, transparent);
   }
 
   .pill-failed {
@@ -170,13 +170,13 @@
   }
 
   .pill-failed :global(.error-icon) {
-    color: #b5564e;
+    color: var(--status-fail);
     flex-shrink: 0;
   }
 
   .failed-text {
     font-size: 0.75rem;
-    color: #b5564e;
+    color: var(--status-fail);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -250,13 +250,13 @@
 
   .pill-body :global(code) {
     font-size: 0.75rem;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--code-inline-bg);
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
   }
 
   .pill-body :global(pre) {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--code-block-bg);
     padding: 0.5rem;
     border-radius: 6px;
     overflow-x: auto;
@@ -309,7 +309,7 @@
   }
 
   .pill-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--pill-btn-hover);
     color: var(--text-primary);
   }
 </style>

@@ -53,10 +53,10 @@
     line-height: 1.35;
     word-break: break-word;
     border-radius: 10px;
-    background: rgba(30, 27, 24, 0.78);
+    background: var(--toast-bg);
     -webkit-backdrop-filter: saturate(180%) blur(20px);
     backdrop-filter: saturate(180%) blur(20px);
-    border: 0.5px solid rgba(255, 255, 255, 0.06);
+    border: 0.5px solid var(--toast-border);
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
   }
 

@@ -1,4 +1,6 @@
 :root {
+  color-scheme: light dark;
+
   /* ── Backgrounds (darkest → lightest) ── */
   --bg-sidebar: #0f0d0a;
   --bg-base: #12110e;
@@ -21,6 +23,8 @@
   /* ── Accent ── */
   --accent: #c8a97e;
   --status-ok: #7e9e6b;
+  --status-pr-open: #7e8ec8;
+  --status-fail: #b5564e;
 
   /* ── Diff ── */
   --diff-add: #7e9e6b;
@@ -32,9 +36,85 @@
   --error: #e88;
   --error-bg: #3a1a1a;
 
+  /* ── Overlays / glass ── */
+  --toast-bg: rgba(30, 27, 24, 0.78);
+  --toast-border: rgba(255, 255, 255, 0.06);
+  --overlay-bg: rgba(0, 0, 0, 0.5);
+  --input-inset-bg: rgba(0, 0, 0, 0.25);
+  --input-inset-focus: rgba(0, 0, 0, 0.3);
+  --btn-subtle-bg: rgba(255, 255, 255, 0.06);
+  --btn-subtle-hover: rgba(255, 255, 255, 0.1);
+  --pill-btn-hover: rgba(255, 255, 255, 0.08);
+  --code-inline-bg: rgba(255, 255, 255, 0.05);
+  --code-block-bg: rgba(0, 0, 0, 0.3);
+  --img-remove-bg: rgba(0, 0, 0, 0.65);
+  --img-remove-hover: rgba(0, 0, 0, 0.85);
+
+  /* ── Dev mode (title bar) ── */
+  --bg-dev: #191726;
+  --border-dev: #252238;
+
   /* ── Type ── */
   --font-sans: "Space Grotesk", system-ui, sans-serif;
   --font-mono: "SF Mono", "Fira Code", monospace;
+}
+
+/* ── Light mode (system adaptive) ── */
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Backgrounds (lightest → darkest, warm cream) */
+    --bg-sidebar: #f0ebe3;
+    --bg-base: #f7f4ef;
+    --bg-titlebar: #ebe5dc;
+    --bg-card: #eee9e0;
+    --bg-hover: #e5dfd4;
+    --bg-active: #dbd4c7;
+
+    /* Borders */
+    --border: #dbd4c7;
+    --border-light: #c8bfb0;
+
+    /* Text (darkest → lightest) */
+    --text-muted: #b5ab9a;
+    --text-dim: #907f6d;
+    --text-secondary: #6a5d4e;
+    --text-primary: #33302a;
+    --text-bright: #1a1714;
+
+    /* Accent — darkened for contrast on light bg */
+    --accent: #9a7a48;
+    --status-ok: #4e7a3a;
+    --status-pr-open: #4e6a9e;
+    --status-fail: #b54545;
+
+    /* Diff */
+    --diff-add: #4e7a3a;
+    --diff-add-bg: #e4f0dc;
+    --diff-del: #b54545;
+    --diff-del-bg: #f5e2e2;
+
+    /* Error */
+    --error: #c04040;
+    --error-bg: #f5e2e2;
+
+    /* Overlays / glass */
+    --toast-bg: rgba(255, 252, 248, 0.82);
+    --toast-border: rgba(0, 0, 0, 0.06);
+    --overlay-bg: rgba(0, 0, 0, 0.25);
+    --input-inset-bg: rgba(0, 0, 0, 0.04);
+    --input-inset-focus: rgba(0, 0, 0, 0.07);
+    --btn-subtle-bg: rgba(0, 0, 0, 0.04);
+    --btn-subtle-hover: rgba(0, 0, 0, 0.08);
+    --pill-btn-hover: rgba(0, 0, 0, 0.06);
+    --code-inline-bg: rgba(0, 0, 0, 0.04);
+    --code-block-bg: rgba(0, 0, 0, 0.06);
+    --img-remove-bg: rgba(0, 0, 0, 0.55);
+    --img-remove-hover: rgba(0, 0, 0, 0.75);
+
+    /* Dev mode */
+    --bg-dev: #e8e4f0;
+    --border-dev: #cbc4d8;
+  }
 }
 
 body {

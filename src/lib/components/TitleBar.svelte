@@ -143,8 +143,8 @@
   }
 
   .titlebar.dev {
-    background: #191726;
-    border-bottom-color: #252238;
+    background: var(--bg-dev);
+    border-bottom-color: var(--border-dev);
   }
 
   .titlebar-left {

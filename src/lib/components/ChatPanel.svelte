@@ -1957,7 +1957,7 @@
   }
 
   .queue-remove:hover {
-    color: var(--diff-del, #e06c75);
+    color: var(--diff-del);
   }
 
   /* ── Input (Slack-style container) ────────── */
