@@ -735,6 +735,37 @@ No need to mention in your report whether or not you used one of the fallback st
     });
   }
 
+  async function handleRemoveAllDone() {
+    const ids = doneWs.map((w) => w.id);
+    if (ids.length === 0) return;
+
+    const confirmed = await confirm(
+      `This will permanently remove ${ids.length} completed workspace${ids.length > 1 ? "s" : ""} and all their data.`,
+      { title: "Remove all done?", kind: "warning", okLabel: "Remove all", cancelLabel: "Cancel" },
+    );
+    if (!confirmed) return;
+
+    for (const wsId of ids) {
+      const idx = workspaces.findIndex((w) => w.id === wsId);
+      if (idx >= 0) workspaces.splice(idx, 1);
+      if (selectedWsId === wsId) selectedWsId = null;
+      if (creatingWsId === wsId) creatingWsId = null;
+      clearWorkspaceData(wsId);
+      sendingByWorkspace.delete(wsId);
+      queueByWorkspace.delete(wsId);
+      pendingDrain.delete(wsId);
+      prStatusMap.delete(wsId);
+      removePrStatusCacheEntry(wsId);
+      changeCounts.delete(wsId);
+      planModeByWorkspace.delete(wsId);
+      thinkingModeByWorkspace.delete(wsId);
+
+      removeWorkspace(wsId).catch((e) => {
+        addToast(String(e));
+      });
+    }
+  }
+
   // ── Send pipeline ───────────────────────────────────────
 
   /** Core send — assumes caller has verified it's safe to send. */
@@ -1355,6 +1386,7 @@ No need to mention in your report whether or not you used one of the fallback st
           onEditTodo={handleEditTodo}
           onRemoveTodo={handleRemoveTodo}
           onRemoveWorkspace={handleRemove}
+          onRemoveAllDone={handleRemoveAllDone}
         />
       </div>
     </div>
