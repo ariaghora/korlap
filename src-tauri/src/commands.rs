@@ -344,11 +344,16 @@ fn parse_stream_line(
                             .get("input")
                             .and_then(|input| input.get("file_path"))
                             .and_then(|f| f.as_str())
-                            .map(|s| s.replace(worktree_path, "."));
+                            .map(|s| {
+                                let with_slash = format!("{}/", worktree_path);
+                                s.replace(&with_slash, "./").replace(worktree_path, ".")
+                            });
 
                         let input_preview = block.get("input").and_then(|input| {
                             let strip = |s: &str| -> String {
-                                s.replace(worktree_path, ".")
+                                // Strip with trailing slash first, then without, to avoid orphaned "/"
+                                let with_slash = format!("{}/", worktree_path);
+                                s.replace(&with_slash, "./").replace(worktree_path, ".")
                             };
                             // AskUserQuestion: pass the raw questions JSON so the frontend
                             // can render interactive options
@@ -364,12 +369,19 @@ fn parse_stream_line(
                             } else if let Some(cmd) =
                                 input.get("command").and_then(|c| c.as_str())
                             {
-                                // Strip worktree path AND collapse "cd <path> && " prefix
+                                // Strip worktree path AND collapse redundant "cd" prefixes
                                 let cleaned = strip(cmd);
-                                let cleaned = if cleaned.starts_with("cd . && ") {
+                                let cleaned = if cleaned.starts_with("cd ./ && ") {
+                                    cleaned[9..].to_string()
+                                } else if cleaned.starts_with("cd . && ") {
+                                    cleaned[8..].to_string()
+                                } else if cleaned.starts_with("cd ./ ; ") {
                                     cleaned[8..].to_string()
                                 } else if cleaned.starts_with("cd . ; ") {
                                     cleaned[7..].to_string()
+                                } else if cleaned == "cd ." || cleaned == "cd ./" {
+                                    // Standalone no-op cd — nothing useful to show
+                                    return None;
                                 } else {
                                     cleaned
                                 };
