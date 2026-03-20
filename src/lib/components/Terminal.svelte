@@ -3,6 +3,7 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { openTerminal, writeTerminal, resizeTerminal } from "$lib/ipc";
+  import { getTerminalTheme } from "$lib/stores/theme.svelte";
   import "@xterm/xterm/css/xterm.css";
 
   interface Props {
@@ -15,67 +16,12 @@
   let term: Terminal | undefined;
   let fitAddon: FitAddon | undefined;
   let resizeObserver: ResizeObserver | undefined;
-  let colorSchemeQuery: MediaQueryList | undefined;
   let opened = false;
   let fitRafId: number | undefined;
 
-  const darkTheme = {
-    background: "#12110e",
-    foreground: "#d4c5a9",
-    cursor: "#c8a97e",
-    cursorAccent: "#12110e",
-    selectionBackground: "#c8a97e44",
-    black: "#1e1b17",
-    red: "#c87e7e",
-    green: "#7e9e6b",
-    yellow: "#c8a97e",
-    blue: "#7e8e9e",
-    magenta: "#9e7e8e",
-    cyan: "#7e9e9e",
-    white: "#d4c5a9",
-    brightBlack: "#6a6050",
-    brightRed: "#e8a0a0",
-    brightGreen: "#a0c890",
-    brightYellow: "#e8c8a0",
-    brightBlue: "#a0b0c8",
-    brightMagenta: "#c8a0b8",
-    brightCyan: "#a0c8c0",
-    brightWhite: "#e8dcc8",
-  };
-
-  const lightTheme = {
-    background: "#f7f4ef",
-    foreground: "#33302a",
-    cursor: "#9a7a48",
-    cursorAccent: "#f7f4ef",
-    selectionBackground: "#9a7a4844",
-    black: "#dbd4c7",
-    red: "#b54545",
-    green: "#4e7a3a",
-    yellow: "#9a7a48",
-    blue: "#4e6a8e",
-    magenta: "#7e4e6e",
-    cyan: "#3a7a6e",
-    white: "#33302a",
-    brightBlack: "#907f6d",
-    brightRed: "#c85050",
-    brightGreen: "#5a8e45",
-    brightYellow: "#b08a50",
-    brightBlue: "#5a7aa0",
-    brightMagenta: "#905a80",
-    brightCyan: "#4a8e80",
-    brightWhite: "#1a1714",
-  };
-
-  function getTermTheme() {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? darkTheme
-      : lightTheme;
-  }
-
-  function onColorSchemeChange() {
+  function onThemeChange() {
     if (term) {
-      term.options.theme = getTermTheme();
+      term.options.theme = getTerminalTheme();
     }
   }
 
@@ -88,7 +34,7 @@
       scrollback: 10000,
       fontFamily: "'SF Mono', 'Fira Code', 'Menlo', monospace",
       fontSize: 13,
-      theme: getTermTheme(),
+      theme: getTerminalTheme(),
     });
 
     fitAddon = new FitAddon();
@@ -125,9 +71,8 @@
   onMount(() => {
     if (!containerEl) return;
 
-    // Listen for system color scheme changes to update xterm theme
-    colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    colorSchemeQuery.addEventListener("change", onColorSchemeChange);
+    // Listen for theme changes (color scheme + theme picker)
+    window.addEventListener("korlap-theme-change", onThemeChange);
 
     // Use ResizeObserver to detect when container becomes visible.
     // Guard fit() against zero dimensions (display:none when tab not active).
@@ -154,7 +99,7 @@
 
   onDestroy(() => {
     if (fitRafId !== undefined) cancelAnimationFrame(fitRafId);
-    colorSchemeQuery?.removeEventListener("change", onColorSchemeChange);
+    window.removeEventListener("korlap-theme-change", onThemeChange);
     resizeObserver?.disconnect();
     term?.dispose();
   });

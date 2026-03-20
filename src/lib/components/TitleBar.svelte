@@ -367,8 +367,8 @@
   }
 
   .sync-btn.error {
-    color: #c87e7e;
-    border-color: #c87e7e44;
+    color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 25%, transparent);
   }
 
   @keyframes spin {
@@ -385,10 +385,10 @@
     align-items: center;
     gap: 0.4rem;
     padding: 0.25rem 0.5rem;
-    background: #c87e3e18;
-    border: 1px solid #c87e3e55;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     border-radius: 5px;
-    color: #c8a040;
+    color: var(--accent);
     font-size: 0.75rem;
     font-weight: 600;
     white-space: nowrap;
@@ -399,19 +399,19 @@
   }
 
   .branch-warning-text {
-    color: #c8a040;
+    color: var(--accent);
   }
 
   .branch-warning-text strong {
-    color: #e0b850;
+    color: var(--text-bright);
   }
 
   .checkout-btn {
     padding: 0.2rem 0.5rem;
-    background: #c87e3e30;
-    border: 1px solid #c87e3e55;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     border-radius: 4px;
-    color: #e0b850;
+    color: var(--text-bright);
     font-family: inherit;
     font-size: 0.7rem;
     font-weight: 700;
@@ -421,8 +421,8 @@
   }
 
   .checkout-btn:hover:not(:disabled) {
-    background: #c87e3e50;
-    color: #f0d070;
+    background: color-mix(in srgb, var(--accent) 25%, transparent);
+    color: var(--text-bright);
   }
 
   .checkout-btn:disabled {
