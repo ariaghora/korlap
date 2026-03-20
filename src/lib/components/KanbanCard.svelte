@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { Play, X, Pencil } from "lucide-svelte";
+  import { Play, X, Pencil, Lightbulb, BookOpen } from "lucide-svelte";
 
   interface Props {
     type: "todo" | "workspace";
@@ -10,6 +10,8 @@
     title?: string;
     description?: string;
     imagePaths?: string[];
+    planMode?: boolean;
+    thinkingMode?: boolean;
     repoName?: string;
     // Workspace fields
     workspace?: WorkspaceInfo;
@@ -30,6 +32,8 @@
     title,
     description,
     imagePaths,
+    planMode = false,
+    thinkingMode = false,
     repoName,
     workspace,
     prStatus,
@@ -67,6 +71,16 @@
     <span class="card-title">{title}</span>
     {#if description}
       <span class="card-desc">{description}</span>
+    {/if}
+    {#if planMode || thinkingMode}
+      <div class="card-mode-badges">
+        {#if thinkingMode}
+          <span class="card-mode-badge"><Lightbulb size={10} strokeWidth={2} /> Thinking</span>
+        {/if}
+        {#if planMode}
+          <span class="card-mode-badge"><BookOpen size={10} strokeWidth={2} /> Plan</span>
+        {/if}
+      </div>
     {/if}
     {#if imagePaths && imagePaths.length > 0}
       <div class="card-images">
@@ -166,6 +180,26 @@
     line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  .card-mode-badges {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+
+  .card-mode-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.62rem;
+    font-weight: 500;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    border-radius: 8px;
+    padding: 0.05rem 0.35rem;
+    line-height: 1.3;
   }
 
   .card-images {

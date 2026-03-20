@@ -1,7 +1,7 @@
 <script lang="ts">
   import { type PastedImage } from "./ChatPanel.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { X, TextSearch } from "lucide-svelte";
+  import { X, TextSearch, Lightbulb, BookOpen } from "lucide-svelte";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi, type FileSearchResult } from "./MentionAutocomplete.svelte";
   import SearchModal from "./SearchModal.svelte";
@@ -13,6 +13,8 @@
     newImages: PastedImage[];
     existingPaths: string[];
     mentions: Mention[];
+    planMode: boolean;
+    thinkingMode: boolean;
   }
 
   interface Props {
@@ -21,6 +23,8 @@
     initialDescription?: string;
     initialImagePaths?: string[];
     initialMentions?: Mention[];
+    initialPlanMode?: boolean;
+    initialThinkingMode?: boolean;
     submitLabel?: string;
     onSubmit: (data: TaskData) => void;
     onCancel: () => void;
@@ -32,6 +36,8 @@
     initialDescription = "",
     initialImagePaths = [],
     initialMentions = [],
+    initialPlanMode = false,
+    initialThinkingMode = false,
     submitLabel = "Add",
     onSubmit,
     onCancel,
@@ -41,6 +47,8 @@
   let existingPaths = $state<string[]>([...initialImagePaths]);
   let newImages = $state<PastedImage[]>([]);
   let mentions = $state<Mention[]>([...initialMentions]);
+  let planMode = $state(initialPlanMode);
+  let thinkingMode = $state(initialThinkingMode);
   let titleRef: HTMLInputElement | undefined = $state();
 
   // Mention input + autocomplete state
@@ -104,6 +112,8 @@
       newImages: [...newImages],
       existingPaths: [...existingPaths],
       mentions: allMentions,
+      planMode,
+      thinkingMode,
     });
   }
 
@@ -335,7 +345,29 @@
       </div>
     {/if}
     <div class="dialog-footer">
-      <span class="footer-hint">⌘Enter to {submitLabel.toLowerCase()} · {repoId ? "@mention files · " : ""}Paste images</span>
+      <div class="footer-row">
+      <div class="footer-left">
+        <button
+          type="button"
+          class="mode-pill"
+          class:active={thinkingMode}
+          onclick={() => { thinkingMode = !thinkingMode; }}
+          title="Extended thinking: deeper reasoning before responding"
+        >
+          <Lightbulb size={13} strokeWidth={2} />
+          Thinking
+        </button>
+        <button
+          type="button"
+          class="mode-pill"
+          class:active={planMode}
+          onclick={() => { planMode = !planMode; }}
+          title="Plan mode: analyze and plan without making changes"
+        >
+          <BookOpen size={13} strokeWidth={2} />
+          Plan
+        </button>
+      </div>
       <div class="footer-actions">
         {#if repoId}
           <button
@@ -349,6 +381,8 @@
         <button class="cancel-btn" onclick={onCancel}>Cancel</button>
         <button class="submit-btn" onclick={submit} disabled={!canSubmit}>{submitLabel}</button>
       </div>
+      </div>
+      <span class="footer-hint">⌘Enter to {submitLabel.toLowerCase()} · {repoId ? "@mention files · " : ""}Paste images</span>
     </div>
   </div>
 
@@ -533,8 +567,8 @@
 
   .dialog-footer {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 0.5rem;
     margin-top: 0.15rem;
   }
 
@@ -542,6 +576,50 @@
     font-size: 0.65rem;
     color: var(--text-muted);
     opacity: 0.7;
+  }
+
+  .footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .footer-left {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .mode-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.55rem;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    line-height: 1;
+  }
+
+  .mode-pill:hover {
+    border-color: var(--border-light);
+    color: var(--text-secondary);
+  }
+
+  .mode-pill.active {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    color: var(--accent);
+  }
+
+  .mode-pill.active:hover {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
   }
 
   .footer-actions {
