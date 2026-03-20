@@ -1,21 +1,20 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { Eye, ChevronRight, Plus } from "lucide-svelte";
+  import { Eye, ChevronRight } from "lucide-svelte";
   import { SvelteSet } from "svelte/reactivity";
 
   interface Props {
     workspaces: WorkspaceInfo[];
     selectedWsId: string | null;
-    creatingWsId: string | null;
+    creatingWsId?: string | null;
     prStatusMap: Map<string, PrStatus>;
     reviewingWsIds?: Set<string>;
     onSelect: (wsId: string) => void;
-    onNewWorkspace: () => void;
     onRename: (wsId: string, newName: string) => void;
     onRemove: (wsId: string) => void;
   }
 
-  let { workspaces, selectedWsId, creatingWsId, prStatusMap, reviewingWsIds = new Set(), onSelect, onNewWorkspace, onRename, onRemove }: Props =
+  let { workspaces, selectedWsId, creatingWsId = null, prStatusMap, reviewingWsIds = new Set(), onSelect, onRename, onRemove }: Props =
     $props();
 
   let menuOpenId = $state<string | null>(null);
@@ -167,11 +166,6 @@
         {/if}
       </div>
     {/each}
-  </div>
-  <div class="sidebar-footer">
-    <button class="new-ws-btn" onclick={onNewWorkspace} disabled={!!creatingWsId}>
-      <Plus size={11} /> New workspace
-    </button>
   </div>
 </aside>
 
@@ -448,36 +442,4 @@
     min-width: 0;
   }
 
-  .sidebar-footer {
-    display: flex;
-    align-items: center;
-    margin: 0.5rem;
-  }
-
-  .new-ws-btn {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.25rem;
-    padding: 0.35rem;
-    background: transparent;
-    border: 1px dashed var(--border-light);
-    border-radius: 4px;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.78rem;
-  }
-
-  .new-ws-btn:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: var(--bg-hover);
-  }
-
-  .new-ws-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
 </style>
