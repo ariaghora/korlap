@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getChangedFiles, getDiff, type ChangedFile } from "$lib/ipc";
+  import ResizeHandle from "./ResizeHandle.svelte";
 
   interface Props {
     workspaceId: string;
@@ -136,6 +137,14 @@
     return parts.slice(0, -1).join("/") + "/";
   }
 
+  let fileSidebarWidth = $state(240);
+  const FILE_SIDEBAR_MIN = 140;
+  const FILE_SIDEBAR_MAX = 500;
+
+  function handleFileSidebarResize(delta: number) {
+    fileSidebarWidth = Math.min(FILE_SIDEBAR_MAX, Math.max(FILE_SIDEBAR_MIN, fileSidebarWidth + delta));
+  }
+
   function statusIcon(status: string): string {
     switch (status) {
       case "A": return "+";
@@ -158,7 +167,7 @@
   {:else}
     <div class="diff-layout">
       <!-- File sidebar -->
-      <div class="file-sidebar">
+      <div class="file-sidebar" style="width: {fileSidebarWidth}px">
         <div class="file-sidebar-header">
           <span class="file-count">Changes {files.length}</span>
           <span class="file-stat">
@@ -188,6 +197,7 @@
           {/each}
         </div>
       </div>
+      <ResizeHandle onResize={handleFileSidebarResize} />
 
       <!-- Diff content -->
       <div class="diff-content">
@@ -240,8 +250,6 @@
   /* ── File sidebar ──────────────────────── */
 
   .file-sidebar {
-    width: 240px;
-    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     flex-shrink: 0;

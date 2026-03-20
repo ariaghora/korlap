@@ -2,6 +2,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { Folder, FolderOpen, File as FileIcon } from "lucide-svelte";
   import { listDirectory, readFile, writeFile, type FileEntry } from "$lib/ipc";
+  import ResizeHandle from "./ResizeHandle.svelte";
 
   // ── Devicon imports (Vite resolves as URL strings) ──
   import iconRust from "devicon/icons/rust/rust-original.svg";
@@ -222,6 +223,14 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  let treeWidth = $state(260);
+  const TREE_MIN = 140;
+  const TREE_MAX = 500;
+
+  function handleTreeResize(delta: number) {
+    treeWidth = Math.min(TREE_MAX, Math.max(TREE_MIN, treeWidth + delta));
+  }
+
   async function refreshTree() {
     rootLoading = true;
     rootError = "";
@@ -305,7 +314,7 @@
   {:else}
     <div class="browser-layout">
       <!-- File tree sidebar -->
-      <div class="tree-sidebar">
+      <div class="tree-sidebar" style="width: {treeWidth}px">
         <div class="tree-header">
           <span class="tree-title">Files</span>
           <button class="refresh-btn" onclick={refreshTree} title="Refresh">↻</button>
@@ -316,6 +325,7 @@
           {/each}
         </div>
       </div>
+      <ResizeHandle onResize={handleTreeResize} />
 
       <!-- File content -->
       <div class="file-content-area">
@@ -441,8 +451,6 @@
   /* ── Tree sidebar ───────────────────────── */
 
   .tree-sidebar {
-    width: 260px;
-    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
