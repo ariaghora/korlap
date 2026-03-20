@@ -1619,6 +1619,140 @@ pub async fn git_push(
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
+// ── Base branch update detection & merge ─────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct BaseUpdateStatus {
+    pub behind_by: i64,
+}
+
+#[tauri::command]
+pub async fn check_base_updates(
+    workspace_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<BaseUpdateStatus, String> {
+    let (worktree_path, base_branch, gh_profile) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        (ws.worktree_path.clone(), base, repo.gh_profile.clone())
+    };
+
+    let gh_token = resolve_gh_token(&gh_profile);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // Fetch latest from origin for the base branch
+        let mut fetch_cmd = git_cmd_with_auth(&worktree_path, &gh_token);
+        fetch_cmd.args(["fetch", "origin", &base_branch]);
+        fetch_cmd
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let _ = fetch_cmd.output(); // Best-effort; if offline we still compare stale refs
+
+        let remote_base = format!("origin/{}", base_branch);
+
+        // Find merge-base between HEAD and origin/<base>
+        let merge_base_output = std::process::Command::new("git")
+            .args(["merge-base", "HEAD", &remote_base])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to run git merge-base: {}", e))?;
+
+        if !merge_base_output.status.success() {
+            // No common ancestor — treat as 0 behind
+            return Ok(BaseUpdateStatus { behind_by: 0 });
+        }
+
+        let merge_base = String::from_utf8_lossy(&merge_base_output.stdout)
+            .trim()
+            .to_string();
+
+        // Count commits on origin/<base> since the merge-base
+        let rev_list = std::process::Command::new("git")
+            .args(["rev-list", "--count", &format!("{}..{}", merge_base, remote_base)])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to count commits: {}", e))?;
+
+        let behind_by = if rev_list.status.success() {
+            String::from_utf8_lossy(&rev_list.stdout)
+                .trim()
+                .parse::<i64>()
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        Ok(BaseUpdateStatus { behind_by })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn update_from_base(
+    workspace_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let (worktree_path, base_branch, gh_profile) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        (ws.worktree_path.clone(), base, repo.gh_profile.clone())
+    };
+
+    let gh_token = resolve_gh_token(&gh_profile);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // Fetch latest
+        let mut fetch_cmd = git_cmd_with_auth(&worktree_path, &gh_token);
+        fetch_cmd.args(["fetch", "origin", &base_branch]);
+        let fetch_output = fetch_cmd
+            .output()
+            .map_err(|e| format!("Failed to fetch: {}", e))?;
+        if !fetch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+            return Err(format!(
+                "git fetch failed: {}",
+                stderr.trim()
+            ));
+        }
+
+        // Merge origin/<base> into the workspace branch
+        let remote_base = format!("origin/{}", base_branch);
+        let merge_output = std::process::Command::new("git")
+            .args(["merge", &remote_base, "--no-edit"])
+            .current_dir(&worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to run git merge: {}", e))?;
+
+        if !merge_output.status.success() {
+            let stderr = String::from_utf8_lossy(&merge_output.stderr);
+            let stdout = String::from_utf8_lossy(&merge_output.stdout);
+
+            // Abort the failed merge to leave worktree clean
+            let _ = std::process::Command::new("git")
+                .args(["merge", "--abort"])
+                .current_dir(&worktree_path)
+                .output();
+
+            if stderr.contains("CONFLICT") || stdout.contains("CONFLICT") {
+                return Err(format!(
+                    "Merge conflicts detected when updating from {}. The merge has been aborted.",
+                    base_branch
+                ));
+            }
+            return Err(format!("git merge failed: {}", stderr.trim()));
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
 #[tauri::command]
 pub async fn gh_pr_merge(
     workspace_id: String,

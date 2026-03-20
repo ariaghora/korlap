@@ -4,7 +4,7 @@
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/components/ChatPanel.svelte";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, AlertTriangle, Wrench, Eye } from "lucide-svelte";
+  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
@@ -29,7 +29,10 @@
     diffRefreshTrigger: number;
     prStatus: PrStatus | undefined;
     wsChanges: { additions: number; deletions: number } | undefined;
+    baseBehindBy: number;
+    updatingBranch: boolean;
     onPrAction: () => void;
+    onUpdateBranch: () => void;
     onReview: () => void;
     reviewRunning: boolean;
     operationInProgress: boolean;
@@ -61,7 +64,10 @@
     diffRefreshTrigger,
     prStatus,
     wsChanges,
+    baseBehindBy,
+    updatingBranch,
     onPrAction,
+    onUpdateBranch,
     onReview,
     reviewRunning,
     operationInProgress,
@@ -106,6 +112,17 @@
       </div>
 
       <div class="tab-actions">
+        {#if baseBehindBy > 0}
+          <button
+            class="action-badge update-branch"
+            onclick={onUpdateBranch}
+            disabled={isBusy || updatingBranch}
+            title="Merge {baseBehindBy} new commit{baseBehindBy === 1 ? '' : 's'} from base branch"
+          >
+            {#if updatingBranch}<Loader size={11} class="status-icon spinning" />{:else}<ArrowDown size={11} />{/if}
+            Update{#if !updatingBranch}&nbsp;<span class="update-count">{baseBehindBy}</span>{/if}
+          </button>
+        {/if}
         {#if prStatus?.state === "open"}
           <div class="action-group">
             <button class="pr-link-btn" onclick={() => openUrl(prStatus!.url)} title="Open PR #{prStatus.number} in browser">
@@ -396,6 +413,23 @@
   .action-badge.review:hover:not(:disabled) {
     color: var(--text-primary);
     background: var(--border);
+  }
+
+  .action-badge.update-branch {
+    color: var(--text-secondary);
+    border-color: var(--border-light);
+    background: var(--bg-card);
+  }
+
+  .action-badge.update-branch:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--border);
+  }
+
+  .update-count {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    opacity: 0.7;
   }
 
   .action-badge.conflicts {

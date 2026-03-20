@@ -103,6 +103,8 @@ pub fn run() {
             commands::git_push,
             commands::check_main_behind,
             commands::sync_main,
+            commands::check_base_updates,
+            commands::update_from_base,
             commands::gh_pr_merge,
             commands::generate_commit_message,
             commands::get_pr_status,

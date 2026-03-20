@@ -164,11 +164,11 @@
       </button>
     </div>
     <div class="mode-switcher">
-      <button class="mode-btn" class:active={appMode === "work"} onclick={() => onModeChange("work")}>
-        Work <kbd class="mode-hint">⌘1</kbd>
-      </button>
       <button class="mode-btn" class:active={appMode === "plan"} onclick={() => onModeChange("plan")}>
-        Plan <kbd class="mode-hint">⌘2</kbd>
+        Plan <kbd class="mode-hint">⌘1</kbd>
+      </button>
+      <button class="mode-btn" class:active={appMode === "work"} onclick={() => onModeChange("work")}>
+        Work <kbd class="mode-hint">⌘2</kbd>
       </button>
     </div>
   </div>
