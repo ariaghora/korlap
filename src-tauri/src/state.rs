@@ -28,6 +28,10 @@ pub struct WorkspaceInfo {
     pub gh_profile: Option<String>,
     pub status: WorkspaceStatus,
     pub created_at: u64,
+    #[serde(default)]
+    pub task_title: Option<String>,
+    #[serde(default)]
+    pub task_description: Option<String>,
 }
 
 pub struct AgentHandle {
@@ -105,6 +109,7 @@ impl AppState {
             // Use Value to handle the old "archived" status that no longer deserializes
             let raw: Vec<serde_json::Value> =
                 serde_json::from_str(&data).map_err(|e| e.to_string())?;
+            let mut needs_persist = false;
             for entry in raw {
                 let status = entry.get("status").and_then(|s| s.as_str()).unwrap_or("");
                 if status == "archived" {
@@ -122,7 +127,18 @@ impl AppState {
                 if ws.status == WorkspaceStatus::Running {
                     ws.status = WorkspaceStatus::Waiting;
                 }
+                // Migration: backfill task_title from the first hidden user message
+                if ws.task_title.is_none() {
+                    if let Some((title, desc)) = extract_task_from_messages(&self.messages_dir(), &ws.id) {
+                        ws.task_title = Some(title);
+                        ws.task_description = desc;
+                        needs_persist = true;
+                    }
+                }
                 self.workspaces.insert(ws.id.clone(), ws);
+            }
+            if needs_persist {
+                self.save_workspaces()?;
             }
         }
 
@@ -219,6 +235,35 @@ impl AppState {
             return Err(format!("{} is not a git repository", path.display()));
         }
         Ok(())
+    }
+}
+
+/// Extract task title/description from the first hidden user message in a workspace's messages file.
+fn extract_task_from_messages(messages_dir: &Path, workspace_id: &str) -> Option<(String, Option<String>)> {
+    let path = messages_dir.join(format!("{}.json", workspace_id));
+    let data = std::fs::read_to_string(&path).ok()?;
+    let messages: Vec<serde_json::Value> = serde_json::from_str(&data).ok()?;
+
+    // Find first hidden user message
+    let msg = messages.iter().find(|m| {
+        m.get("role").and_then(|r| r.as_str()) == Some("user")
+            && m.get("hidden").and_then(|h| h.as_bool()) == Some(true)
+    })?;
+
+    // Extract text from chunks[0].content
+    let chunks = msg.get("chunks")?.as_array()?;
+    let content = chunks.first()?.get("content")?.as_str()?;
+    if content.is_empty() {
+        return None;
+    }
+
+    // Split on first double newline: title \n\n description
+    if let Some(pos) = content.find("\n\n") {
+        let title = content[..pos].to_string();
+        let desc = content[pos + 2..].trim().to_string();
+        Some((title, if desc.is_empty() { None } else { Some(desc) }))
+    } else {
+        Some((content.to_string(), None))
     }
 }
 

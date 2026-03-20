@@ -93,20 +93,23 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="card ws-card" onclick={onClick}>
-    <div class="card-top">
+    <div class="card-top" class:has-title={!!workspace.task_title}>
       <span
         class="ws-dot"
         class:running={workspace.status === "running" && !isReviewing}
         class:reviewing={isReviewing}
         class:creating={isCreating}
       ></span>
-      <span class="card-name">{workspace.name}</span>
+      <span class="card-name" class:has-title={!!workspace.task_title}>{workspace.task_title ?? workspace.name}</span>
       {#if workspace.status === "running" && !isReviewing}
         <span class="card-elapsed">{elapsed}</span>
       {/if}
     </div>
+    {#if workspace.task_description}
+      <div class="card-task-desc">{workspace.task_description}</div>
+    {/if}
     <div class="card-bottom">
-      <span class="card-branch">{workspace.name !== workspace.branch ? workspace.branch : ""}</span>
+      <span class="card-branch">{workspace.task_title ? workspace.branch : (workspace.name !== workspace.branch ? workspace.branch : "")}</span>
       {#if changeCounts && (changeCounts.additions > 0 || changeCounts.deletions > 0)}
         <span class="card-diff">
           <span class="diff-add">+{changeCounts.additions}</span>
@@ -246,6 +249,14 @@
     gap: 0.4rem;
   }
 
+  .card-top.has-title {
+    align-items: flex-start;
+  }
+
+  .card-top.has-title .ws-dot {
+    margin-top: 0.35rem;
+  }
+
   .ws-dot {
     width: 6px;
     height: 6px;
@@ -289,11 +300,39 @@
     white-space: nowrap;
   }
 
+  .card-name.has-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-bright);
+    line-height: 1.3;
+    word-break: break-word;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
   .card-elapsed {
     font-size: 0.65rem;
     color: var(--text-dim);
     font-family: var(--font-mono);
     flex-shrink: 0;
+  }
+
+  .card-task-desc {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    line-height: 1.35;
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-top: 0.2rem;
+    padding-left: calc(6px + 0.4rem);
   }
 
   .card-bottom {

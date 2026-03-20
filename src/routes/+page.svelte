@@ -617,13 +617,15 @@ No need to mention in your report whether or not you used one of the fallback st
       gh_profile: null,
       status: "waiting",
       created_at: Date.now() / 1000,
+      task_title: todo.title,
+      task_description: todo.description || null,
     };
     creatingWsId = tempId;
     workspaces.push(placeholder);
     selectWorkspace(tempId);
 
     try {
-      const ws = await createWorkspace(repoId);
+      const ws = await createWorkspace(repoId, todo.title, todo.description || undefined);
       const idx = workspaces.findIndex((w) => w.id === tempId);
       if (idx >= 0) workspaces[idx] = ws;
       selectedWsId = ws.id;
