@@ -142,7 +142,14 @@
                   autofocus
                 />
               {:else}
-                <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
+                {#if ws.task_title}
+                  <span class="ws-info" class:creating-name={ws.id === creatingWsId}>
+                    <span class="ws-title">{ws.task_title}</span>
+                    <span class="ws-branch">{ws.name}</span>
+                  </span>
+                {:else}
+                  <span class="ws-name" class:creating-name={ws.id === creatingWsId}>{ws.name}</span>
+                {/if}
                 {#if ws.id !== creatingWsId && reviewingWsIds.has(ws.id)}
                   <span class="ws-reviewing"><Eye size={11} /></span>
                 {:else if ws.id !== creatingWsId && ws.status === "running"}
@@ -421,6 +428,36 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  .ws-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    overflow: hidden;
+  }
+
+  .ws-info.creating-name .ws-title {
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
+  .ws-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+  }
+
+  .ws-branch {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    opacity: 0.7;
   }
 
   .ws-name {
