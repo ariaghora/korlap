@@ -80,6 +80,65 @@ export async function setRepoProfile(
   return invoke("set_repo_profile", { repoId, profile });
 }
 
+// ── GitHub Onboarding ─────────────────────────────────────────────────
+
+export interface GhCliStatus {
+  installed: boolean;
+  authenticated: boolean;
+  profiles: GhProfile[];
+}
+
+export async function checkGhCli(): Promise<GhCliStatus> {
+  return invoke<GhCliStatus>("check_gh_cli");
+}
+
+export async function ghAuthLogin(): Promise<void> {
+  return invoke("gh_auth_login");
+}
+
+export async function cancelGhAuthLogin(): Promise<void> {
+  return invoke("cancel_gh_auth_login");
+}
+
+export interface GhRepoEntry {
+  full_name: string;
+  description: string;
+  is_fork: boolean;
+  clone_url: string;
+  updated_at: string;
+}
+
+export async function listGhRepos(
+  profile: string,
+  search?: string,
+): Promise<GhRepoEntry[]> {
+  return invoke<GhRepoEntry[]>("list_gh_repos", {
+    profile,
+    search: search ?? null,
+  });
+}
+
+export async function cloneRepo(
+  cloneUrl: string,
+  repoName: string,
+  profile: string,
+  destPath?: string,
+): Promise<RepoDetail> {
+  return invoke<RepoDetail>("clone_repo", {
+    cloneUrl,
+    repoName,
+    destPath: destPath ?? null,
+    profile,
+  });
+}
+
+export async function checkRepoGhAccess(
+  path: string,
+  profiles: string[],
+): Promise<string | null> {
+  return invoke<string | null>("check_repo_gh_access", { path, profiles });
+}
+
 // ── Repo Branch ─────────────────────────────────────────────────────
 
 export async function getRepoHead(repoId: string): Promise<string> {

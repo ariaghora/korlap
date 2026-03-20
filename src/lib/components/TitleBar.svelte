@@ -15,13 +15,13 @@
     appMode: AppMode;
     onModeChange: (mode: AppMode) => void;
     onSelectRepo: (repo: RepoDetail) => void;
-    onAddRepo: () => void;
     onSettings: () => void;
+    onGoHome: () => void;
     highlightedRepoIndex: number;
     onDropdownClose?: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, appMode, onModeChange, onSelectRepo, onAddRepo, onSettings, highlightedRepoIndex, onDropdownClose }: Props =
+  let { repos, activeRepo, selectedWs, appMode, onModeChange, onSelectRepo, onSettings, onGoHome, highlightedRepoIndex, onDropdownClose }: Props =
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
@@ -92,11 +92,6 @@
     dropdownRef?.close();
   }
 
-  function handleAddRepo() {
-    onAddRepo();
-    dropdownRef?.close();
-  }
-
   function startDrag(e: MouseEvent) {
     const target = e.target as HTMLElement;
     if (target.closest('button, input, label, [role="button"]')) return;
@@ -133,6 +128,7 @@
   ondblclick={handleDoubleClick}
 >
   <div class="titlebar-left">
+    <button class="home-btn" onclick={onGoHome} title="Home">K</button>
     <div class="btn-group">
       <Dropdown bind:this={dropdownRef} onclose={onDropdownClose}>
         {#snippet trigger()}
@@ -157,7 +153,7 @@
           </button>
         {/each}
         <div class="dropdown-divider"></div>
-        <button class="dropdown-item add-item" class:highlighted={highlightedRepoIndex === repos.length} onclick={handleAddRepo}>
+        <button class="dropdown-item add-item" class:highlighted={highlightedRepoIndex === repos.length} onclick={() => { onGoHome(); dropdownRef?.close(); }}>
           <Plus size={12} />
           <span>Add repository</span>
         </button>
@@ -248,6 +244,29 @@
     gap: 0.5rem;
     /* leave room for traffic lights on macOS */
     padding-left: 78px;
+  }
+
+  .home-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--bg-active);
+    border: 1px solid var(--border-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    cursor: pointer;
+    font-family: inherit;
+    padding: 0;
+    flex-shrink: 0;
+    transition: border-color 0.15s ease;
+  }
+
+  .home-btn:hover {
+    border-color: var(--accent);
   }
 
   .titlebar-center {

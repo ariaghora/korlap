@@ -1,5 +1,6 @@
 <script lang="ts">
   import { open, confirm } from "@tauri-apps/plugin-dialog";
+  import { listen } from "@tauri-apps/api/event";
   import { SvelteMap } from "svelte/reactivity";
   import {
     addRepo,
@@ -27,11 +28,20 @@
     updateFromBase,
     saveTodos,
     loadTodos,
+    checkGhCli,
+    ghAuthLogin,
+    cancelGhAuthLogin,
+    listGhRepos,
+    cloneRepo,
+    setRepoProfile,
+    checkRepoGhAccess,
     type RepoDetail,
     type RepoSettings,
     type WorkspaceInfo,
     type AgentEvent,
     type PrStatus,
+    type GhCliStatus,
+    type GhRepoEntry,
   } from "$lib/ipc";
   import {
     addUserMessage,
@@ -235,6 +245,194 @@ No need to mention in your report whether or not you used one of the fallback st
   let titleBarRef: TitleBar | undefined = $state();
   let repoDropdownIndex = $state(-1);
 
+  // ── Home screen state ──────────────────────────────────
+  let ghStatus = $state<GhCliStatus | null>(null);
+  let selectedProfile = $state<string | null>(null);
+  let ghRepos = $state<GhRepoEntry[]>([]);
+  let repoSearch = $state("");
+  let loadingRepos = $state(false);
+  let cloning = $state(false);
+  let ghCheckLoading = $state(true);
+  let ghAuthInProgress = $state(false);
+  let ghAuthCode = $state<string | null>(null);
+  let ghSearchTriggered = $state(false);
+
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Filtered local repos based on search
+  let filteredRepos = $derived(
+    repoSearch
+      ? repos.filter((r) => {
+          const q = repoSearch.toLowerCase();
+          return r.display_name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q);
+        })
+      : repos,
+  );
+
+  // GitHub results excluding repos already added locally (match by name)
+  let filteredGhRepos = $derived(
+    ghRepos.filter((gh) => {
+      const ghName = gh.full_name.split("/").pop()?.toLowerCase() ?? "";
+      return !repos.some((r) => r.display_name.toLowerCase() === ghName);
+    }),
+  );
+
+  async function checkGhStatus() {
+    ghCheckLoading = true;
+    try {
+      ghStatus = await checkGhCli();
+      // Auto-select: prefer the active profile, fall back to first
+      if (ghStatus.profiles.length > 0) {
+        const active = ghStatus.profiles.find((p) => p.active);
+        selectedProfile = active ? active.login : ghStatus.profiles[0].login;
+      }
+      // Auto-detect profiles for existing repos that don't have one
+      if (ghStatus.authenticated) {
+        bindProfilesForExistingRepos(ghStatus.profiles);
+      }
+    } catch (e) {
+      addToast(String(e));
+    } finally {
+      ghCheckLoading = false;
+    }
+  }
+
+  async function handleGhLogin() {
+    ghAuthInProgress = true;
+    ghAuthCode = null;
+    let unlisten: (() => void) | undefined;
+    try {
+      unlisten = await listen<string>("gh-auth-code", (e) => {
+        ghAuthCode = e.payload;
+      });
+      await ghAuthLogin();
+      await checkGhStatus();
+    } catch (e) {
+      addToast(String(e));
+    } finally {
+      ghAuthInProgress = false;
+      ghAuthCode = null;
+      unlisten?.();
+    }
+  }
+
+  async function bindProfilesForExistingRepos(profiles: { login: string }[]) {
+    const logins = profiles.map((p) => p.login);
+    const unbound = repos.filter((r) => !r.gh_profile);
+    if (unbound.length === 0) return;
+
+    const results = await Promise.allSettled(
+      unbound.map(async (repo) => {
+        const matchedLogin = await checkRepoGhAccess(repo.path, logins);
+        if (matchedLogin) {
+          await setRepoProfile(repo.id, matchedLogin);
+          repo.gh_profile = matchedLogin;
+          return true;
+        }
+        return false;
+      }),
+    );
+
+    const anyChanged = results.some((r) => r.status === "fulfilled" && r.value);
+    if (anyChanged) repos = [...repos];
+
+    for (const r of results) {
+      if (r.status === "rejected") {
+        addToast(`Failed to check GitHub access: ${r.reason}`);
+      }
+    }
+  }
+
+  async function fetchGhRepos(search?: string) {
+    if (!selectedProfile) return;
+    loadingRepos = true;
+    ghSearchTriggered = true;
+    try {
+      ghRepos = await listGhRepos(selectedProfile, search);
+    } catch (e) {
+      addToast(String(e));
+    } finally {
+      loadingRepos = false;
+    }
+  }
+
+  function handleRepoSearch(value: string) {
+    repoSearch = value;
+    clearTimeout(searchDebounceTimer);
+    if (selectedProfile && value) {
+      searchDebounceTimer = setTimeout(() => {
+        loadingRepos = true;
+        fetchGhRepos(value);
+      }, 400);
+    } else if (!value) {
+      ghRepos = [];
+      ghSearchTriggered = false;
+      loadingRepos = false;
+    }
+  }
+
+  async function handleCloneRepo(repo: GhRepoEntry) {
+    if (!selectedProfile) return;
+    cloning = true;
+    try {
+      const repoName = repo.full_name.split("/").pop() ?? repo.full_name;
+      const result = await cloneRepo(repo.clone_url, repoName, selectedProfile);
+      if (!repos.find((r) => r.id === result.id)) {
+        repos = [...repos, result];
+      }
+      await selectRepo(result);
+    } catch (e) {
+      addToast(String(e));
+    } finally {
+      cloning = false;
+    }
+  }
+
+  async function handleOpenRepoWithProfile() {
+    try {
+      const selected = await open({
+        directory: true,
+        title: "Open a git repository",
+      });
+      if (!selected) return;
+
+      // Check access against the selected profile only
+      if (selectedProfile) {
+        const matched = await checkRepoGhAccess(selected, [selectedProfile]);
+        if (!matched) {
+          addToast(`"${selectedProfile}" does not have access to this repository.`);
+          return;
+        }
+        const repo = await addRepo(selected);
+        await setRepoProfile(repo.id, selectedProfile);
+        repo.gh_profile = selectedProfile;
+        if (!repos.find((r) => r.id === repo.id)) {
+          repos = [...repos, repo];
+        }
+        await selectRepo(repo);
+        return;
+      }
+
+      // No profile selected — add without profile binding
+      const repo = await addRepo(selected);
+      if (!repos.find((r) => r.id === repo.id)) {
+        repos = [...repos, repo];
+      }
+      await selectRepo(repo);
+    } catch (e) {
+      addToast(String(e));
+    }
+  }
+
+  async function handleRemoveRepoFromHome(repoId: string) {
+    try {
+      await removeRepo(repoId);
+      repos = repos.filter((r) => r.id !== repoId);
+    } catch (e) {
+      addToast(String(e));
+    }
+  }
+
   // ── App mode + Todos ────────────────────────────────────
   type AppMode = "work" | "plan";
   let appMode = $state<AppMode>("plan");
@@ -309,6 +507,9 @@ No need to mention in your report whether or not you used one of the fallback st
         if (r.length > 0) selectRepo(r[0]);
       }).catch((e) => { addToast(String(e)); });
 
+      // Check GitHub CLI status for onboarding
+      checkGhStatus();
+
       unlistenStatus = await onAgentStatus((event) => {
         const isReviewing = reviewByWorkspace.has(event.workspace_id);
         const ws = workspaces.find((w) => w.id === event.workspace_id);
@@ -361,7 +562,7 @@ No need to mention in your report whether or not you used one of the fallback st
           if (repoDropdownIndex < repos.length) {
             selectRepo(repos[repoDropdownIndex]);
           } else {
-            handleOpenRepo();
+            activeRepo = null;
           }
           titleBarRef.closeRepoDropdown();
           repoDropdownIndex = -1;
@@ -447,24 +648,6 @@ No need to mention in your report whether or not you used one of the fallback st
   });
 
   // ── Handlers ───────────────────────────────────────────
-
-  async function handleOpenRepo() {
-
-    try {
-      const selected = await open({
-        directory: true,
-        title: "Open a git repository",
-      });
-      if (!selected) return;
-      const repo = await addRepo(selected);
-      if (!repos.find((r) => r.id === repo.id)) {
-        repos = [...repos, repo];
-      }
-      await selectRepo(repo);
-    } catch (e) {
-      addToast(String(e));
-    }
-  }
 
   function selectRepo(repo: RepoDetail) {
     activeRepo = repo;
@@ -1225,8 +1408,8 @@ No need to mention in your report whether or not you used one of the fallback st
         return; // No change — skip reactive update
       }
       changeCounts.set(wsId, { additions: adds, deletions: dels });
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn(`refreshChangeCounts(${wsId}):`, e);
     }
   }
 
@@ -1251,8 +1434,8 @@ No need to mention in your report whether or not you used one of the fallback st
       }
       prStatusMap.set(wsId, pr);
       savePrStatusCache();
-    } catch {
-      // gh not installed or no remote
+    } catch (e) {
+      console.warn(`refreshPrStatus(${wsId}):`, e);
     }
   }
 
@@ -1264,8 +1447,8 @@ No need to mention in your report whether or not you used one of the fallback st
       const prev = baseBehindMap.get(wsId);
       if (prev === status.behind_by) return;
       baseBehindMap.set(wsId, status.behind_by);
-    } catch {
-      // Offline or git error — non-critical
+    } catch (e) {
+      addToast(`Failed to check base branch updates: ${e}`);
     }
   }
 
@@ -1307,25 +1490,153 @@ No need to mention in your report whether or not you used one of the fallback st
 </script>
 
 {#if !activeRepo}
-  <div class="empty-state">
-    <div class="empty-content">
-      <div class="logo-mark">K</div>
-      <h1>Korlap</h1>
-      <p>Orchestrate parallel Claude agents across git worktrees.</p>
-      <button class="open-repo-btn" onclick={handleOpenRepo}>
-        Open Repository
-      </button>
-      {#if repos.length > 0}
-        <div class="recent-repos">
-          <span class="recent-label">Recent</span>
-          {#each repos as repo}
-            <button class="recent-item" onclick={() => selectRepo(repo)}>
-              {repo.display_name}
-              <span class="recent-path">{repo.path}</span>
+  <div class="home-screen">
+    <div class="home-content">
+      <!-- GitHub profiles section -->
+      <div class="home-section">
+        <div class="home-section-header">GitHub</div>
+        {#if ghCheckLoading}
+          <div class="gh-loading">
+            <div class="spinner"></div>
+            <span>Checking GitHub CLI...</span>
+          </div>
+        {:else if !ghStatus?.installed}
+          <div class="gh-notice compact">
+            <span>GitHub CLI not installed.</span>
+            <code class="cli-cmd">brew install gh</code>
+            <button class="retry-btn" onclick={checkGhStatus}>Retry</button>
+          </div>
+        {:else if !ghStatus?.authenticated}
+          {#if ghAuthInProgress}
+            <div class="gh-auth-status">
+              <div class="spinner"></div>
+              {#if ghAuthCode}
+                <span>Enter code <code class="device-code">{ghAuthCode}</code> in your browser</span>
+              {:else}
+                <span>Opening browser...</span>
+              {/if}
+              <button class="retry-btn" onclick={async () => { await cancelGhAuthLogin(); }}>Cancel</button>
+            </div>
+          {:else}
+            <button class="connect-gh-btn" onclick={handleGhLogin}>
+              Connect GitHub Account
             </button>
-          {/each}
+          {/if}
+        {:else}
+          <div class="profile-pills">
+            {#each ghStatus.profiles as profile}
+              <button
+                class="profile-pill"
+                class:selected={selectedProfile === profile.login}
+                onclick={() => { selectedProfile = profile.login; }}
+              >
+                {profile.login}
+                {#if profile.active}
+                  <span class="profile-active-dot"></span>
+                {/if}
+              </button>
+            {/each}
+            {#if !ghAuthInProgress}
+              <button
+                class="profile-pill add-profile"
+                onclick={handleGhLogin}
+              >+</button>
+            {/if}
+          </div>
+          {#if ghAuthInProgress}
+            <div class="gh-auth-status">
+              <div class="spinner"></div>
+              {#if ghAuthCode}
+                <span>Enter code <code class="device-code">{ghAuthCode}</code> in your browser</span>
+              {:else}
+                <span>Opening browser...</span>
+              {/if}
+              <button class="retry-btn" onclick={async () => { await cancelGhAuthLogin(); }}>Cancel</button>
+            </div>
+          {/if}
+        {/if}
+      </div>
+
+      <!-- Repositories section -->
+      <div class="home-section repos-section">
+        <div class="home-section-header">Repositories</div>
+
+        <div class="repo-search-bar">
+          <input
+            type="text"
+            placeholder={selectedProfile ? `Search local or ${selectedProfile}'s GitHub repos...` : "Filter repositories..."}
+            value={repoSearch}
+            oninput={(e) => handleRepoSearch(e.currentTarget.value)}
+          />
         </div>
-      {/if}
+
+        <div class="repo-list">
+          <!-- Local repos -->
+          {#each filteredRepos as repo (repo.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="repo-row" onclick={() => selectRepo(repo)} onkeydown={(e) => { if (e.key === "Enter") selectRepo(repo); }} tabindex="0" role="button">
+              <span class="repo-row-name">{repo.display_name}</span>
+              <span class="repo-row-right">
+                {#if repo.gh_profile}
+                  <span class="repo-row-profile">{repo.gh_profile}</span>
+                {/if}
+                <button
+                  class="repo-row-remove"
+                  title="Remove repository"
+                  onclick={(e) => { e.stopPropagation(); handleRemoveRepoFromHome(repo.id); }}
+                >&times;</button>
+              </span>
+              <span class="repo-row-path">{repo.path}</span>
+            </div>
+          {/each}
+
+          <!-- GitHub results (when searching) -->
+          {#if repoSearch && selectedProfile}
+            {#if loadingRepos}
+              <div class="gh-loading">
+                <div class="spinner"></div>
+                <span>Searching GitHub...</span>
+              </div>
+            {:else if ghSearchTriggered && filteredGhRepos.length > 0}
+              <div class="repo-divider">
+                <span>from GitHub</span>
+              </div>
+              {#each filteredGhRepos as repo}
+                <button
+                  class="repo-row gh"
+                  disabled={cloning}
+                  onclick={() => handleCloneRepo(repo)}
+                >
+                  <span class="repo-row-name">{repo.full_name.split("/").pop()}</span>
+                  <span class="repo-row-profile">{repo.full_name}</span>
+                  {#if repo.description}
+                    <span class="repo-row-desc">{repo.description}</span>
+                  {/if}
+                </button>
+              {/each}
+            {:else if ghSearchTriggered && filteredGhRepos.length === 0 && filteredRepos.length === 0}
+              <div class="empty-results">No repositories found matching "{repoSearch}"</div>
+            {/if}
+          {/if}
+
+          {#if !repoSearch && repos.length === 0}
+            <div class="empty-results">No repositories yet. Search GitHub above or open a local folder.</div>
+          {/if}
+        </div>
+
+        {#if cloning}
+          <div class="gh-loading">
+            <div class="spinner"></div>
+            <span>Cloning repository...</span>
+          </div>
+        {/if}
+
+        {#if selectedProfile}
+          <button class="open-repo-btn secondary" onclick={handleOpenRepoWithProfile}>
+            Add local repo as {selectedProfile}
+          </button>
+        {/if}
+      </div>
     </div>
   </div>
 {:else}
@@ -1340,8 +1651,8 @@ No need to mention in your report whether or not you used one of the fallback st
       {appMode}
       onModeChange={(m) => { appMode = m; }}
       onSelectRepo={selectRepo}
-      onAddRepo={handleOpenRepo}
       onSettings={() => (showSettings = true)}
+      onGoHome={() => { activeRepo = null; }}
     />
 
     {#if reviewAlertWs}
@@ -1490,21 +1801,29 @@ No need to mention in your report whether or not you used one of the fallback st
 <Toasts />
 
 <style>
-  /* ── Empty state ─────────────────────────────────── */
+  /* ── Home screen ────────────────────────────────── */
 
-  .empty-state {
+  .home-screen {
     height: 100vh;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    overflow: hidden;
+    padding: 1.5rem 2rem;
+    padding-top: 3rem;
   }
 
-  .empty-content {
+  .home-content {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.75rem;
+    gap: 1rem;
+    width: 100%;
+    max-width: 440px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .logo-mark {
@@ -1521,58 +1840,232 @@ No need to mention in your report whether or not you used one of the fallback st
     color: var(--accent);
   }
 
-  .empty-content h1 {
+  .home-content h1 {
     margin: 0;
     font-size: 1.5rem;
     color: var(--text-bright);
     font-weight: 600;
   }
 
-  .empty-content p {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 0.85rem;
+  /* ── Sections ──────────────────────────────────── */
+
+  .home-section {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    flex-shrink: 0;
   }
 
-  .open-repo-btn {
-    margin-top: 0.5rem;
-    padding: 0.6rem 1.5rem;
+  .home-section.repos-section {
+    flex: 1;
+    min-height: 0;
+    flex-shrink: 1;
+  }
+
+  .home-section-header {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* ── GitHub profiles ───────────────────────────── */
+
+  .profile-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .profile-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.65rem;
+    background: var(--bg-card);
+    border: 1.5px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 500;
+    transition: border-color 0.15s ease;
+  }
+
+  .profile-pill:hover {
+    border-color: var(--border-light);
+  }
+
+  .profile-pill.selected {
+    border-color: var(--accent);
+    background: var(--bg-active);
+    color: var(--text-bright);
+  }
+
+  .profile-active-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .gh-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    padding: 0.5rem 0;
+  }
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-light);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .gh-notice {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.25rem 0;
+  }
+
+  .gh-notice.compact {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .gh-notice span {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+  }
+
+  .cli-cmd {
+    padding: 0.3rem 0.6rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    user-select: all;
+  }
+
+  .retry-btn {
+    padding: 0.25rem 0.6rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+
+  .retry-btn:hover {
+    background: var(--bg-hover);
+  }
+
+  .connect-gh-btn {
+    padding: 0.5rem 1.25rem;
     background: var(--accent);
     color: var(--bg-base);
     border: none;
     border-radius: 6px;
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     cursor: pointer;
     font-family: inherit;
   }
 
-  .open-repo-btn:hover {
+  .connect-gh-btn:hover {
     filter: brightness(1.1);
   }
 
-  .recent-repos {
-    margin-top: 1.5rem;
+  .gh-auth-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+  }
+
+  .device-code {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--accent);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.15rem 0.4rem;
+    letter-spacing: 0.05em;
+  }
+
+  .profile-pill.add-profile {
+    color: var(--text-dim);
+    font-size: 1rem;
+    padding: 0.35rem 0.55rem;
+  }
+
+  .profile-pill.add-profile:hover {
+    color: var(--text-primary);
+    border-color: var(--accent);
+  }
+
+  /* ── Repository section ────────────────────────── */
+
+  .repo-search-bar {
+    width: 100%;
+  }
+
+  .repo-search-bar input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.85rem;
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .repo-search-bar input:focus {
+    border-color: var(--accent);
+  }
+
+  .repo-list {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-    width: 100%;
-    max-width: 360px;
+    gap: 0.2rem;
   }
 
-  .recent-label {
-    font-size: 0.75rem;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.25rem;
-  }
-
-  .recent-item {
+  .repo-row {
     width: 100%;
     text-align: left;
-    padding: 0.5rem 0.75rem;
+    padding: 0.45rem 0.65rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -1580,19 +2073,166 @@ No need to mention in your report whether or not you used one of the fallback st
     cursor: pointer;
     font-family: inherit;
     font-size: 0.85rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 0.1rem 0.5rem;
+    align-items: baseline;
+    transition: border-color 0.15s ease;
+    box-sizing: border-box;
   }
 
-  .recent-item:hover {
-    border-color: var(--border-light);
+  .repo-row:hover:not(:disabled) {
+    border-color: var(--accent);
     background: var(--bg-hover);
   }
 
-  .recent-path {
+  .repo-row:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .repo-row-name {
+    font-weight: 600;
+    color: var(--text-bright);
+    grid-column: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .repo-row-right {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    justify-content: flex-end;
+  }
+
+  .repo-row-profile {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+
+  .repo-row-remove {
+    width: 18px;
+    height: 18px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.1s ease;
+  }
+
+  .repo-row:hover .repo-row-remove {
+    opacity: 1;
+  }
+
+  .repo-row-remove:hover {
+    background: var(--bg-card);
+    color: var(--text-bright);
+  }
+
+  .repo-row-path {
     font-size: 0.7rem;
     color: var(--text-dim);
+    grid-column: 1 / -1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .repo-row-desc {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    grid-column: 1 / -1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .repo-row.gh .repo-row-name::after {
+    content: "clone";
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--accent);
+    margin-left: 0.4rem;
+    vertical-align: middle;
+  }
+
+  .repo-divider {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.35rem 0;
+  }
+
+  .repo-divider::before,
+  .repo-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .repo-divider span {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .empty-results {
+    padding: 1rem;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.82rem;
+  }
+
+  .open-repo-btn {
+    margin-top: 0.25rem;
+    padding: 0.5rem 1.25rem;
+    background: var(--accent);
+    color: var(--bg-base);
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-family: inherit;
+    align-self: center;
+  }
+
+  .open-repo-btn:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .open-repo-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .open-repo-btn.secondary {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border-light);
+  }
+
+  .open-repo-btn.secondary:hover {
+    background: var(--bg-hover);
   }
 
   /* ── App layout ──────────────────────────────────── */

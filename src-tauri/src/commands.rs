@@ -3,8 +3,12 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use std::io::BufRead;
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// PID of the in-flight `gh auth login` process, or 0 if none.
+static GH_AUTH_PID: AtomicU32 = AtomicU32::new(0);
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
@@ -142,6 +146,25 @@ struct ShellEnv {
 
 /// Inject essential shell environment vars that Tauri apps launched from
 /// Finder/Dock don't inherit (SSH agent, PATH, HOME, etc.)
+/// Strip ANSI escape sequences from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip until we hit a letter (the terminator of an ANSI sequence)
+            for c2 in chars.by_ref() {
+                if c2.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 fn inject_shell_env(cmd: &mut std::process::Command) {
     let env = get_shell_env();
     if let Some(ref sock) = env.ssh_auth_sock {
@@ -466,42 +489,7 @@ pub struct RepoDetail {
 #[tauri::command]
 pub fn add_repo(path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<RepoDetail, String> {
     let path = std::path::PathBuf::from(&path);
-    let path = path
-        .canonicalize()
-        .map_err(|e| format!("Invalid path: {}", e))?;
-
-    AppState::is_git_repo(&path)?;
-
-    let default_branch = detect_default_branch(&path)?;
-    let display_name = repo_display_name(&path);
-
-    let mut state = state.lock().map_err(|e| e.to_string())?;
-
-    // Deduplicate by path
-    if let Some(existing) = state.repos.values().find(|r| r.path == path) {
-        return Ok(RepoDetail {
-            info: existing.clone(),
-            display_name,
-            default_branch,
-        });
-    }
-
-    let repo = RepoInfo {
-        id: Uuid::new_v4().to_string(),
-        path,
-        gh_profile: None,
-        default_branch: Some(default_branch.clone()),
-    };
-
-    state.repos.insert(repo.id.clone(), repo.clone());
-    state.save_repos()?;
-
-    tracing::info!("Added repo {} at {}", repo.id, repo.path.display());
-    Ok(RepoDetail {
-        info: repo,
-        display_name,
-        default_branch,
-    })
+    register_repo(path, None, state)
 }
 
 #[tauri::command]
@@ -598,6 +586,385 @@ pub fn set_repo_profile(
     repo.gh_profile = profile;
     st.save_repos()?;
     Ok(())
+}
+
+// ── GitHub onboarding commands ───────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct GhCliStatus {
+    pub installed: bool,
+    pub authenticated: bool,
+    pub profiles: Vec<GhProfile>,
+}
+
+#[tauri::command]
+pub fn check_gh_cli() -> Result<GhCliStatus, String> {
+    // Check if gh is installed
+    let mut cmd = std::process::Command::new("gh");
+    cmd.arg("--version");
+    inject_shell_env(&mut cmd);
+    let version_result = cmd.output();
+
+    let installed = match version_result {
+        Ok(ref o) => o.status.success(),
+        Err(_) => false,
+    };
+
+    if !installed {
+        return Ok(GhCliStatus {
+            installed: false,
+            authenticated: false,
+            profiles: vec![],
+        });
+    }
+
+    // Reuse list_gh_profiles logic
+    let profiles = list_gh_profiles()?;
+    let authenticated = !profiles.is_empty();
+
+    Ok(GhCliStatus {
+        installed,
+        authenticated,
+        profiles,
+    })
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct GhAuthResult {
+    pub code: String,
+    pub url: String,
+}
+
+#[tauri::command]
+pub async fn gh_auth_login(app_handle: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::BufRead;
+
+        let mut cmd = std::process::Command::new("gh");
+        cmd.args([
+            "auth", "login",
+            "--hostname", "github.com",
+            "--git-protocol", "https",
+            "--web",
+            "--scopes", "workflow",
+        ]);
+        inject_shell_env(&mut cmd);
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| format!("Failed to start gh auth login: {}", e))?;
+        GH_AUTH_PID.store(child.id(), Ordering::SeqCst);
+
+        // Send newline to skip "Press Enter" prompt
+        if let Some(ref mut stdin) = child.stdin {
+            use std::io::Write;
+            let _ = stdin.write_all(b"\n");
+        }
+
+        // Read stderr to capture the one-time code and URL.
+        // gh outputs ANSI escape codes, so strip them before parsing.
+        if let Some(stderr) = child.stderr.take() {
+            let reader = std::io::BufReader::new(stderr);
+            for line in reader.lines() {
+                let line = match line {
+                    Ok(l) => strip_ansi(&l),
+                    Err(_) => break,
+                };
+                // Extract URL (https://...) and open in browser
+                if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://github.com/login")) {
+                    let _ = std::process::Command::new("open").arg(url).spawn();
+                }
+                // Extract device code (pattern: XXXX-XXXX, alphanumeric)
+                for word in line.split_whitespace() {
+                    let parts: Vec<&str> = word.split('-').collect();
+                    if parts.len() == 2
+                        && parts[0].len() == 4
+                        && parts[1].len() == 4
+                        && parts[0].chars().all(|c| c.is_ascii_alphanumeric())
+                        && parts[1].chars().all(|c| c.is_ascii_alphanumeric())
+                    {
+                        let _ = app_handle.emit("gh-auth-code", word.to_string());
+                    }
+                }
+            }
+        }
+
+        let status = child.wait().map_err(|e| format!("gh auth login failed: {}", e))?;
+        GH_AUTH_PID.store(0, Ordering::SeqCst);
+        if !status.success() {
+            return Err("GitHub authentication was cancelled or failed.".to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub fn cancel_gh_auth_login() -> Result<(), String> {
+    let pid = GH_AUTH_PID.swap(0, Ordering::SeqCst);
+    if pid != 0 {
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .output();
+    }
+    Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct GhRepoEntry {
+    pub full_name: String,
+    pub description: String,
+    pub is_fork: bool,
+    pub clone_url: String,
+    pub updated_at: String,
+}
+
+#[tauri::command]
+pub async fn list_gh_repos(profile: String, search: Option<String>) -> Result<Vec<GhRepoEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = resolve_gh_token(&Some(profile.clone()));
+
+        let mut cmd = std::process::Command::new("gh");
+        cmd.args([
+            "repo",
+            "list",
+            &profile,
+            "--json",
+            "nameWithOwner,description,isFork,sshUrl,updatedAt",
+            "--limit",
+            "100",
+            "--source",
+        ]);
+        inject_shell_env(&mut cmd);
+        if let Some(ref t) = token {
+            cmd.env("GH_TOKEN", t);
+        }
+
+        let output = cmd.output().map_err(|e| format!("Failed to run gh: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("gh repo list failed: {}", stderr));
+        }
+
+        let arr: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)
+            .map_err(|e| format!("Failed to parse gh output: {}", e))?;
+
+        let search_lower = search.as_deref().unwrap_or("").to_lowercase();
+
+        let mut repos: Vec<GhRepoEntry> = arr
+            .into_iter()
+            .filter_map(|v| {
+                let full_name = v.get("nameWithOwner")?.as_str()?.to_string();
+                let description = v
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_fork = v.get("isFork").and_then(|f| f.as_bool()).unwrap_or(false);
+                let clone_url = v.get("sshUrl").and_then(|u| u.as_str()).unwrap_or("").to_string();
+                let updated_at = v
+                    .get("updatedAt")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if !search_lower.is_empty()
+                    && !full_name.to_lowercase().contains(&search_lower)
+                    && !description.to_lowercase().contains(&search_lower)
+                {
+                    return None;
+                }
+
+                Some(GhRepoEntry {
+                    full_name,
+                    description,
+                    is_fork,
+                    clone_url,
+                    updated_at,
+                })
+            })
+            .collect();
+
+        repos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(repos)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub fn clone_repo(
+    clone_url: String,
+    repo_name: String,
+    dest_path: Option<String>,
+    profile: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<RepoDetail, String> {
+    let token = resolve_gh_token(&Some(profile.clone()));
+
+    // Determine destination
+    let dest = if let Some(ref p) = dest_path {
+        std::path::PathBuf::from(p)
+    } else {
+        // Default to ~/Developer/<repo-name>
+        let home = std::env::var("HOME").map_err(|_| "Cannot determine HOME directory")?;
+        std::path::PathBuf::from(home).join("Developer").join(&repo_name)
+    };
+
+    if dest.exists() {
+        // If it already exists and is a git repo, just add it
+        if dest.join(".git").exists() {
+            return register_repo(dest, Some(profile), state);
+        }
+        return Err(format!("Destination already exists: {}", dest.display()));
+    }
+
+    // Create parent dir if needed
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
+
+    // Clone with token auth
+    let mut cmd = std::process::Command::new("git");
+    if let Some(ref t) = token {
+        cmd.args([
+            "-c",
+            &format!(
+                "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
+                t
+            ),
+            "-c",
+            &format!(
+                "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
+                t
+            ),
+        ]);
+    }
+    cmd.args(["clone", &clone_url, &dest.to_string_lossy()]);
+    inject_shell_env(&mut cmd);
+
+    let output = cmd.output().map_err(|e| format!("Failed to run git clone: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git clone failed: {}", stderr));
+    }
+
+    register_repo(dest, Some(profile), state)
+}
+
+/// Shared helper to register a repo in app state (used by add_repo and clone_repo).
+fn register_repo(
+    path: std::path::PathBuf,
+    gh_profile: Option<String>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<RepoDetail, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
+
+    AppState::is_git_repo(&path)?;
+
+    let default_branch = detect_default_branch(&path)?;
+    let display_name = repo_display_name(&path);
+
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+
+    // Deduplicate by path
+    if let Some(existing_id) = st.repos.values().find(|r| r.path == path).map(|r| r.id.clone()) {
+        // Update gh_profile if provided
+        if gh_profile.is_some() {
+            if let Some(repo) = st.repos.get_mut(&existing_id) {
+                repo.gh_profile = gh_profile;
+            }
+            st.save_repos()?;
+        }
+        let existing = st.repos[&existing_id].clone();
+        return Ok(RepoDetail {
+            info: existing,
+            display_name,
+            default_branch,
+        });
+    }
+
+    let repo = RepoInfo {
+        id: Uuid::new_v4().to_string(),
+        path,
+        gh_profile,
+        default_branch: Some(default_branch.clone()),
+    };
+
+    st.repos.insert(repo.id.clone(), repo.clone());
+    st.save_repos()?;
+
+    tracing::info!("Registered repo {} at {}", repo.id, repo.path.display());
+    Ok(RepoDetail {
+        info: repo,
+        display_name,
+        default_branch,
+    })
+}
+
+/// Extract "owner/repo" from a repo's remote origin URL.
+/// Returns None if not a GitHub repo or if the remote can't be read.
+fn extract_gh_nwo(path: &std::path::Path) -> Option<String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["remote", "get-url", "origin"]);
+    cmd.current_dir(path);
+    inject_shell_env(&mut cmd);
+
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Match patterns:
+    //   git@github.com:owner/repo.git
+    //   https://github.com/owner/repo.git
+    //   ssh://git@github.com/owner/repo.git
+    let path_part = if let Some(rest) = url.strip_prefix("git@github.com:") {
+        Some(rest)
+    } else {
+        url.split("github.com/").nth(1)
+    };
+
+    path_part.map(|p| p.trim_end_matches(".git").to_string())
+}
+
+/// Check which connected GH profile has access to the repo at `path`.
+/// Returns the profile login that can access it, or None.
+#[tauri::command]
+pub async fn check_repo_gh_access(path: String, profiles: Vec<String>) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(&path)
+            .canonicalize()
+            .map_err(|e| format!("Invalid path: {}", e))?;
+
+        let nwo = match extract_gh_nwo(&path) {
+            Some(nwo) => nwo,
+            None => return Ok(None),
+        };
+
+        for profile in &profiles {
+            let token = resolve_gh_token(&Some(profile.clone()));
+            let mut cmd = std::process::Command::new("gh");
+            cmd.args(["repo", "view", &nwo, "--json", "name"]);
+            inject_shell_env(&mut cmd);
+            if let Some(ref t) = token {
+                cmd.env("GH_TOKEN", t);
+            }
+            let output = cmd.output().map_err(|e| format!("Failed to run gh: {}", e))?;
+            if output.status.success() {
+                return Ok(Some(profile.clone()));
+            }
+        }
+
+        Ok(None)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 // ── Repo branch commands ────────────────────────────────────────────
