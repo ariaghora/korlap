@@ -264,7 +264,7 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    z-index: 200;
+    z-index: 1100;
     background: var(--overlay-bg);
     display: flex;
     align-items: flex-start;

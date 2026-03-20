@@ -14,6 +14,8 @@
     description: string;
     imagePaths?: string[];
     mentionPaths?: string[];
+    planMode?: boolean;
+    thinkingMode?: boolean;
     created_at: number;
   }
 
@@ -28,6 +30,7 @@
     creatingWsId: string | null;
     repoId?: string;
     repoName?: string;
+    defaultThinkingMode?: boolean;
     onCardClick: (wsId: string) => void;
     onSpawnAgent: (todoId: string) => void;
     onNewTodo: (data: TaskData) => void;
@@ -48,6 +51,7 @@
     creatingWsId,
     repoId,
     repoName,
+    defaultThinkingMode = false,
     onCardClick,
     onSpawnAgent,
     onNewTodo,
@@ -95,6 +99,8 @@
         title={todo.title}
         description={todo.description}
         imagePaths={todo.imagePaths}
+        planMode={todo.planMode}
+        thinkingMode={todo.thinkingMode}
         {repoName}
         onAction={() => onSpawnAgent(todo.id)}
         onEdit={() => { editingTodo = todo; }}
@@ -174,6 +180,7 @@
 {#if showAddDialog}
   <TaskPopover
     {repoId}
+    initialThinkingMode={defaultThinkingMode}
     submitLabel="Add"
     onSubmit={handleAddSubmit}
     onCancel={() => { showAddDialog = false; }}
@@ -187,6 +194,8 @@
     initialDescription={editingTodo.description}
     initialImagePaths={editingTodo.imagePaths}
     initialMentions={editingTodo.mentionPaths?.map((p: string) => ({ type: "file" as const, path: p, displayName: p.split("/").pop() ?? p }))}
+    initialPlanMode={editingTodo.planMode}
+    initialThinkingMode={editingTodo.thinkingMode}
     submitLabel="Save"
     onSubmit={handleEditSubmit}
     onCancel={() => { editingTodo = null; }}

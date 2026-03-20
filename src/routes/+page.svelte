@@ -445,6 +445,8 @@ No need to mention in your report whether or not you used one of the fallback st
     description: string;
     imagePaths?: string[];
     mentionPaths?: string[];
+    planMode?: boolean;
+    thinkingMode?: boolean;
     created_at: number;
   }
   let todos = $state<TodoItem[]>([]);
@@ -606,7 +608,7 @@ No need to mention in your report whether or not you used one of the fallback st
           if (selectedWsId) handleRemove(selectedWsId);
           break;
         case "f":
-          if (e.shiftKey && selectedWsId) {
+          if (e.shiftKey && selectedWsId && appMode === "work") {
             e.preventDefault();
             showSearchModal = true;
           }
@@ -750,7 +752,7 @@ No need to mention in your report whether or not you used one of the fallback st
     return Promise.all(newImages.map((img) => saveImage(namespace, img.base64, img.extension)));
   }
 
-  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[] }) {
+  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }) {
     if (!activeRepo) return;
     if (!data.title.trim() && data.newImages.length === 0 && data.existingPaths.length === 0) return;
     try {
@@ -764,6 +766,8 @@ No need to mention in your report whether or not you used one of the fallback st
         description: data.description.trim(),
         imagePaths: allPaths.length > 0 ? allPaths : undefined,
         mentionPaths: mentionPaths.length > 0 ? mentionPaths : undefined,
+        planMode: data.planMode || undefined,
+        thinkingMode: data.thinkingMode || undefined,
         created_at: Date.now() / 1000,
       });
       persistTodos();
@@ -772,7 +776,7 @@ No need to mention in your report whether or not you used one of the fallback st
     }
   }
 
-  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[] }) {
+  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }) {
     const todo = todos.find((t) => t.id === todoId);
     if (!todo) return;
     try {
@@ -783,6 +787,8 @@ No need to mention in your report whether or not you used one of the fallback st
       todo.description = data.description.trim();
       todo.imagePaths = allPaths.length > 0 ? allPaths : undefined;
       todo.mentionPaths = mentionPaths.length > 0 ? mentionPaths : undefined;
+      todo.planMode = data.planMode || undefined;
+      todo.thinkingMode = data.thinkingMode || undefined;
       persistTodos();
     } catch (e) {
       addToast(`Failed to save images: ${e}`);
@@ -866,8 +872,8 @@ No need to mention in your report whether or not you used one of the fallback st
         fullPrompt,
         images: [],
         mentions: [],
-        planMode: false,
-        thinkingMode: repoSettings?.default_thinking ?? false,
+        planMode: todo.planMode ?? false,
+        thinkingMode: todo.thinkingMode ?? repoSettings?.default_thinking ?? false,
         hidden: true,
       });
     } catch (e) {
@@ -1748,6 +1754,7 @@ No need to mention in your report whether or not you used one of the fallback st
           {creatingWsId}
           repoId={activeRepo.id}
           repoName={activeRepo.display_name}
+          defaultThinkingMode={repoSettings?.default_thinking ?? false}
           onCardClick={handleKanbanCardClick}
           onSpawnAgent={handleSpawnFromTodo}
           onNewTodo={handleNewTodo}
@@ -1783,7 +1790,6 @@ No need to mention in your report whether or not you used one of the fallback st
         repoId={activeRepo.id}
         repoName={activeRepo.display_name}
         repoPath={activeRepo.path}
-        currentProfile={activeRepo.gh_profile ?? null}
         onClose={() => {
           showSettings = false;
           if (activeRepo) {
