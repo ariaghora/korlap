@@ -229,19 +229,21 @@
     align-items: center;
     gap: 0.25rem;
     padding: 0.3rem 0.55rem;
-    background: transparent;
-    border: 1px dashed var(--border-light);
-    border-radius: 4px;
-    color: var(--text-dim);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 6px;
+    color: var(--accent);
     font-family: inherit;
     font-size: 0.7rem;
+    font-weight: 600;
     cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
   }
 
   .spawn-btn:hover {
     color: var(--accent);
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 5%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
   }
 
   .edit-btn {
