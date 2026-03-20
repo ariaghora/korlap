@@ -3,6 +3,7 @@
   import type { PastedImage } from "./ChatPanel.svelte";
   import KanbanColumn from "./KanbanColumn.svelte";
   import KanbanCard from "./KanbanCard.svelte";
+  import CardDetailOverlay from "./CardDetailOverlay.svelte";
   import TaskPopover, { type TaskData } from "./TaskPopover.svelte";
   import { Plus, Ellipsis, Trash2 } from "lucide-svelte";
 
@@ -61,6 +62,7 @@
   let showDoneMenu = $state(false);
   let doneMenuBtnEl = $state<HTMLButtonElement | null>(null);
   let doneMenuPos = $state({ top: 0, left: 0 });
+  let detailWs = $state<WorkspaceInfo | null>(null);
 
   function openDoneMenu(e: MouseEvent) {
     e.stopPropagation();
@@ -118,7 +120,7 @@
         changeCounts={changeCounts.get(ws.id)}
         isReviewing={reviewingWsIds.has(ws.id)}
         isCreating={ws.id === creatingWsId}
-        onClick={() => onCardClick(ws.id)}
+        onClick={() => { detailWs = ws; }}
       />
     {/each}
     {#if inProgress.length === 0}
@@ -134,7 +136,7 @@
         prStatus={prStatusMap.get(ws.id)}
         changeCounts={changeCounts.get(ws.id)}
         isReviewing={reviewingWsIds.has(ws.id)}
-        onClick={() => onCardClick(ws.id)}
+        onClick={() => { detailWs = ws; }}
       />
     {/each}
     {#if review.length === 0}
@@ -149,7 +151,7 @@
         workspace={ws}
         prStatus={prStatusMap.get(ws.id)}
         changeCounts={changeCounts.get(ws.id)}
-        onClick={() => onCardClick(ws.id)}
+        onClick={() => { detailWs = ws; }}
       />
     {/each}
     {#if done.length === 0}
@@ -188,6 +190,18 @@
     submitLabel="Save"
     onSubmit={handleEditSubmit}
     onCancel={() => { editingTodo = null; }}
+  />
+{/if}
+
+{#if detailWs}
+  <CardDetailOverlay
+    workspace={detailWs}
+    prStatus={prStatusMap.get(detailWs.id)}
+    changeCounts={changeCounts.get(detailWs.id)}
+    isReviewing={reviewingWsIds.has(detailWs.id)}
+    isCreating={detailWs.id === creatingWsId}
+    onGoToWorkspace={() => { const id = detailWs!.id; detailWs = null; onCardClick(id); }}
+    onClose={() => { detailWs = null; }}
   />
 {/if}
 
