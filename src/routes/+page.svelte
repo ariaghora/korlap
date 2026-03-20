@@ -606,7 +606,7 @@ No need to mention in your report whether or not you used one of the fallback st
           if (selectedWsId) handleRemove(selectedWsId);
           break;
         case "f":
-          if (e.shiftKey && selectedWsId) {
+          if (e.shiftKey && selectedWsId && appMode === "work") {
             e.preventDefault();
             showSearchModal = true;
           }
