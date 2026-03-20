@@ -413,11 +413,11 @@ No need to mention in your report whether or not you used one of the fallback st
           break;
         case "1":
           e.preventDefault();
-          appMode = "work";
+          appMode = "plan";
           break;
         case "2":
           e.preventDefault();
-          appMode = "plan";
+          appMode = "work";
           break;
       }
     }
