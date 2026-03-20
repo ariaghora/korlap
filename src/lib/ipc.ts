@@ -284,6 +284,22 @@ export async function getDiff(
   return invoke<string>("get_diff", { workspaceId, filePath });
 }
 
+// ── Base Branch Updates ─────────────────────────────────────────────
+
+export interface BaseUpdateStatus {
+  behind_by: number;
+}
+
+export async function checkBaseUpdates(
+  workspaceId: string,
+): Promise<BaseUpdateStatus> {
+  return invoke<BaseUpdateStatus>("check_base_updates", { workspaceId });
+}
+
+export async function updateFromBase(workspaceId: string): Promise<void> {
+  return invoke("update_from_base", { workspaceId });
+}
+
 // ── Direct Git/GH Operations ────────────────────────────────────────
 
 export interface CommitResult {
