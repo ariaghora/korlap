@@ -4,6 +4,7 @@
   import { syncMain, getRepoHead, checkoutDefaultBranch, checkMainBehind } from "$lib/ipc";
   import { Settings, Check, Plus, RefreshCw, AlertTriangle } from "lucide-svelte";
   import Dropdown from "./Dropdown.svelte";
+  import { addToast } from "$lib/stores/toasts.svelte";
 
   type AppMode = "work" | "plan";
 
@@ -62,9 +63,11 @@
     syncError = false;
     try {
       await syncMain(activeRepo.id);
+      addToast(`${activeRepo.default_branch} synced with origin`, "success");
       behindCount = 0;
     } catch {
       syncError = true;
+      addToast(`Failed to sync ${activeRepo.default_branch}`, "error");
       setTimeout(() => { syncError = false; }, 2000);
     } finally {
       syncing = false;
