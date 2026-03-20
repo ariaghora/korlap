@@ -3558,7 +3558,19 @@ pub fn open_terminal(
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut cmd = CommandBuilder::new(&shell);
+    cmd.arg("-l"); // Login shell: sources .zprofile/.zshrc for proper prompt & config
     cmd.cwd(&worktree_path);
+
+    // Terminal identity — critical for readline/zle to handle backspace, arrow keys, etc.
+    // Tauri is a GUI app so TERM is not in the parent environment.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("SHELL", &shell);
+
+    // Locale — prevents garbled output for UTF-8 content
+    let lang = std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string());
+    cmd.env("LANG", &lang);
+    cmd.env("LC_ALL", &lang);
 
     // Inject shell env for SSH, PATH, etc.
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
