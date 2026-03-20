@@ -62,9 +62,12 @@
     }, 600);
   }
 
-  const sections: { id: Section; label: string; icon: typeof Terminal }[] = [
+  const repoSections: { id: Section; label: string; icon: typeof Terminal }[] = [
     { id: "scripts", label: "Scripts", icon: Terminal },
     { id: "agent", label: "Agent", icon: Bot },
+  ];
+
+  const globalSections: { id: Section; label: string; icon: typeof Terminal }[] = [
     { id: "appearance", label: "Appearance", icon: Palette },
   ];
 </script>
@@ -82,22 +85,34 @@
       <span>Back to app</span>
     </button>
 
-    <div class="nav-group">
-      {#each sections as section}
-        <button
-          class="nav-item"
-          class:active={activeSection === section.id}
-          onclick={() => (activeSection = section.id)}
-        >
-          <svelte:component this={section.icon} size={14} />
-          {section.label}
-        </button>
-      {/each}
-    </div>
+    <div class="nav-groups">
+      <div class="nav-group">
+        <span class="nav-group-label">{repoName}</span>
+        {#each repoSections as section}
+          <button
+            class="nav-item"
+            class:active={activeSection === section.id}
+            onclick={() => (activeSection = section.id)}
+          >
+            <svelte:component this={section.icon} size={14} />
+            {section.label}
+          </button>
+        {/each}
+      </div>
 
-    <div class="nav-footer">
-      <span class="nav-repo-label">Repository</span>
-      <span class="nav-repo-name">{repoName}</span>
+      <div class="nav-group">
+        <span class="nav-group-label">General</span>
+        {#each globalSections as section}
+          <button
+            class="nav-item"
+            class:active={activeSection === section.id}
+            onclick={() => (activeSection = section.id)}
+          >
+            <svelte:component this={section.icon} size={14} />
+            {section.label}
+          </button>
+        {/each}
+      </div>
     </div>
   </nav>
 
@@ -355,11 +370,25 @@
     color: var(--text-bright);
   }
 
+  .nav-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    flex: 1;
+  }
+
   .nav-group {
     display: flex;
     flex-direction: column;
     gap: 1px;
-    flex: 1;
+  }
+
+  .nav-group-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0 0.85rem 0.35rem;
   }
 
   .nav-item {
@@ -385,26 +414,6 @@
   .nav-item.active {
     background: var(--border);
     color: var(--text-bright);
-  }
-
-  .nav-footer {
-    padding: 0.75rem 0.85rem 0;
-    border-top: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-  }
-
-  .nav-repo-label {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .nav-repo-name {
-    font-size: 0.78rem;
-    color: var(--text-dim);
   }
 
   /* ── Content ─────────────────────────── */
