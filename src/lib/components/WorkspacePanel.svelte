@@ -167,6 +167,7 @@
           {:else}
             <Play size={12} />
           {/if}
+          Run
         </button>
       {/if}
 
@@ -376,35 +377,39 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
+    gap: 0.25rem;
+    padding: 0 0.55rem;
     height: 26px;
-    border: none;
-    border-radius: 5px;
-    background: transparent;
-    color: var(--text-dim);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent);
     cursor: pointer;
     flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
   }
 
   .run-script-btn:hover:not(:disabled) {
-    color: var(--text-primary);
-    background: var(--bg-hover);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
   }
 
   .run-script-btn:disabled {
     cursor: default;
   }
 
-  .run-script-btn.running {
-    color: var(--accent);
-  }
-
   .run-script-btn.success {
     color: var(--status-ok);
+    border-color: color-mix(in srgb, var(--status-ok) 30%, transparent);
+    background: color-mix(in srgb, var(--status-ok) 12%, transparent);
   }
 
   .run-script-btn.error {
     color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 30%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 12%, transparent);
   }
 
   .run-script-btn :global(.status-icon.spinning) {
