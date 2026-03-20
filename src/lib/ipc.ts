@@ -80,6 +80,16 @@ export async function setRepoProfile(
   return invoke("set_repo_profile", { repoId, profile });
 }
 
+// ── Repo Branch ─────────────────────────────────────────────────────
+
+export async function getRepoHead(repoId: string): Promise<string> {
+  return invoke<string>("get_repo_head", { repoId });
+}
+
+export async function checkoutDefaultBranch(repoId: string): Promise<void> {
+  return invoke("checkout_default_branch", { repoId });
+}
+
 // ── Workspace ────────────────────────────────────────────────────────
 
 export async function createWorkspace(
@@ -316,6 +326,14 @@ export async function gitCommit(
 
 export async function gitPush(workspaceId: string): Promise<void> {
   return invoke("git_push", { workspaceId });
+}
+
+export async function checkMainBehind(repoId: string): Promise<number> {
+  return invoke<number>("check_main_behind", { repoId });
+}
+
+export async function syncMain(repoId: string): Promise<void> {
+  return invoke("sync_main", { repoId });
 }
 
 export async function ghPrMerge(
