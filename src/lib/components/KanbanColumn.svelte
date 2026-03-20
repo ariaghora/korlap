@@ -8,15 +8,20 @@
     dimmed?: boolean;
     children: Snippet;
     footer?: Snippet;
+    headerAction?: Snippet;
   }
 
-  let { title, count, accent = false, dimmed = false, children, footer }: Props = $props();
+  let { title, count, accent = false, dimmed = false, children, footer, headerAction }: Props = $props();
 </script>
 
 <div class="column" class:dimmed>
   <div class="column-header">
     <span class="column-title">{title}</span>
     <span class="column-count" class:accent>{count}</span>
+    {#if headerAction}
+      <span class="header-action-spacer"></span>
+      {@render headerAction()}
+    {/if}
   </div>
   <div class="column-body">
     {@render children()}
@@ -82,6 +87,10 @@
   .column-count.accent {
     background: color-mix(in srgb, var(--accent) 20%, transparent);
     color: var(--accent);
+  }
+
+  .header-action-spacer {
+    flex: 1;
   }
 
   .column-body {
