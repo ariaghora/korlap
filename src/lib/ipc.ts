@@ -312,6 +312,10 @@ export async function gitPush(workspaceId: string): Promise<void> {
   return invoke("git_push", { workspaceId });
 }
 
+export async function checkMainBehind(repoId: string): Promise<number> {
+  return invoke<number>("check_main_behind", { repoId });
+}
+
 export async function syncMain(repoId: string): Promise<void> {
   return invoke("sync_main", { repoId });
 }

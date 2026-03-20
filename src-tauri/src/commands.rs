@@ -1485,6 +1485,53 @@ pub async fn git_commit(
 
 // ── Sync main ──────────────────────────────────────────────────────
 
+/// Fetch origin and return how many commits local default branch is behind.
+#[tauri::command]
+pub async fn check_main_behind(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<u32, String> {
+    let (repo_path, gh_profile, base_branch) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st.repos.get(&repo_id).ok_or("Repo not found")?;
+        let branch = repo.default_branch.clone()
+            .unwrap_or_else(|| "main".to_string());
+        (repo.path.clone(), repo.gh_profile.clone(), branch)
+    };
+
+    let gh_token = resolve_gh_token(&gh_profile);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // Fetch latest
+        let mut fetch = git_cmd_with_auth(&repo_path, &gh_token);
+        fetch.args(["fetch", "origin", &base_branch]);
+        let output = fetch.output()
+            .map_err(|e| format!("Failed to run git fetch: {}", e))?;
+        if !output.status.success() {
+            return Err("Could not fetch from origin".into());
+        }
+
+        // Count commits local is behind: main..origin/main
+        let rev_list = std::process::Command::new("git")
+            .args([
+                "rev-list", "--count",
+                &format!("{}..origin/{}", base_branch, base_branch),
+            ])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("Failed to compare refs: {}", e))?;
+
+        if !rev_list.status.success() {
+            return Err("Failed to compare local and remote refs".into());
+        }
+
+        let count_str = String::from_utf8_lossy(&rev_list.stdout).trim().to_string();
+        count_str.parse::<u32>().map_err(|_| "Failed to parse commit count".into())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
 #[tauri::command]
 pub async fn sync_main(
     repo_id: String,

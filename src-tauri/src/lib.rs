@@ -101,6 +101,7 @@ pub fn run() {
             commands::checkout_default_branch,
             commands::git_commit,
             commands::git_push,
+            commands::check_main_behind,
             commands::sync_main,
             commands::gh_pr_merge,
             commands::generate_commit_message,

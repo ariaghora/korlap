@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { RepoDetail, WorkspaceInfo } from "$lib/ipc";
-  import { syncMain, getRepoHead, checkoutDefaultBranch } from "$lib/ipc";
+  import { syncMain, getRepoHead, checkoutDefaultBranch, checkMainBehind } from "$lib/ipc";
   import { Settings, Check, Plus, RefreshCw, AlertTriangle } from "lucide-svelte";
   import Dropdown from "./Dropdown.svelte";
 
@@ -28,17 +28,31 @@
   let syncError = $state(false);
   let headBranch: string | null = $state(null);
   let checkingOut = $state(false);
+  let behindCount: number = $state(0);
+  let checking = $state(false);
 
   let onDefaultBranch = $derived(
     headBranch === null || headBranch === activeRepo.default_branch
   );
 
-  // Check HEAD branch when entering plan mode or switching repos
+  // Check HEAD branch + behind count when entering plan mode or switching repos
   $effect(() => {
-    const _repoId = activeRepo.id;
-    const _mode = appMode;
-    if (_mode === "plan") {
-      getRepoHead(_repoId).then((b) => { headBranch = b; }).catch(() => { headBranch = null; });
+    const repoId = activeRepo.id;
+    const mode = appMode;
+    if (mode === "plan") {
+      checking = true;
+      getRepoHead(repoId)
+        .then((b) => {
+          headBranch = b;
+          // Only check behind if on default branch
+          if (b === activeRepo.default_branch) {
+            return checkMainBehind(repoId).then((n) => { behindCount = n; });
+          } else {
+            behindCount = 0;
+          }
+        })
+        .catch(() => { headBranch = null; behindCount = 0; })
+        .finally(() => { checking = false; });
     }
   });
 
@@ -48,6 +62,7 @@
     syncError = false;
     try {
       await syncMain(activeRepo.id);
+      behindCount = 0;
     } catch {
       syncError = true;
       setTimeout(() => { syncError = false; }, 2000);
@@ -184,7 +199,7 @@
             {checkingOut ? "Switching…" : `Switch to ${activeRepo.default_branch}`}
           </button>
         </div>
-      {:else}
+      {:else if behindCount > 0}
         <button
           class="sync-btn"
           class:syncing
@@ -194,7 +209,9 @@
           title="Sync local {activeRepo.default_branch} with origin"
         >
           <RefreshCw size={13} />
-          <span class="sync-label">{syncError ? "Failed" : syncing ? "Syncing…" : "Sync"}</span>
+          <span class="sync-label">
+            {syncError ? "Failed" : syncing ? "Syncing…" : `Sync (${behindCount} behind)`}
+          </span>
         </button>
       {/if}
     {/if}
