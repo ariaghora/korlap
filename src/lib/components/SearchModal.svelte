@@ -250,7 +250,7 @@
     position: fixed;
     inset: 0;
     z-index: 200;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--overlay-bg);
     display: flex;
     align-items: flex-start;
     justify-content: center;
@@ -381,7 +381,7 @@
   }
 
   .results-error {
-    color: #c87e7e;
+    color: var(--diff-del);
   }
 
   /* ── Preview pane ───────────────────── */

@@ -179,7 +179,7 @@
     width: 100%;
     box-sizing: border-box;
     padding: 0.55rem 0.65rem;
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--input-inset-bg);
     border: none;
     border-radius: 8px;
     color: var(--text-bright);
@@ -195,7 +195,7 @@
   }
 
   .task-title:focus {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--input-inset-focus);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
   }
 
@@ -203,7 +203,7 @@
     width: 100%;
     box-sizing: border-box;
     padding: 0.55rem 0.65rem;
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--input-inset-bg);
     border: none;
     border-radius: 8px;
     color: var(--text-primary);
@@ -220,7 +220,7 @@
   }
 
   .task-desc:focus {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--input-inset-focus);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
   }
 
@@ -252,7 +252,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: rgba(0, 0, 0, 0.65);
+    background: var(--img-remove-bg);
     border: none;
     color: var(--text-secondary);
     display: flex;
@@ -263,7 +263,7 @@
   }
 
   .image-remove:hover {
-    background: rgba(0, 0, 0, 0.85);
+    background: var(--img-remove-hover);
     color: var(--text-bright);
   }
 
@@ -287,7 +287,7 @@
 
   .cancel-btn {
     padding: 0.35rem 0.7rem;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--btn-subtle-bg);
     border: none;
     border-radius: 6px;
     color: var(--text-secondary);
@@ -297,7 +297,7 @@
   }
 
   .cancel-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--btn-subtle-hover);
     color: var(--text-primary);
   }
 

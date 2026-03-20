@@ -370,7 +370,7 @@
   }
 
   .ws-dot.pr-open {
-    background: #7e8ec8;
+    background: var(--status-pr-open);
   }
 
   .ws-dot.pr-fail {

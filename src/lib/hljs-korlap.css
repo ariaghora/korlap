@@ -1,4 +1,4 @@
-/* highlight.js custom theme for Korlap warm dark palette */
+/* highlight.js custom theme for Korlap warm palette (adapts to light/dark) */
 .hljs {
   color: var(--text-primary);
   background: var(--bg-sidebar);
@@ -9,7 +9,7 @@
 .hljs-built_in,
 .hljs-name,
 .hljs-tag {
-  color: #c8a97e;
+  color: var(--accent);
 }
 
 .hljs-string,
@@ -20,12 +20,12 @@
 .hljs-template-tag,
 .hljs-template-variable,
 .hljs-type {
-  color: #7e9e6b;
+  color: var(--status-ok);
 }
 
 .hljs-comment,
 .hljs-quote {
-  color: #6a6050;
+  color: var(--text-dim);
 }
 
 .hljs-number,
@@ -34,11 +34,11 @@
 .hljs-selector-id,
 .hljs-symbol,
 .hljs-bullet {
-  color: #c87e7e;
+  color: var(--diff-del);
 }
 
 .hljs-meta {
-  color: #8a7e6a;
+  color: var(--text-secondary);
 }
 
 .hljs-emphasis {
@@ -50,11 +50,11 @@
 }
 
 .hljs-addition {
-  color: #7e9e6b;
+  color: var(--diff-add);
   background: var(--diff-add-bg);
 }
 
 .hljs-deletion {
-  color: #c87e7e;
+  color: var(--diff-del);
   background: var(--diff-del-bg);
 }

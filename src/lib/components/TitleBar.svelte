@@ -182,8 +182,8 @@
   }
 
   .titlebar.dev {
-    background: #191726;
-    border-bottom-color: #252238;
+    background: var(--bg-dev);
+    border-bottom-color: var(--border-dev);
   }
 
   .titlebar-left {
@@ -497,9 +497,9 @@
   }
 
   .action-badge.conflicts {
-    color: #c87e7e;
-    border-color: color-mix(in srgb, #c87e7e 40%, transparent);
-    background: color-mix(in srgb, #c87e7e 7%, transparent);
+    color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 40%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 7%, transparent);
   }
 
   .action-badge.conflicts:hover:not(:disabled) {
