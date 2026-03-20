@@ -624,15 +624,15 @@ No need to mention in your report whether or not you used one of the fallback st
     workspaces.push(placeholder);
     selectWorkspace(tempId);
 
+    // Optimistically remove the todo card immediately on start
+    handleRemoveTodo(todoId);
+
     try {
       const ws = await createWorkspace(repoId, todo.title, todo.description || undefined);
       const idx = workspaces.findIndex((w) => w.id === tempId);
       if (idx >= 0) workspaces[idx] = ws;
       selectedWsId = ws.id;
       creatingWsId = null;
-
-      // Remove the todo now that workspace exists
-      handleRemoveTodo(todoId);
 
       // Build prompt from title + description
       const promptText = todo.description
@@ -669,6 +669,9 @@ No need to mention in your report whether or not you used one of the fallback st
       if (failIdx >= 0) workspaces.splice(failIdx, 1);
       if (selectedWsId === tempId) selectedWsId = null;
       creatingWsId = null;
+      // Restore the optimistically removed todo card
+      todos.push(todo);
+      persistTodos();
       addToast(String(e));
     }
   }
