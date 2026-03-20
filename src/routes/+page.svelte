@@ -236,6 +236,7 @@ No need to mention in your report whether or not you used one of the fallback st
   let planModeByWorkspace = new SvelteMap<string, boolean>();
   let thinkingModeByWorkspace = new SvelteMap<string, boolean>();
   let fileNavigatePath = $state<string | null>(null);
+  let fileNavigateLine = $state<number | null>(null);
   let showSearchModal = $state(false);
   let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
   let reviewByWorkspace = new SvelteMap<string, ReviewState>();
@@ -1684,6 +1685,7 @@ No need to mention in your report whether or not you used one of the fallback st
           <WorkspacePanel
             bind:activeTab
             bind:fileNavigatePath
+            bind:fileNavigateLine
             {selectedWs}
             {selectedWsId}
             {activeWorkspaces}
@@ -1767,9 +1769,10 @@ No need to mention in your report whether or not you used one of the fallback st
           chatPanelApis.get(selectedWsId!)?.addMention({ type: "file", path, displayName, lineNumber });
           activeTab = "chat";
         }}
-        onOpenInFiles={(path) => {
+        onOpenInFiles={(path, lineNumber) => {
           showSearchModal = false;
           fileNavigatePath = path;
+          fileNavigateLine = lineNumber;
           activeTab = "files";
         }}
       />

@@ -17,6 +17,7 @@
   interface Props {
     activeTab: PanelTab;
     fileNavigatePath: string | null;
+    fileNavigateLine: number | null;
     selectedWs: WorkspaceInfo | undefined;
     selectedWsId: string | null;
     activeWorkspaces: WorkspaceInfo[];
@@ -52,6 +53,7 @@
   let {
     activeTab = $bindable("chat"),
     fileNavigatePath = $bindable(null),
+    fileNavigateLine = $bindable(null),
     selectedWs,
     selectedWsId,
     activeWorkspaces,
@@ -95,7 +97,7 @@
           <button
             class="tab"
             class:active={activeTab === tab}
-            onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") fileNavigatePath = null; }}
+            onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") { fileNavigatePath = null; fileNavigateLine = null; } }}
           >
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
             {#if tab === "diff" && changeCounts.get(selectedWs.id)}
@@ -210,7 +212,7 @@
       <!-- Files: mount on demand like diff -->
       {#if activeTab === "files" && selectedWs}
         <div class="ws-tab-container active-layer">
-          <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} />
+          <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} navigateToLine={fileNavigateLine} />
         </div>
       {/if}
 
