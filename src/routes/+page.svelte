@@ -47,7 +47,6 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import WorkspacePanel, { type PanelTab } from "$lib/components/WorkspacePanel.svelte";
   import KanbanBoard from "$lib/components/KanbanBoard.svelte";
-  import AgentActivityBar from "$lib/components/AgentActivityBar.svelte";
   import ReviewAlertBar from "$lib/components/ReviewAlertBar.svelte";
   import { type PastedImage } from "$lib/components/ChatPanel.svelte";
   import type { Mention } from "$lib/components/MentionInput.svelte";
@@ -291,13 +290,6 @@ No need to mention in your report whether or not you used one of the fallback st
   let doneWs = $derived(
     activeWorkspaces.filter((ws) => prStatusMap.get(ws.id)?.state === "merged"),
   );
-  let activitySummary = $derived({
-    running: workspaces.filter((w) => w.status === "running").length,
-    review: reviewWs.length,
-    todo: todoItems.length,
-    done: doneWs.length,
-  });
-
   // Review alert: show completed reviews (not running ones)
   let completedReviewWs = $derived(
     reviewWs.filter((ws) => reviewByWorkspace.get(ws.id)?.status === "complete"),
@@ -1454,12 +1446,6 @@ No need to mention in your report whether or not you used one of the fallback st
       </div>
     </div>
 
-    <AgentActivityBar
-      running={activitySummary.running}
-      review={activitySummary.review}
-      todo={activitySummary.todo}
-      done={activitySummary.done}
-    />
 
     {#if showSearchModal && selectedWsId}
       <SearchModal
