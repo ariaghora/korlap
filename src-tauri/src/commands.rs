@@ -1597,20 +1597,42 @@ pub async fn sync_main(
             return Err(format!("Could not fetch from origin.\n{}\n\n{}", hint, stderr.trim()));
         }
 
-        // 2. Fast-forward local main to origin/main
-        let mut ff = git_cmd_with_auth(&repo_path, &gh_token);
-        ff.args([
-            "update-ref",
-            &format!("refs/heads/{}", base_branch),
-            &format!("refs/remotes/origin/{}", base_branch),
-        ]);
-        let output = ff
+        // 2. Check if HEAD is on the default branch
+        let head_output = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&repo_path)
             .output()
-            .map_err(|e| format!("Failed to update local ref: {}", e))?;
+            .map_err(|e| format!("Failed to check HEAD: {}", e))?;
+        let current_branch = String::from_utf8_lossy(&head_output.stdout).trim().to_string();
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to fast-forward local {}: {}", base_branch, stderr.trim()));
+        if current_branch == base_branch {
+            // HEAD is on the default branch — must update working tree too
+            let output = std::process::Command::new("git")
+                .args(["merge", "--ff-only", &format!("origin/{}", base_branch)])
+                .current_dir(&repo_path)
+                .output()
+                .map_err(|e| format!("Failed to fast-forward: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("Failed to fast-forward local {}: {}", base_branch, stderr.trim()));
+            }
+        } else {
+            // Default branch not checked out — safe to just move the ref
+            let output = std::process::Command::new("git")
+                .args([
+                    "update-ref",
+                    &format!("refs/heads/{}", base_branch),
+                    &format!("refs/remotes/origin/{}", base_branch),
+                ])
+                .current_dir(&repo_path)
+                .output()
+                .map_err(|e| format!("Failed to update local ref: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("Failed to fast-forward local {}: {}", base_branch, stderr.trim()));
+            }
         }
 
         Ok(())
