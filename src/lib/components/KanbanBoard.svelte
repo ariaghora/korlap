@@ -4,7 +4,7 @@
   import KanbanColumn from "./KanbanColumn.svelte";
   import KanbanCard from "./KanbanCard.svelte";
   import TaskPopover, { type TaskData } from "./TaskPopover.svelte";
-  import { Plus } from "lucide-svelte";
+  import { Plus, Ellipsis, Trash2 } from "lucide-svelte";
 
   interface TodoItem {
     id: string;
@@ -33,6 +33,7 @@
     onEditTodo: (todoId: string, data: TaskData) => void;
     onRemoveTodo: (todoId: string) => void;
     onRemoveWorkspace: (wsId: string) => void;
+    onRemoveAllDone: () => void;
   }
 
   let {
@@ -52,10 +53,23 @@
     onEditTodo,
     onRemoveTodo,
     onRemoveWorkspace,
+    onRemoveAllDone,
   }: Props = $props();
 
   let showAddDialog = $state(false);
   let editingTodo = $state<TodoItem | null>(null);
+  let showDoneMenu = $state(false);
+  let doneMenuBtnEl = $state<HTMLButtonElement | null>(null);
+  let doneMenuPos = $state({ top: 0, left: 0 });
+
+  function openDoneMenu(e: MouseEvent) {
+    e.stopPropagation();
+    if (doneMenuBtnEl) {
+      const rect = doneMenuBtnEl.getBoundingClientRect();
+      doneMenuPos = { top: rect.bottom + 4, left: rect.right };
+    }
+    showDoneMenu = !showDoneMenu;
+  }
 
   function handleAddSubmit(data: TaskData) {
     onNewTodo(data);
@@ -141,6 +155,17 @@
     {#if done.length === 0}
       <div class="empty-hint">Completed tasks appear here</div>
     {/if}
+    {#snippet headerAction()}
+      {#if done.length > 0}
+        <button
+          class="column-menu-btn"
+          bind:this={doneMenuBtnEl}
+          onclick={openDoneMenu}
+        >
+          <Ellipsis size={14} />
+        </button>
+      {/if}
+    {/snippet}
   </KanbanColumn>
 </div>
 
@@ -164,6 +189,20 @@
     onSubmit={handleEditSubmit}
     onCancel={() => { editingTodo = null; }}
   />
+{/if}
+
+{#if showDoneMenu}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="dropdown-backdrop" onmousedown={() => { showDoneMenu = false; }}></div>
+  <div class="dropdown-menu" style="top: {doneMenuPos.top}px; left: {doneMenuPos.left}px;">
+    <button
+      class="dropdown-item danger"
+      onclick={() => { showDoneMenu = false; onRemoveAllDone(); }}
+    >
+      <Trash2 size={12} />
+      Remove all
+    </button>
+  </div>
 {/if}
 
 <style>
@@ -203,5 +242,69 @@
     color: var(--accent);
     border-color: var(--accent);
     background: color-mix(in srgb, var(--accent) 5%, transparent);
+  }
+
+  .column-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+    opacity: 0.6;
+  }
+
+  .column-menu-btn:hover {
+    background: var(--border);
+    opacity: 1;
+  }
+
+  .dropdown-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+  }
+
+  .dropdown-menu {
+    position: fixed;
+    transform: translateX(-100%);
+    min-width: 140px;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px;
+    z-index: 100;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+
+  .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.35rem 0.5rem;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .dropdown-item:hover {
+    background: var(--border);
+    color: var(--text);
+  }
+
+  .dropdown-item.danger:hover {
+    background: color-mix(in srgb, #e05252 15%, transparent);
+    color: #e05252;
   }
 </style>
