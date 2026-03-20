@@ -17,6 +17,7 @@
   let resizeObserver: ResizeObserver | undefined;
   let colorSchemeQuery: MediaQueryList | undefined;
   let opened = false;
+  let fitRafId: number | undefined;
 
   const darkTheme = {
     background: "#12110e",
@@ -128,14 +129,24 @@
       if (!opened) {
         initTerminal();
       } else if (fitAddon && term) {
-        fitAddon.fit();
-        resizeTerminal(workspaceId, term.rows, term.cols).catch(() => {});
+        // Debounce fit() to next frame to avoid ResizeObserver loop warnings.
+        // fit() mutates the DOM which can trigger another resize notification
+        // in the same observation cycle — deferring breaks the loop.
+        if (fitRafId !== undefined) cancelAnimationFrame(fitRafId);
+        fitRafId = requestAnimationFrame(() => {
+          fitRafId = undefined;
+          if (fitAddon && term) {
+            fitAddon.fit();
+            resizeTerminal(workspaceId, term.rows, term.cols).catch(() => {});
+          }
+        });
       }
     });
     resizeObserver.observe(containerEl);
   });
 
   onDestroy(() => {
+    if (fitRafId !== undefined) cancelAnimationFrame(fitRafId);
     colorSchemeQuery?.removeEventListener("change", onColorSchemeChange);
     resizeObserver?.disconnect();
     term?.dispose();
