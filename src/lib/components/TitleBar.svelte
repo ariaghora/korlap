@@ -1,10 +1,8 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { RepoDetail, WorkspaceInfo } from "$lib/ipc";
-  import { syncMain, getRepoHead, checkoutDefaultBranch, checkMainBehind } from "$lib/ipc";
-  import { Settings, Check, Plus, RefreshCw, AlertTriangle } from "lucide-svelte";
+  import { Settings, Check, Plus } from "lucide-svelte";
   import Dropdown from "./Dropdown.svelte";
-  import { addToast } from "$lib/stores/toasts.svelte";
 
   type AppMode = "work" | "plan";
 
@@ -25,67 +23,6 @@
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
-  let syncing = $state(false);
-  let syncError = $state(false);
-  let headBranch: string | null = $state(null);
-  let checkingOut = $state(false);
-  let behindCount: number = $state(0);
-  let checking = $state(false);
-
-  let onDefaultBranch = $derived(
-    headBranch === null || headBranch === activeRepo.default_branch
-  );
-
-  // Check HEAD branch + behind count when entering plan mode or switching repos
-  $effect(() => {
-    const repoId = activeRepo.id;
-    const mode = appMode;
-    if (mode === "plan") {
-      checking = true;
-      getRepoHead(repoId)
-        .then((b) => {
-          headBranch = b;
-          // Only check behind if on default branch
-          if (b === activeRepo.default_branch) {
-            return checkMainBehind(repoId).then((n) => { behindCount = n; });
-          } else {
-            behindCount = 0;
-          }
-        })
-        .catch(() => { headBranch = null; behindCount = 0; })
-        .finally(() => { checking = false; });
-    }
-  });
-
-  async function handleSync() {
-    if (syncing) return;
-    syncing = true;
-    syncError = false;
-    try {
-      await syncMain(activeRepo.id);
-      addToast(`${activeRepo.default_branch} synced with origin`, "success");
-      behindCount = 0;
-    } catch {
-      syncError = true;
-      addToast(`Failed to sync ${activeRepo.default_branch}`, "error");
-      setTimeout(() => { syncError = false; }, 2000);
-    } finally {
-      syncing = false;
-    }
-  }
-
-  async function handleCheckout() {
-    if (checkingOut) return;
-    checkingOut = true;
-    try {
-      await checkoutDefaultBranch(activeRepo.id);
-      headBranch = activeRepo.default_branch;
-    } catch {
-      // leave state as-is so warning persists
-    } finally {
-      checkingOut = false;
-    }
-  }
 
   function selectRepo(repo: RepoDetail) {
     onSelectRepo(repo);
@@ -167,11 +104,11 @@
       </button>
     </div>
     <div class="mode-switcher">
-      <button class="mode-btn" class:active={appMode === "plan"} onclick={() => onModeChange("plan")}>
-        Plan <kbd class="mode-hint">⌘1</kbd>
-      </button>
       <button class="mode-btn" class:active={appMode === "work"} onclick={() => onModeChange("work")}>
-        Work <kbd class="mode-hint">⌘2</kbd>
+        Work <kbd class="mode-hint">⌘1</kbd>
+      </button>
+      <button class="mode-btn" class:active={appMode === "plan"} onclick={() => onModeChange("plan")}>
+        Plan <kbd class="mode-hint">⌘2</kbd>
       </button>
     </div>
   </div>
@@ -186,39 +123,7 @@
     {/if}
   </div>
 
-  <div class="titlebar-right">
-    {#if appMode === "plan"}
-      {#if !onDefaultBranch}
-        <div class="branch-warning">
-          <AlertTriangle size={13} />
-          <span class="branch-warning-text">
-            on <strong>{headBranch}</strong>, not <strong>{activeRepo.default_branch}</strong>
-          </span>
-          <button
-            class="checkout-btn"
-            onclick={handleCheckout}
-            disabled={checkingOut}
-          >
-            {checkingOut ? "Switching…" : `Switch to ${activeRepo.default_branch}`}
-          </button>
-        </div>
-      {:else if behindCount > 0}
-        <button
-          class="sync-btn"
-          class:syncing
-          class:error={syncError}
-          onclick={handleSync}
-          disabled={syncing}
-          title="Sync local {activeRepo.default_branch} with origin"
-        >
-          <RefreshCw size={13} />
-          <span class="sync-label">
-            {syncError ? "Failed" : syncing ? "Syncing…" : `Sync (${behindCount} behind)`}
-          </span>
-        </button>
-      {/if}
-    {/if}
-  </div>
+  <div class="titlebar-right"></div>
 </header>
 
 <style>
@@ -312,103 +217,6 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
-  }
-
-  .sync-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.3rem 0.55rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border-light);
-    border-radius: 5px;
-    color: var(--text-dim);
-    font-family: inherit;
-    font-size: 0.75rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: color 0.15s, background 0.15s, border-color 0.15s;
-  }
-
-  .sync-btn:hover:not(:disabled) {
-    color: var(--text-primary);
-    background: var(--bg-hover);
-  }
-
-  .sync-btn:disabled {
-    cursor: default;
-  }
-
-  .sync-btn.syncing {
-    color: var(--accent);
-  }
-
-  .sync-btn.syncing :global(svg) {
-    animation: spin 0.8s linear infinite;
-  }
-
-  .sync-btn.error {
-    color: #c87e7e;
-    border-color: #c87e7e44;
-  }
-
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
-
-  .sync-label {
-    white-space: nowrap;
-  }
-
-  .branch-warning {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.25rem 0.5rem;
-    background: #c87e3e18;
-    border: 1px solid #c87e3e55;
-    border-radius: 5px;
-    color: #c8a040;
-    font-size: 0.75rem;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .branch-warning :global(svg) {
-    flex-shrink: 0;
-  }
-
-  .branch-warning-text {
-    color: #c8a040;
-  }
-
-  .branch-warning-text strong {
-    color: #e0b850;
-  }
-
-  .checkout-btn {
-    padding: 0.2rem 0.5rem;
-    background: #c87e3e30;
-    border: 1px solid #c87e3e55;
-    border-radius: 4px;
-    color: #e0b850;
-    font-family: inherit;
-    font-size: 0.7rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-    white-space: nowrap;
-  }
-
-  .checkout-btn:hover:not(:disabled) {
-    background: #c87e3e50;
-    color: #f0d070;
-  }
-
-  .checkout-btn:disabled {
-    opacity: 0.6;
-    cursor: default;
   }
 
   .repo-name {
