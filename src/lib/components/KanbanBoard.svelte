@@ -252,19 +252,19 @@
     justify-content: center;
     gap: 0.3rem;
     padding: 0.4rem;
-    background: transparent;
-    border: 1px dashed var(--border-light);
-    border-radius: 4px;
-    color: var(--text-dim);
+    background: var(--btn-subtle-bg);
+    border: none;
+    border-radius: 6px;
+    color: var(--text-secondary);
     font-family: inherit;
     font-size: 0.78rem;
     cursor: pointer;
+    transition: background 0.15s, color 0.15s;
   }
 
   .add-task-btn:hover {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 5%, transparent);
+    color: var(--text-primary);
+    background: var(--btn-subtle-hover);
   }
 
   .column-menu-btn {
