@@ -3,6 +3,7 @@
   import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
   import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings, Lightbulb, BookOpen, Play, ArrowUp, Square, MessageCircleQuestion, Loader2, Timer } from "lucide-svelte";
   import { renderMarkdown } from "$lib/markdown";
+  import { externalLinks } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
   import VirtualScroller from "./VirtualScroller.svelte";
@@ -589,7 +590,7 @@
             {:else if block.kind === "text"}
               <div class="assistant-msg">
                 <div class="assistant-card">
-                  <div class="assistant-text markdown-body">{@html renderMarkdown(block.chunk.content)}</div>
+                  <div class="assistant-text markdown-body" use:externalLinks>{@html renderMarkdown(block.chunk.content)}</div>
                 </div>
               </div>
             {:else if block.kind === "tool-group"}

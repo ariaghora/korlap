@@ -1,5 +1,6 @@
 <script lang="ts">
   import { renderMarkdown } from "$lib/markdown";
+  import { externalLinks } from "$lib/actions";
   import { CircleCheck, CircleX, Loader2, X } from "lucide-svelte";
 
   export interface ReviewState {
@@ -79,7 +80,7 @@
         <X size={12} />
       </button>
     </div>
-    <div class="pill-body">
+    <div class="pill-body" use:externalLinks>
       {@html renderedHtml}
     </div>
     <div class="pill-footer">
