@@ -541,6 +541,7 @@ pub fn list_repos(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<RepoDeta
     if needs_save {
         let _ = state.save_repos();
     }
+    details.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
     Ok(details)
 }
 
