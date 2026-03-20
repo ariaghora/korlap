@@ -1448,7 +1448,7 @@ No need to mention in your report whether or not you used one of the fallback st
       if (prev === status.behind_by) return;
       baseBehindMap.set(wsId, status.behind_by);
     } catch (e) {
-      addToast(`Failed to check base branch updates: ${e}`);
+      console.warn(`refreshBaseUpdates(${wsId}):`, e);
     }
   }
 
