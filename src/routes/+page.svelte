@@ -986,7 +986,7 @@ No need to mention in your report whether or not you used one of the fallback st
           const msg = await generateCommitMessage(wsId);
           await gitCommit(wsId, msg);
           await gitPush(wsId);
-          addToast("Pushed successfully");
+          addToast("Pushed successfully", "success");
           refreshChangeCounts(wsId);
           refreshPrStatus(wsId);
         } catch (e) {
@@ -1005,7 +1005,7 @@ No need to mention in your report whether or not you used one of the fallback st
         addActionMessage(wsId, crypto.randomUUID(), `Pushing to PR #${pr.number}`);
         try {
           await gitPush(wsId);
-          addToast("Pushed successfully");
+          addToast("Pushed successfully", "success");
           refreshPrStatus(wsId);
         } catch (e) {
           addToast(String(e));
@@ -1022,7 +1022,7 @@ No need to mention in your report whether or not you used one of the fallback st
       addActionMessage(wsId, crypto.randomUUID(), `Merging PR #${pr.number}`);
       try {
         await ghPrMerge(wsId, pr.number);
-        addToast(`PR #${pr.number} merged`);
+        addToast(`PR #${pr.number} merged`, "success");
         refreshPrStatus(wsId);
       } catch (e) {
         addToast(String(e));
