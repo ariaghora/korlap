@@ -16,11 +16,13 @@
     appendMention: (mention: Mention) => void;
     focus: () => void;
     submit: () => void;
+    getValue: () => MentionInputValue;
   }
 
   interface Props {
     placeholder?: string;
     disabled?: boolean;
+    multiline?: boolean;
     onSubmit: (value: MentionInputValue) => void;
     onQueryChange: (query: string | null) => void;
     onPaste?: (e: ClipboardEvent) => void;
@@ -30,6 +32,7 @@
   let {
     placeholder = "Ask to make changes, @mention files, run /commands",
     disabled = false,
+    multiline = false,
     onSubmit,
     onQueryChange,
     onPaste,
@@ -111,7 +114,7 @@
 
   // Expose API via bindable ref
   $effect(() => {
-    ref = { insertMention, appendMention, focus, submit: handleSubmit };
+    ref = { insertMention, appendMention, focus, submit: handleSubmit, getValue: serialize };
   });
 
   function serialize(): MentionInputValue {
@@ -237,6 +240,10 @@
       // The parent will call e.preventDefault() via the autocomplete's selectCurrent
       // We only submit if there's no active @ query
       if (atTriggerRange) return; // parent handles this
+
+      // In multiline mode, bare Enter inserts a newline (default contenteditable behavior)
+      // Only Cmd+Enter (handled by parent) should submit
+      if (multiline) return;
 
       e.preventDefault();
       handleSubmit();

@@ -1,15 +1,28 @@
 <script lang="ts">
-  import { grepWorkspace, readFile, type GrepMatch } from "$lib/ipc";
+  import { grepWorkspace, grepRepo, readFile, readRepoFile, type GrepMatch } from "$lib/ipc";
   import { Search } from "lucide-svelte";
 
   interface Props {
-    workspaceId: string;
+    workspaceId?: string;
+    repoId?: string;
     onClose: () => void;
     onAddToContext: (path: string, displayName: string, lineNumber: number) => void;
-    onOpenInFiles: (path: string) => void;
+    onOpenInFiles?: (path: string) => void;
   }
 
-  let { workspaceId, onClose, onAddToContext, onOpenInFiles }: Props = $props();
+  let { workspaceId, repoId, onClose, onAddToContext, onOpenInFiles }: Props = $props();
+
+  function doGrep(q: string, regex: boolean, matchCase: boolean) {
+    if (workspaceId) return grepWorkspace(workspaceId, q, regex, matchCase);
+    if (repoId) return grepRepo(repoId, q, regex, matchCase);
+    return Promise.reject("No workspace or repo ID");
+  }
+
+  function doReadFile(path: string) {
+    if (workspaceId) return readFile(workspaceId, path);
+    if (repoId) return readRepoFile(repoId, path);
+    return Promise.reject("No workspace or repo ID");
+  }
 
   let query = $state("");
   let isRegex = $state(false);
@@ -51,7 +64,7 @@
     loading = true;
     debounceTimer = setTimeout(async () => {
       try {
-        const res = await grepWorkspace(workspaceId, q, regex, matchCase);
+        const res = await doGrep(q, regex, matchCase);
         results = res.matches;
         truncated = res.truncated;
         selectedIndex = 0;
@@ -81,7 +94,7 @@
       return;
     }
     previewPath = match.path;
-    readFile(workspaceId, match.path)
+    doReadFile(match.path)
       .then((content) => {
         previewContent = content;
         // Scroll after content renders
@@ -124,9 +137,9 @@
         e.preventDefault();
         const match = results[selectedIndex];
         if (!match) break;
-        if (e.metaKey) {
+        if (e.metaKey && onOpenInFiles) {
           onOpenInFiles(match.path);
-        } else {
+        } else if (!e.metaKey) {
           const name = match.path.split("/").pop() ?? match.path;
           onAddToContext(match.path, name, match.line_number);
         }
@@ -239,7 +252,9 @@
     <div class="footer">
       <span class="hint"><kbd>↑↓</kbd> navigate</span>
       <span class="hint"><kbd>⏎</kbd> add to context</span>
-      <span class="hint"><kbd>⌘⏎</kbd> open in files</span>
+      {#if onOpenInFiles}
+        <span class="hint"><kbd>⌘⏎</kbd> open in files</span>
+      {/if}
       <span class="hint"><kbd>esc</kbd> close</span>
     </div>
   </div>

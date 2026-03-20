@@ -171,6 +171,39 @@ export async function readWorkspaceFile(
   });
 }
 
+// ── Repo-level File Search / Grep / Read ─────────────────────────────
+
+export async function searchRepoFiles(
+  repoId: string,
+  query: string,
+): Promise<FileSearchResult[]> {
+  return invoke<FileSearchResult[]>("search_repo_files", {
+    repoId,
+    query,
+  });
+}
+
+export async function grepRepo(
+  repoId: string,
+  pattern: string,
+  isRegex: boolean = false,
+  caseSensitive: boolean = false,
+): Promise<GrepResult> {
+  return invoke<GrepResult>("grep_repo", {
+    repoId,
+    pattern,
+    isRegex,
+    caseSensitive,
+  });
+}
+
+export async function readRepoFile(
+  repoId: string,
+  relativePath: string,
+): Promise<string> {
+  return invoke<string>("read_repo_file", { repoId, relativePath });
+}
+
 // ── Agent ────────────────────────────────────────────────────────────
 
 export async function sendMessage(
