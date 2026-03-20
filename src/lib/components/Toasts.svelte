@@ -32,7 +32,7 @@
 <style>
   .toast-container {
     position: fixed;
-    top: 52px;
+    bottom: 32px;
     right: 12px;
     z-index: 9999;
     display: flex;
