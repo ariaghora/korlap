@@ -96,6 +96,8 @@ pub fn run() {
             commands::set_repo_profile,
             commands::git_commit,
             commands::git_push,
+            commands::check_base_updates,
+            commands::update_from_base,
             commands::gh_pr_merge,
             commands::generate_commit_message,
             commands::get_pr_status,
