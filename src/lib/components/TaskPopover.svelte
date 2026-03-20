@@ -135,6 +135,7 @@
     }
     if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
+      e.stopPropagation();
       submit();
     }
   }
@@ -248,6 +249,7 @@
     // Cmd+Enter to submit
     if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
+      e.stopPropagation();
       submit();
     }
     // Escape to cancel
