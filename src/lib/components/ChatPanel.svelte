@@ -160,6 +160,11 @@
     }
   }
 
+  // Track which thinking blocks are expanded (collapsed by default).
+  // Needed because VirtualScroller destroys/recreates DOM elements on scroll,
+  // which resets the native <details> open state.
+  const expandedThinking = new SvelteSet<string>();
+
   // Build visual blocks from the messages array, grouping consecutive tool calls
   // across message boundaries into collapsible groups.
   type ToolEntry = { chunk: MessageChunk & { type: "tool" }; msgId: string; ci: number };
@@ -560,7 +565,15 @@
               <!-- no label needed -->
             {:else if block.kind === "thinking"}
               <div class="assistant-msg">
-                <details class="thinking-block">
+                <details
+                  class="thinking-block"
+                  open={expandedThinking.has(block.key)}
+                  ontoggle={(e: Event) => {
+                    const open = (e.currentTarget as HTMLDetailsElement).open;
+                    if (open) expandedThinking.add(block.key);
+                    else expandedThinking.delete(block.key);
+                  }}
+                >
                   <summary class="thinking-summary">
                     <span class="thinking-icon">
                       <Lightbulb size={14} strokeWidth={2} />
