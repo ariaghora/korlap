@@ -542,3 +542,9 @@ export function onWorkspaceUpdated(
 ): Promise<UnlistenFn> {
   return listen<WorkspaceInfo>("workspace-updated", (e) => callback(e.payload));
 }
+
+// ── Suggested replies ────────────────────────────────────────────────
+
+export async function suggestReplies(text: string): Promise<string[]> {
+  return invoke<string[]>("suggest_replies", { text });
+}

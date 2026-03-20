@@ -1004,6 +1004,7 @@ No need to mention in your report whether or not you used one of the fallback st
           diffRefreshTrigger++;
           refreshChangeCounts(wsId);
           refreshPrStatus(wsId);
+          chatPanelApis.get(wsId)?.refreshSuggestions();
           if (activeRepo) {
             listWorkspaces(activeRepo.id)
               .then((fresh) => {

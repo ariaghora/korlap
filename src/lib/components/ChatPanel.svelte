@@ -1,6 +1,6 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
-  import { searchWorkspaceFiles, type FileSearchResult } from "$lib/ipc";
+  import { searchWorkspaceFiles, suggestReplies, type FileSearchResult } from "$lib/ipc";
   import { FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch, Bot, Globe, Zap, Settings, Lightbulb, BookOpen, Play, ArrowUp, Square, MessageCircleQuestion, Loader2, Timer } from "lucide-svelte";
   import { renderMarkdown } from "$lib/markdown";
   import { externalLinks, copyCodeBlocks } from "$lib/actions";
@@ -33,6 +33,8 @@
 
   export interface ChatPanelApi {
     addMention: (mention: Mention) => void;
+    /** Call when the agent finishes to trigger AI-powered suggestion generation. */
+    refreshSuggestions: () => void;
   }
 
   export interface QueueDisplayItem {
@@ -138,6 +140,7 @@
           mentionInputApi?.appendMention(mention);
           mentionInputApi?.focus();
         },
+        refreshSuggestions,
       });
     }
   });
@@ -385,10 +388,60 @@
     return files;
   });
 
-  // Footer items (file pills, plan actions, thinking) rendered as a single
-  // extra item at the end of the virtual list so they scroll naturally.
+  // ── Suggested replies ──────────────────────────────────────────────
+  // Called explicitly by the parent when the agent emits "done".
+  // No $effect — avoids reactive loops on the messages array.
+
+  let suggestedReplies = $state<string[]>([]);
+  let suggestionRequestId = 0; // monotonic counter to discard stale responses
+
+  function refreshSuggestions() {
+    suggestedReplies = [];
+
+    // Find last assistant text
+    let lastText = "";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "user") break;
+      if (msg.role === "assistant") {
+        for (let j = msg.chunks.length - 1; j >= 0; j--) {
+          if (msg.chunks[j].type === "text") {
+            lastText = msg.chunks[j].content.trim();
+            break;
+          }
+        }
+        if (lastText) break;
+      }
+    }
+
+    if (!lastText) return;
+
+    // Cheap gate: only call AI if any line ends with "?"
+    const hasQuestion = lastText.split("\n").some(line => line.trimEnd().endsWith("?"));
+    if (!hasQuestion) return;
+
+    const requestId = ++suggestionRequestId;
+    suggestReplies(lastText).then((replies) => {
+      if (requestId === suggestionRequestId && replies.length > 0) {
+        suggestedReplies = replies;
+      }
+    }).catch(() => {});
+  }
+
+  function sendSuggestion(value: string) {
+    suggestedReplies = [];
+    suggestionRequestId++; // discard any in-flight AI call
+    if (onSendImmediate) {
+      onSendImmediate(value);
+    } else {
+      onSend(value, [], [], false);
+    }
+  }
+
+  // Footer items (file pills, plan actions, suggestions, thinking) rendered
+  // as a single extra item at the end of the virtual list so they scroll naturally.
   let hasFooter = $derived(
-    (recentFiles.length > 0 && !sending) || showExecutePlan || sending,
+    (recentFiles.length > 0 && !sending) || showExecutePlan || sending || suggestedReplies.length > 0,
   );
   let virtualCount = $derived(visualBlocks.length + (hasFooter ? 1 : 0));
 
@@ -854,6 +907,17 @@
                   <Pencil size={14} strokeWidth={2} />
                   Revise
                 </button>
+              </div>
+            {/if}
+            {#if suggestedReplies.length > 0 && !sending}
+              <div class="suggested-replies">
+                {#each suggestedReplies as reply, i (i)}
+                  <button
+                    type="button"
+                    class="suggestion-pill"
+                    onclick={() => sendSuggestion(reply)}
+                  >{reply}</button>
+                {/each}
               </div>
             {/if}
             {#if sending}
@@ -2002,6 +2066,33 @@
 
   .queue-remove:hover {
     color: var(--diff-del);
+  }
+
+  /* ── Suggested replies ────────────────────── */
+
+  .suggested-replies {
+    display: flex;
+    gap: 0.35rem;
+    padding: 0 0.75rem 0.35rem;
+    flex-shrink: 0;
+  }
+
+  .suggestion-pill {
+    padding: 0.3rem 0.75rem;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-radius: 14px;
+    color: var(--accent);
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .suggestion-pill:hover {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   }
 
   /* ── Input (Slack-style container) ────────── */
