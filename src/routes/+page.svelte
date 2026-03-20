@@ -258,6 +258,7 @@ No need to mention in your report whether or not you used one of the fallback st
     planMode: boolean;
     thinkingMode: boolean;
     actionLabel?: string;
+    hidden?: boolean;      // hide user message from chat (e.g. auto-sent TODO prompts)
   }
   const queueByWorkspace = new SvelteMap<string, QueuedMessage[]>();
   /** Set to true by Channel `done` event; checked by `agent-status: waiting` to trigger drain. */
@@ -619,9 +620,7 @@ No need to mention in your report whether or not you used one of the fallback st
     };
     creatingWsId = tempId;
     workspaces.push(placeholder);
-    appMode = "work";
     selectWorkspace(tempId);
-    activeTab = "chat";
 
     try {
       const ws = await createWorkspace(repoId);
@@ -652,7 +651,7 @@ No need to mention in your report whether or not you used one of the fallback st
           : imageInstructions;
       }
 
-      // Send the todo task as the initial prompt
+      // Send the todo task as the initial prompt (hidden — user already saw it on the card)
       routeMessage(ws.id, {
         id: crypto.randomUUID(),
         prompt: promptText,
@@ -661,6 +660,7 @@ No need to mention in your report whether or not you used one of the fallback st
         mentions: [],
         planMode: false,
         thinkingMode: repoSettings?.default_thinking ?? false,
+        hidden: true,
       });
     } catch (e) {
       const failIdx = workspaces.findIndex((w) => w.id === tempId);
@@ -725,7 +725,7 @@ No need to mention in your report whether or not you used one of the fallback st
     if (msg.actionLabel) {
       addActionMessage(wsId, crypto.randomUUID(), msg.actionLabel);
     } else {
-      addUserMessage(wsId, crypto.randomUUID(), msg.prompt || "(images attached)", msg.imageDataUrls, msg.msgMentions, msg.planMode || undefined);
+      addUserMessage(wsId, crypto.randomUUID(), msg.prompt || "(images attached)", msg.imageDataUrls, msg.msgMentions, msg.planMode || undefined, msg.hidden);
     }
 
     try {
@@ -1098,7 +1098,6 @@ No need to mention in your report whether or not you used one of the fallback st
 
     if (sendingByWorkspace.get(wsId) || reviewByWorkspace.has(wsId)) return;
     const pr = prStatusMap.get(wsId);
-    if (!pr || pr.state !== "open") return;
 
     const baseBranch = activeRepo.default_branch;
 
@@ -1110,8 +1109,8 @@ No need to mention in your report whether or not you used one of the fallback st
     reviewPrompt = reviewPrompt
       .replace(/\{\{branch\}\}/g, selectedWs!.branch)
       .replace(/\{\{base_branch\}\}/g, baseBranch)
-      .replace(/\{\{pr_number\}\}/g, String(pr.number))
-      .replace(/\{\{pr_title\}\}/g, pr.title ?? "");
+      .replace(/\{\{pr_number\}\}/g, pr?.state === "open" ? String(pr.number) : "N/A")
+      .replace(/\{\{pr_title\}\}/g, pr?.state === "open" ? (pr.title ?? "") : "N/A");
 
     addActionMessage(wsId, crypto.randomUUID(), "Reviewing code");
 
@@ -1234,17 +1233,11 @@ No need to mention in your report whether or not you used one of the fallback st
       highlightedRepoIndex={repoDropdownIndex}
       onDropdownClose={() => (repoDropdownIndex = -1)}
       {selectedWs}
-      prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
-      wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}
       {appMode}
       onModeChange={(m) => { appMode = m; }}
       onSelectRepo={selectRepo}
       onAddRepo={handleOpenRepo}
       onSettings={() => (showSettings = true)}
-      onPrAction={handlePrAction}
-      onReview={handleReview}
-      reviewRunning={selectedWsId ? reviewByWorkspace.get(selectedWsId)?.status === "running" : false}
-      operationInProgress={selectedWsId ? gitOpInProgress.get(selectedWsId) ?? false : false}
     />
 
     {#if reviewAlertWs}
@@ -1287,6 +1280,12 @@ No need to mention in your report whether or not you used one of the fallback st
             {reviewByWorkspace}
             {repoSettings}
             {diffRefreshTrigger}
+            prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
+            wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}
+            onPrAction={handlePrAction}
+            onReview={handleReview}
+            reviewRunning={selectedWsId ? reviewByWorkspace.get(selectedWsId)?.status === "running" : false}
+            operationInProgress={selectedWsId ? gitOpInProgress.get(selectedWsId) ?? false : false}
             getQueueItems={(wsId) => (queueByWorkspace.get(wsId) ?? []).map(q => ({
               id: q.id,
               prompt: q.prompt,
