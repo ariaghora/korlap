@@ -23,6 +23,8 @@
     gitPush,
     ghPrMerge,
     generateCommitMessage,
+    checkBaseUpdates,
+    updateFromBase,
     saveTodos,
     loadTodos,
     type RepoDetail,
@@ -229,6 +231,8 @@ No need to mention in your report whether or not you used one of the fallback st
   let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
   let reviewByWorkspace = new SvelteMap<string, ReviewState>();
   let gitOpInProgress = new SvelteMap<string, boolean>();
+  let baseBehindMap = new SvelteMap<string, number>();
+  let updatingBranchMap = new SvelteMap<string, boolean>();
   let titleBarRef: TitleBar | undefined = $state();
   let repoDropdownIndex = $state(-1);
 
@@ -326,6 +330,8 @@ No need to mention in your report whether or not you used one of the fallback st
             pendingDrain.delete(event.workspace_id);
             drainQueue(event.workspace_id);
           }
+          // Agent finished — check if base branch moved ahead while it was working
+          refreshBaseUpdates(event.workspace_id);
         }
       });
 
@@ -413,11 +419,11 @@ No need to mention in your report whether or not you used one of the fallback st
           break;
         case "1":
           e.preventDefault();
-          appMode = "work";
+          appMode = "plan";
           break;
         case "2":
           e.preventDefault();
-          appMode = "plan";
+          appMode = "work";
           break;
       }
     }
@@ -433,10 +439,17 @@ No need to mention in your report whether or not you used one of the fallback st
       }
     }, 5_000);
 
+    // Check base branch updates every 60s for the selected workspace.
+    // Lighter touch than PR polling since it involves a `git fetch`.
+    const basePollInterval = setInterval(() => {
+      if (selectedWsId) refreshBaseUpdates(selectedWsId);
+    }, 60_000);
+
     return () => {
       unlistenStatus?.();
       unlistenWsUpdate?.();
       clearInterval(prPollInterval);
+      clearInterval(basePollInterval);
       window.removeEventListener("keydown", handleKeydown);
     };
   });
@@ -500,6 +513,8 @@ No need to mention in your report whether or not you used one of the fallback st
       prStatusMap.clear();
       clearPrStatusCacheForRepo(removedWsIds);
       changeCounts.clear();
+      baseBehindMap.clear();
+      updatingBranchMap.clear();
       planModeByWorkspace.clear();
       thinkingModeByWorkspace.clear();
       todos = [];
@@ -696,6 +711,7 @@ No need to mention in your report whether or not you used one of the fallback st
     appMode = "work";
     activeTab = "chat";
     refreshPrStatus(wsId);
+    refreshBaseUpdates(wsId);
   }
 
   // ── Workspace handlers ────────────────────────────────
@@ -725,6 +741,8 @@ No need to mention in your report whether or not you used one of the fallback st
     prStatusMap.delete(wsId);
     removePrStatusCacheEntry(wsId);
     changeCounts.delete(wsId);
+    baseBehindMap.delete(wsId);
+    updatingBranchMap.delete(wsId);
     planModeByWorkspace.delete(wsId);
     thinkingModeByWorkspace.delete(wsId);
 
@@ -1017,7 +1035,7 @@ No need to mention in your report whether or not you used one of the fallback st
           const msg = await generateCommitMessage(wsId);
           await gitCommit(wsId, msg);
           await gitPush(wsId);
-          addToast("Pushed successfully");
+          addToast("Pushed successfully", "success");
           refreshChangeCounts(wsId);
           refreshPrStatus(wsId);
         } catch (e) {
@@ -1036,7 +1054,7 @@ No need to mention in your report whether or not you used one of the fallback st
         addActionMessage(wsId, crypto.randomUUID(), `Pushing to PR #${pr.number}`);
         try {
           await gitPush(wsId);
-          addToast("Pushed successfully");
+          addToast("Pushed successfully", "success");
           refreshPrStatus(wsId);
         } catch (e) {
           addToast(String(e));
@@ -1053,7 +1071,7 @@ No need to mention in your report whether or not you used one of the fallback st
       addActionMessage(wsId, crypto.randomUUID(), `Merging PR #${pr.number}`);
       try {
         await ghPrMerge(wsId, pr.number);
-        addToast(`PR #${pr.number} merged`);
+        addToast(`PR #${pr.number} merged`, "success");
         refreshPrStatus(wsId);
       } catch (e) {
         addToast(String(e));
@@ -1246,10 +1264,53 @@ No need to mention in your report whether or not you used one of the fallback st
     }
   }
 
+  // Check if base branch has new commits since workspace branched off.
+  // Only triggers reactivity when behind_by actually changes.
+  async function refreshBaseUpdates(wsId: string) {
+    try {
+      const status = await checkBaseUpdates(wsId);
+      const prev = baseBehindMap.get(wsId);
+      if (prev === status.behind_by) return;
+      baseBehindMap.set(wsId, status.behind_by);
+    } catch {
+      // Offline or git error — non-critical
+    }
+  }
+
+  async function handleUpdateBranch() {
+    if (!selectedWs || !activeRepo) return;
+    const wsId = selectedWs.id;
+    if (updatingBranchMap.get(wsId)) return;
+
+    updatingBranchMap.set(wsId, true);
+    try {
+      await updateFromBase(wsId);
+      addToast("Branch updated from " + activeRepo.default_branch);
+      baseBehindMap.set(wsId, 0);
+      refreshChangeCounts(wsId);
+      diffRefreshTrigger++;
+    } catch (e) {
+      const errMsg = String(e);
+      if (errMsg.includes("conflicts")) {
+        addToast("Merge conflicts — delegating to agent");
+        const baseBranch = activeRepo.default_branch;
+        sendPrompt(wsId, `Updating from ${baseBranch} caused merge conflicts. The automatic merge was aborted.\n\nPlease resolve this:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving merge conflicts with ${baseBranch}`);
+        activeTab = "chat";
+      } else {
+        addToast(errMsg);
+      }
+    } finally {
+      updatingBranchMap.delete(wsId);
+      // Re-check in case the merge resolved or changed the count
+      refreshBaseUpdates(wsId);
+    }
+  }
+
   function selectWorkspace(wsId: string) {
     selectedWsId = wsId;
     // Refresh PR status in background so it's current when the user lands on the workspace
     refreshPrStatus(wsId);
+    refreshBaseUpdates(wsId);
   }
 </script>
 
@@ -1333,7 +1394,10 @@ No need to mention in your report whether or not you used one of the fallback st
             {diffRefreshTrigger}
             prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
             wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}
+            baseBehindBy={selectedWsId ? baseBehindMap.get(selectedWsId) ?? 0 : 0}
+            updatingBranch={selectedWsId ? updatingBranchMap.get(selectedWsId) ?? false : false}
             onPrAction={handlePrAction}
+            onUpdateBranch={handleUpdateBranch}
             onReview={handleReview}
             reviewRunning={selectedWsId ? reviewByWorkspace.get(selectedWsId)?.status === "running" : false}
             operationInProgress={selectedWsId ? gitOpInProgress.get(selectedWsId) ?? false : false}
