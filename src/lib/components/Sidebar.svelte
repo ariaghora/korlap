@@ -2,6 +2,7 @@
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
   import { Eye, ChevronRight } from "lucide-svelte";
   import { SvelteSet } from "svelte/reactivity";
+  import ResizeHandle from "./ResizeHandle.svelte";
 
   interface Props {
     workspaces: WorkspaceInfo[];
@@ -73,6 +74,14 @@
     }
   }
 
+  let sidebarWidth = $state(220);
+  const SIDEBAR_MIN = 140;
+  const SIDEBAR_MAX = 400;
+
+  function handleSidebarResize(delta: number) {
+    sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, sidebarWidth + delta));
+  }
+
   let editingId = $state<string | null>(null);
   let editValue = $state("");
 
@@ -101,19 +110,20 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<aside class="sidebar">
-  <div class="workspace-list">
-    {#each groups as group}
-      <div class="group">
-        <button class="group-header" onclick={() => toggleGroup(group.key)}>
-          <span class="group-chevron" class:expanded={!collapsed.has(group.key)}>
-            <ChevronRight size={12} />
-          </span>
-          <span class="group-label">{group.label}</span>
-          <span class="group-count">{group.items.length}</span>
-        </button>
-        {#if !collapsed.has(group.key)}
-        {#each group.items as ws (ws.id)}
+<aside class="sidebar" style="width: {sidebarWidth}px">
+  <div class="sidebar-inner">
+    <div class="workspace-list">
+      {#each groups as group}
+        <div class="group">
+          <button class="group-header" onclick={() => toggleGroup(group.key)}>
+            <span class="group-chevron" class:expanded={!collapsed.has(group.key)}>
+              <ChevronRight size={12} />
+            </span>
+            <span class="group-label">{group.label}</span>
+            <span class="group-count">{group.items.length}</span>
+          </button>
+          {#if !collapsed.has(group.key)}
+          {#each group.items as ws (ws.id)}
           <div class="ws-item-wrap">
             <button
               class="ws-item"
@@ -171,19 +181,27 @@
           </div>
         {/each}
         {/if}
-      </div>
-    {/each}
+        </div>
+      {/each}
+    </div>
   </div>
+  <ResizeHandle onResize={handleSidebarResize} />
 </aside>
 
 <style>
   .sidebar {
-    width: 220px;
-    border-right: 1px solid var(--border);
+    border-right: none;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     background: var(--bg-sidebar);
     flex-shrink: 0;
+  }
+
+  .sidebar-inner {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
 
   .workspace-list {
