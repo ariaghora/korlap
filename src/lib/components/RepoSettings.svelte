@@ -4,7 +4,7 @@
     listGhProfiles, setRepoProfile, type GhProfile,
   } from "$lib/ipc";
   import { onMount } from "svelte";
-  import { ArrowLeft, Terminal, Bot, GitBranch, Trash2 } from "lucide-svelte";
+  import { ArrowLeft, Terminal, Bot, GitBranch } from "lucide-svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   interface Props {
@@ -13,15 +13,12 @@
     repoPath: string;
     currentProfile: string | null;
     onClose: () => void;
-    onRemoveRepo: () => void;
   }
 
-  let { repoId, repoName, repoPath, currentProfile, onClose, onRemoveRepo }: Props = $props();
+  let { repoId, repoName, repoPath, currentProfile, onClose }: Props = $props();
 
   type Section = "scripts" | "agent" | "git";
   let activeSection = $state<Section>("scripts");
-  let confirmingRemove = $state(false);
-
   let settings = $state<RepoSettings>({
     setup_script: "",
     run_script: "",
@@ -103,10 +100,6 @@
     <div class="nav-footer">
       <span class="nav-repo-label">Repository</span>
       <span class="nav-repo-name">{repoName}</span>
-      <button class="remove-repo-btn" onclick={() => (confirmingRemove = true)}>
-        <Trash2 size={12} />
-        Remove
-      </button>
     </div>
   </nav>
 
@@ -338,21 +331,6 @@
     {/if}
   </main>
 
-  {#if confirmingRemove}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="confirm-overlay" onmousedown={() => (confirmingRemove = false)}>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="confirm-dialog" onmousedown={(e) => e.stopPropagation()}>
-        <h2>Remove repository?</h2>
-        <p>This will remove <strong>{repoName}</strong> from Korlap and delete all its workspaces. The repository itself won't be deleted.</p>
-        <p class="confirm-path">{repoPath}</p>
-        <div class="confirm-actions">
-          <button class="confirm-cancel" onclick={() => (confirmingRemove = false)}>Cancel</button>
-          <button class="confirm-remove" onclick={onRemoveRepo}>Remove</button>
-        </div>
-      </div>
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -765,107 +743,4 @@
     color: var(--text-dim);
   }
 
-  /* ── Remove repo button ─────────────── */
-
-  .remove-repo-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    margin-top: 0.5rem;
-    padding: 0.35rem 0;
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.72rem;
-  }
-
-  .remove-repo-btn:hover {
-    color: var(--error);
-  }
-
-  /* ── Confirmation dialog ────────────── */
-
-  .confirm-overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--overlay-bg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-  }
-
-  .confirm-dialog {
-    background: var(--bg-sidebar);
-    border: 1px solid var(--border-light);
-    border-radius: 10px;
-    padding: 1.5rem;
-    max-width: 380px;
-    width: 90%;
-  }
-
-  .confirm-dialog h2 {
-    margin: 0 0 0.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-bright);
-  }
-
-  .confirm-dialog p {
-    margin: 0 0 0.5rem;
-    font-size: 0.82rem;
-    color: var(--text-secondary);
-    line-height: 1.45;
-  }
-
-  .confirm-path {
-    font-family: var(--font-mono);
-    font-size: 0.72rem !important;
-    color: var(--text-dim) !important;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.3rem 0.5rem;
-    word-break: break-all;
-  }
-
-  .confirm-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    margin-top: 1rem;
-  }
-
-  .confirm-cancel {
-    padding: 0.4rem 0.85rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text-primary);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.82rem;
-  }
-
-  .confirm-cancel:hover {
-    background: var(--bg-hover);
-  }
-
-  .confirm-remove {
-    padding: 0.4rem 0.85rem;
-    background: color-mix(in srgb, var(--error) 15%, var(--bg-card));
-    border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
-    border-radius: 6px;
-    color: var(--error);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.82rem;
-    font-weight: 600;
-  }
-
-  .confirm-remove:hover {
-    background: color-mix(in srgb, var(--error) 25%, var(--bg-card));
-  }
 </style>
