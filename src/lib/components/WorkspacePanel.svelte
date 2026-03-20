@@ -115,7 +115,7 @@
               <Eye size={11} /> Review
             </button>
             {#if prStatus.mergeable === "conflicting"}
-              <button class="action-badge conflicts" onclick={onPrAction} disabled={isBusy}><AlertTriangle size={11} /> Conflicts</button>
+              <button class="action-badge conflicts" onclick={onPrAction} disabled={isBusy}><AlertTriangle size={11} /> Resolve Conflicts</button>
             {:else if prStatus.checks === "failing"}
               <button class="action-badge checks-fail" onclick={onPrAction} disabled={isBusy}><Wrench size={11} /> Fix issues</button>
             {:else if prStatus.checks === "pending"}
