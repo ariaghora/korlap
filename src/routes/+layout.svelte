@@ -1,8 +1,12 @@
 <script lang="ts">
   import "../app.css";
   import { onMount } from "svelte";
+  import { initTheme } from "$lib/stores/theme.svelte";
 
   let { children } = $props();
+
+  // Apply saved theme on startup + listen for color scheme changes
+  initTheme();
 
   // Suppress the benign "ResizeObserver loop" error globally.
   // This fires when a ResizeObserver callback causes layout changes that produce

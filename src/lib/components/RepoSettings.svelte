@@ -3,7 +3,9 @@
     getRepoSettings, saveRepoSettings, type RepoSettings,
   } from "$lib/ipc";
   import { onMount } from "svelte";
-  import { ArrowLeft, Terminal, Bot } from "lucide-svelte";
+  import { ArrowLeft, Terminal, Bot, Palette } from "lucide-svelte";
+  import { themeList, getPreviewColors, type ThemeId } from "$lib/themes";
+  import { getThemeId, setTheme } from "$lib/stores/theme.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   interface Props {
@@ -15,8 +17,9 @@
 
   let { repoId, repoName, repoPath, onClose }: Props = $props();
 
-  type Section = "scripts" | "agent";
+  type Section = "scripts" | "agent" | "appearance";
   let activeSection = $state<Section>("scripts");
+  let currentThemeId = $state<ThemeId>(getThemeId());
   let settings = $state<RepoSettings>({
     setup_script: "",
     run_script: "",
@@ -62,6 +65,7 @@
   const sections: { id: Section; label: string; icon: typeof Terminal }[] = [
     { id: "scripts", label: "Scripts", icon: Terminal },
     { id: "agent", label: "Agent", icon: Bot },
+    { id: "appearance", label: "Appearance", icon: Palette },
   ];
 </script>
 
@@ -276,6 +280,36 @@
         </div>
       </div>
 
+    {:else if activeSection === "appearance"}
+      <div class="section-header">
+        <h1>Appearance</h1>
+      </div>
+
+      <div class="setting-block">
+        <div class="setting-meta">
+          <span class="setting-name">Theme</span>
+          <span class="setting-desc">Applied globally across all workspaces</span>
+        </div>
+        <div class="theme-grid">
+          {#each themeList as theme}
+            <button
+              class="theme-card"
+              class:selected={currentThemeId === theme.id}
+              onclick={() => {
+                currentThemeId = theme.id;
+                setTheme(theme.id);
+              }}
+            >
+              <div class="theme-preview" style:grid-template-columns="repeat({Math.ceil(getPreviewColors(theme).length / 3)}, 1fr)">
+                {#each getPreviewColors(theme) as color}
+                  <div class="theme-swatch" style:background={color}></div>
+                {/each}
+              </div>
+              <span class="theme-name">{theme.name}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
     {/if}
   </main>
 
@@ -621,6 +655,58 @@
     border: 1px solid var(--border);
     padding: 0.1rem 0.35rem;
     border-radius: 3px;
+  }
+
+  /* ── Theme picker ──────────────── */
+
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .theme-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.6rem;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color 0.15s;
+  }
+
+  .theme-card:hover {
+    border-color: var(--border-light);
+  }
+
+  .theme-card.selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 5%, var(--bg-sidebar));
+  }
+
+  .theme-preview {
+    display: grid;
+    border-radius: 5px;
+    overflow: hidden;
+    gap: 0;
+  }
+
+  .theme-swatch {
+    height: 10px;
+  }
+
+  .theme-name {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-align: center;
+  }
+
+  .theme-card.selected .theme-name {
+    color: var(--accent);
   }
 
 </style>
