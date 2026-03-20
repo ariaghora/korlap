@@ -108,11 +108,18 @@
       if (term) {
         term.write(new Uint8Array(data));
       }
-    }).catch((e) => {
-      if (term) {
-        term.writeln(`\r\n\x1b[31mFailed to open terminal: ${e}\x1b[0m`);
-      }
-    });
+    })
+      .then(() => {
+        // Sync PTY size with actual xterm dimensions (PTY defaults to 24x80)
+        if (term) {
+          resizeTerminal(workspaceId, term.rows, term.cols).catch(() => {});
+        }
+      })
+      .catch((e) => {
+        if (term) {
+          term.writeln(`\r\n\x1b[31mFailed to open terminal: ${e}\x1b[0m`);
+        }
+      });
   }
 
   onMount(() => {
