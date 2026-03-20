@@ -1,10 +1,11 @@
 <script lang="ts">
   import { SvelteMap } from "svelte/reactivity";
-  import type { WorkspaceInfo, RepoSettings, PrStatus } from "$lib/ipc";
+  import type { WorkspaceInfo, RepoSettings, PrStatus, ScriptEvent } from "$lib/ipc";
+  import { runScript } from "$lib/ipc";
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/components/ChatPanel.svelte";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye } from "lucide-svelte";
+  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
@@ -87,6 +88,40 @@
   }: Props = $props();
 
   let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
+
+  // ── Script runner state ──────────────────────────────────────────
+  type ScriptStatus = "idle" | "running" | "success" | "error";
+  let scriptStatusMap = new SvelteMap<string, ScriptStatus>();
+
+  let currentScriptStatus = $derived(
+    selectedWsId ? scriptStatusMap.get(selectedWsId) ?? "idle" : "idle"
+  );
+  let hasRunScript = $derived(!!repoSettings?.run_script?.trim());
+
+  function handleRunScript() {
+    if (!selectedWs || !repoSettings?.run_script?.trim()) return;
+    const wsId = selectedWs.id;
+    scriptStatusMap.set(wsId, "running");
+
+    runScript(wsId, repoSettings.run_script, (event: ScriptEvent) => {
+      if (event.type === "exit") {
+        const ok = event.code === 0;
+        scriptStatusMap.set(wsId, ok ? "success" : "error");
+        setTimeout(() => {
+          if (scriptStatusMap.get(wsId) === (ok ? "success" : "error")) {
+            scriptStatusMap.set(wsId, "idle");
+          }
+        }, 2000);
+      }
+    }).catch(() => {
+      scriptStatusMap.set(wsId, "error");
+      setTimeout(() => {
+        if (scriptStatusMap.get(wsId) === "error") {
+          scriptStatusMap.set(wsId, "idle");
+        }
+      }, 2000);
+    });
+  }
 </script>
 
 <main class="panel">
@@ -112,6 +147,29 @@
           </button>
         {/each}
       </div>
+
+      {#if hasRunScript}
+        <button
+          class="run-script-btn"
+          class:running={currentScriptStatus === "running"}
+          class:success={currentScriptStatus === "success"}
+          class:error={currentScriptStatus === "error"}
+          onclick={handleRunScript}
+          disabled={currentScriptStatus === "running"}
+          title={currentScriptStatus === "running" ? "Script running…" : `Run: ${repoSettings?.run_script}`}
+        >
+          {#if currentScriptStatus === "running"}
+            <Loader size={12} class="status-icon spinning" />
+          {:else if currentScriptStatus === "success"}
+            <Check size={12} />
+          {:else if currentScriptStatus === "error"}
+            <CircleX size={12} />
+          {:else}
+            <Play size={12} />
+          {/if}
+          Run
+        </button>
+      {/if}
 
       <div class="tab-actions">
         {#if baseBehindBy > 0}
@@ -311,6 +369,51 @@
   .tab.active {
     color: var(--text-bright);
     background: var(--border);
+  }
+
+  /* ── Run script button ──────────────────────────── */
+
+  .run-script-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0 0.55rem;
+    height: 26px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .run-script-btn:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  .run-script-btn:disabled {
+    cursor: default;
+  }
+
+  .run-script-btn.success {
+    color: var(--status-ok);
+    border-color: color-mix(in srgb, var(--status-ok) 30%, transparent);
+    background: color-mix(in srgb, var(--status-ok) 12%, transparent);
+  }
+
+  .run-script-btn.error {
+    color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 30%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 12%, transparent);
+  }
+
+  .run-script-btn :global(.status-icon.spinning) {
+    animation: spin 1.5s linear infinite;
   }
 
   /* ── Tab actions (right side of tab bar) ────────── */

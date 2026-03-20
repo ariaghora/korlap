@@ -513,6 +513,22 @@ export async function saveRepoSettings(
   return invoke("save_repo_settings", { repoId, settings });
 }
 
+// ── Script Runner ───────────────────────────────────────────────────
+
+export type ScriptEvent =
+  | { type: "output"; data: string }
+  | { type: "exit"; code: number | null };
+
+export async function runScript(
+  workspaceId: string,
+  command: string,
+  onEvent: (event: ScriptEvent) => void,
+): Promise<void> {
+  const channel = new Channel<ScriptEvent>();
+  channel.onmessage = onEvent;
+  return invoke("run_script", { workspaceId, command, onEvent: channel });
+}
+
 // ── Events ───────────────────────────────────────────────────────────
 
 export function onAgentStatus(
