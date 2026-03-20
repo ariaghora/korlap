@@ -1374,7 +1374,6 @@ No need to mention in your report whether or not you used one of the fallback st
             {prStatusMap}
             {reviewingWsIds}
             onSelect={selectWorkspace}
-            onNewWorkspace={handleNewWorkspace}
             onRename={handleRename}
             onRemove={handleRemove}
           />
