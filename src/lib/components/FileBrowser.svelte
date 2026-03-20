@@ -3,6 +3,7 @@
   import { Folder, FolderOpen, File as FileIcon } from "lucide-svelte";
   import { listDirectory, readFile, writeFile, type FileEntry } from "$lib/ipc";
   import ResizeHandle from "./ResizeHandle.svelte";
+  import CodeEditor from "./CodeEditor.svelte";
 
   // ── Devicon imports (Vite resolves as URL strings) ──
   import iconRust from "devicon/icons/rust/rust-original.svg";
@@ -33,9 +34,10 @@
   interface Props {
     workspaceId: string;
     navigateTo?: string | null;
+    navigateToLine?: number | null;
   }
 
-  let { workspaceId, navigateTo = null }: Props = $props();
+  let { workspaceId, navigateTo = null, navigateToLine = null }: Props = $props();
 
   // ── Tree state ────────────────────────────────────────
 
@@ -60,6 +62,8 @@
   let editContent = $state("");
   let saving = $state(false);
   let saveMessage = $state("");
+  let pendingLine = $state<number | null>(null);
+  let editorRef: CodeEditor | undefined = $state();
 
   // ── Load root on workspace change ─────────────────────
 
@@ -248,15 +252,26 @@
   // ── Deep-link navigation ────────────────────────────────
 
   let lastNavigated = $state<string | null>(null);
+  let lastNavigatedLine = $state<number | null>(null);
 
   $effect(() => {
     const target = navigateTo;
-    if (!target || target === lastNavigated) return;
+    const line = navigateToLine ?? null;
+    if (!target) return;
+    if (target === lastNavigated && line === lastNavigatedLine) return;
     lastNavigated = target;
-    navigateToPath(target);
+    lastNavigatedLine = line;
+
+    // Same file, different line — just jump without re-loading
+    if (target === selectedPath && line && line > 0 && editorRef && !fileLoading) {
+      pendingLine = line;
+      return;
+    }
+
+    navigateToPath(target, line);
   });
 
-  async function navigateToPath(target: string) {
+  async function navigateToPath(target: string, line: number | null) {
     // Split "src/lib/components/Foo.svelte" → ["src", "src/lib", "src/lib/components"]
     const parts = target.split("/");
     const dirSegments: string[] = [];
@@ -301,9 +316,24 @@
     // Select the target file
     const fileNode = nodes.find((n) => n.entry.path === target && !n.entry.is_dir);
     if (fileNode && !isBinaryExt(fileNode.entry.name)) {
-      selectFile(target);
+      pendingLine = line;
+      await selectFile(target);
     }
   }
+
+  // ── Jump to line after editor mounts with new content ──
+
+  $effect(() => {
+    const line = pendingLine;
+    const ref = editorRef;
+    if (line && line > 0 && ref && !fileLoading) {
+      // Use tick to let CM mount
+      queueMicrotask(() => {
+        ref.goToLine(line);
+        pendingLine = null;
+      });
+    }
+  });
 </script>
 
 <div class="file-browser">
@@ -354,13 +384,19 @@
           </div>
           <div class="file-body">
             {#if isEditing}
-              <textarea
-                class="file-editor"
-                bind:value={editContent}
-                spellcheck="false"
-              ></textarea>
+              <CodeEditor
+                content={editContent}
+                filename={selectedPath}
+                readonly={false}
+                onchange={(c) => { editContent = c; }}
+              />
             {:else}
-              <pre class="file-preview"><code>{fileContent}</code></pre>
+              <CodeEditor
+                bind:this={editorRef}
+                content={fileContent}
+                filename={selectedPath}
+                readonly={true}
+              />
             {/if}
           </div>
         {/if}
@@ -663,35 +699,8 @@
     min-height: 0;
   }
 
-  .file-preview {
-    margin: 0;
-    padding: 0.5rem 0.75rem;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    line-height: 1.6;
-    color: var(--text-primary);
-    white-space: pre;
-    tab-size: 2;
-  }
-
-  .file-preview code {
-    font-family: inherit;
-  }
-
-  .file-editor {
-    width: 100%;
-    height: 100%;
-    padding: 0.5rem 0.75rem;
-    background: transparent;
-    border: none;
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    line-height: 1.6;
-    resize: none;
-    outline: none;
-    tab-size: 2;
-    white-space: pre;
-    overflow: auto;
+  .file-body :global(.code-editor) {
+    flex: 1;
+    min-height: 0;
   }
 </style>

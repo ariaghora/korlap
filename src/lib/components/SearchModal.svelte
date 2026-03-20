@@ -7,7 +7,7 @@
     repoId?: string;
     onClose: () => void;
     onAddToContext: (path: string, displayName: string, lineNumber: number) => void;
-    onOpenInFiles?: (path: string) => void;
+    onOpenInFiles?: (path: string, lineNumber: number) => void;
   }
 
   let { workspaceId, repoId, onClose, onAddToContext, onOpenInFiles }: Props = $props();
@@ -138,7 +138,7 @@
         const match = results[selectedIndex];
         if (!match) break;
         if (e.metaKey && onOpenInFiles) {
-          onOpenInFiles(match.path);
+          onOpenInFiles(match.path, match.line_number);
         } else if (!e.metaKey) {
           const name = match.path.split("/").pop() ?? match.path;
           onAddToContext(match.path, name, match.line_number);
