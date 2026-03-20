@@ -1467,14 +1467,14 @@ No need to mention in your report whether or not you used one of the fallback st
     updatingBranchMap.set(wsId, true);
     try {
       await updateFromBase(wsId);
-      addToast("Branch updated from " + activeRepo.default_branch);
+      addToast("Branch updated from " + activeRepo.default_branch, "success");
       baseBehindMap.set(wsId, 0);
       refreshChangeCounts(wsId);
       diffRefreshTrigger++;
     } catch (e) {
       const errMsg = String(e);
       if (errMsg.includes("conflicts")) {
-        addToast("Merge conflicts — delegating to agent");
+        addToast("Merge conflicts — delegating to agent", "info");
         const baseBranch = activeRepo.default_branch;
         sendPrompt(wsId, `Updating from ${baseBranch} caused merge conflicts. The automatic merge was aborted.\n\nPlease resolve this:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving merge conflicts with ${baseBranch}`);
         activeTab = "chat";
