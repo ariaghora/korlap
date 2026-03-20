@@ -605,6 +605,8 @@ pub fn set_repo_profile(
 #[tauri::command]
 pub async fn create_workspace(
     repo_id: String,
+    task_title: Option<String>,
+    task_description: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {
     let (repo_path, gh_profile) = {
@@ -761,6 +763,8 @@ pub async fn create_workspace(
         gh_profile,
         status: WorkspaceStatus::Waiting,
         created_at: now_unix(),
+        task_title,
+        task_description,
     };
 
     // Check if there's a setup script to run

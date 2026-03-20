@@ -26,6 +26,8 @@ export interface WorkspaceInfo {
   gh_profile: string | null;
   status: "running" | "waiting";
   created_at: number;
+  task_title?: string | null;
+  task_description?: string | null;
 }
 
 export interface ToolUseInfo {
@@ -82,8 +84,14 @@ export async function setRepoProfile(
 
 export async function createWorkspace(
   repoId: string,
+  taskTitle?: string,
+  taskDescription?: string,
 ): Promise<WorkspaceInfo> {
-  return invoke<WorkspaceInfo>("create_workspace", { repoId });
+  return invoke<WorkspaceInfo>("create_workspace", {
+    repoId,
+    taskTitle: taskTitle ?? null,
+    taskDescription: taskDescription ?? null,
+  });
 }
 
 export async function removeWorkspace(workspaceId: string): Promise<void> {
