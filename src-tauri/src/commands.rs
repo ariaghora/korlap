@@ -3716,3 +3716,70 @@ pub fn close_terminal(
     Ok(())
 }
 
+// ── Suggested replies via AI ─────────────────────────────────────────
+
+#[tauri::command]
+pub async fn suggest_replies(text: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let prompt = format!(
+            "Given this AI assistant message, suggest 2-4 short reply options that a user would \
+             likely want to send back. Return ONLY a JSON array of short strings, nothing else. \
+             Example: [\"Yes\", \"No, skip this\"]\n\nMessage:\n{}",
+            text
+        );
+
+        let claude_bin = get_shell_env()
+            .claude_path
+            .as_deref()
+            .unwrap_or("claude");
+
+        let mut cmd = std::process::Command::new(claude_bin);
+        cmd.arg("-p").arg(&prompt);
+        cmd.args(["--output-format", "text"]);
+        cmd.args(["--model", "claude-haiku-4-5-20251001"]);
+        cmd.args(["--max-turns", "1"]);
+        cmd.args(["--max-tokens", "200"]);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+        inject_shell_env(&mut cmd);
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn claude: {}", e))?;
+
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let output = child.wait_with_output();
+            let _ = tx.send(output);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(Ok(output)) if output.status.success() => {
+                let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                // Strip markdown fences if the model wraps the JSON
+                let json_str = raw
+                    .strip_prefix("```json")
+                    .or_else(|| raw.strip_prefix("```"))
+                    .and_then(|s| s.strip_suffix("```"))
+                    .map(|s| s.trim())
+                    .unwrap_or(&raw);
+                let suggestions: Vec<String> = serde_json::from_str(json_str)
+                    .map_err(|e| format!("Failed to parse suggestions: {} — raw: {}", e, raw))?;
+                Ok(suggestions)
+            }
+            Ok(Ok(_)) => Err("Claude exited with non-zero status".to_string()),
+            Ok(Err(e)) => Err(format!("Claude failed: {}", e)),
+            Err(_) => {
+                // Kill the orphaned process tree to avoid leaks
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+                Err("Timed out generating suggestions".to_string())
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
