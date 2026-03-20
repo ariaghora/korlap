@@ -1783,7 +1783,6 @@ No need to mention in your report whether or not you used one of the fallback st
         repoId={activeRepo.id}
         repoName={activeRepo.display_name}
         repoPath={activeRepo.path}
-        currentProfile={activeRepo.gh_profile ?? null}
         onClose={() => {
           showSettings = false;
           if (activeRepo) {
