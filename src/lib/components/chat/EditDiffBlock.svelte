@@ -4,15 +4,15 @@
 
   interface Props {
     chunk: MessageChunk & { type: "tool" };
+    collapsed: boolean;
+    onToggle: () => void;
   }
 
-  let { chunk }: Props = $props();
-
-  let collapsed = $state(false);
+  let { chunk, collapsed, onToggle }: Props = $props();
 </script>
 
 <div class="edit-diff-block">
-  <button class="edit-diff-header" onclick={() => { collapsed = !collapsed; }}>
+  <button class="edit-diff-header" onclick={onToggle}>
     <span class="edit-diff-chevron" class:collapsed>▾</span>
     <span class="edit-diff-icon"><Pencil size={13} strokeWidth={2} /></span>
     <span class="edit-diff-label">{chunk.input}</span>

@@ -9,7 +9,7 @@
   import VirtualScroller from "./VirtualScroller.svelte";
   import AskUserQuestion from "./chat/AskUserQuestion.svelte";
   import EditDiffBlock from "./chat/EditDiffBlock.svelte";
-  import { SvelteSet } from "svelte/reactivity";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import {
     toolIcons,
     splitTextWithMentions,
@@ -112,6 +112,16 @@
   // Needed because VirtualScroller destroys/recreates DOM elements on scroll,
   // which resets the native <details> open state.
   const expandedThinking = new SvelteSet<string>();
+
+  // Parent-owned state for EditDiffBlock — survives VirtualScroller recycling
+  const collapsedDiffs = new SvelteSet<string>();
+
+  // Parent-owned state for AskUserQuestion — survives VirtualScroller recycling
+  const askSelectedOptions = new SvelteMap<string, SvelteSet<string>>();
+  const askCustomInputs = new SvelteMap<string, string>();
+  const askShowCustomInput = new SvelteSet<string>();
+  const askBatchAnswers = new SvelteMap<string, SvelteMap<number, string>>();
+  const askSubmittedBatches = new SvelteSet<string>();
 
   let visualBlocks = $derived(buildVisualBlocks(messages));
 
@@ -464,11 +474,27 @@
               </div>
             {:else if block.kind === "special-tool" && block.chunk.name === "AskUserQuestion"}
               <div class="assistant-msg">
-                <AskUserQuestion chunk={block.chunk} {sending} {onSend} {onSendImmediate} />
+                <AskUserQuestion
+                  chunk={block.chunk}
+                  batchKey={`${block.msgId}:${block.ci}`}
+                  {sending}
+                  selectedOptions={askSelectedOptions}
+                  customInputs={askCustomInputs}
+                  showCustomInput={askShowCustomInput}
+                  batchAnswers={askBatchAnswers}
+                  submittedBatches={askSubmittedBatches}
+                  {onSend}
+                  {onSendImmediate}
+                />
               </div>
             {:else if block.kind === "special-tool" && block.chunk.oldString != null && block.chunk.newString != null}
+              {@const diffKey = `${block.msgId}:${block.ci}`}
               <div class="assistant-msg">
-                <EditDiffBlock chunk={block.chunk} />
+                <EditDiffBlock
+                  chunk={block.chunk}
+                  collapsed={collapsedDiffs.has(diffKey)}
+                  onToggle={() => { collapsedDiffs.has(diffKey) ? collapsedDiffs.delete(diffKey) : collapsedDiffs.add(diffKey); }}
+                />
               </div>
             {/if}
           </div>

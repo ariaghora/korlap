@@ -5,34 +5,46 @@
 
   interface Props {
     chunk: MessageChunk & { type: "tool" };
+    batchKey: string;
     sending: boolean;
+    // Parent-owned state that survives virtualization
+    selectedOptions: SvelteMap<string, SvelteSet<string>>;
+    customInputs: SvelteMap<string, string>;
+    showCustomInput: SvelteSet<string>;
+    batchAnswers: SvelteMap<string, SvelteMap<number, string>>;
+    submittedBatches: SvelteSet<string>;
     onSend: (prompt: string, images: never[], mentions: never[], planMode: boolean) => void;
     onSendImmediate?: (prompt: string) => void;
   }
 
-  let { chunk, sending, onSend, onSendImmediate }: Props = $props();
+  let { chunk, batchKey, sending, selectedOptions, customInputs, showCustomInput, batchAnswers, submittedBatches, onSend, onSendImmediate }: Props = $props();
 
   // Parse the JSON input once
   let parsed = $derived((() => { try { return JSON.parse(chunk.input); } catch { return null; } })());
   let totalQ = $derived(parsed && Array.isArray(parsed) ? parsed.length : 0);
 
-  // ── Internal state ──────────────────────────────────────
-  const selectedOptions = new SvelteMap<number, SvelteSet<string>>();
-  const customInputs = new SvelteMap<number, string>();
-  const showCustomInput = new SvelteSet<number>();
-  const answers = new SvelteMap<number, string>();
-  let submitted = $state(false);
-
-  let answeredCount = $derived(answers.size);
+  // Derived from parent-owned state
+  let submitted = $derived(submittedBatches.has(batchKey));
+  let answers = $derived(batchAnswers.get(batchKey));
+  let answeredCount = $derived(answers?.size ?? 0);
 
   // ── Helpers ─────────────────────────────────────────────
+
+  function qKey(qi: number): string {
+    return `${batchKey}:${qi}`;
+  }
 
   function sendAnswer(text: string) {
     onSendImmediate ? onSendImmediate(text) : onSend(text, [] as never[], [] as never[], false);
   }
 
   function recordAnswer(qi: number, answer: string) {
-    answers.set(qi, answer);
+    let ans = batchAnswers.get(batchKey);
+    if (!ans) {
+      ans = new SvelteMap<number, string>();
+      batchAnswers.set(batchKey, ans);
+    }
+    ans.set(qi, answer);
     // Single-question batch: submit immediately
     if (totalQ === 1) {
       submitAll();
@@ -40,33 +52,40 @@
   }
 
   function submitAll() {
-    if (answers.size < totalQ) return;
-    submitted = true;
+    const ans = batchAnswers.get(batchKey);
+    if (!ans || ans.size < totalQ) return;
+    submittedBatches.add(batchKey);
 
     if (totalQ === 1) {
-      sendAnswer(answers.get(0)!);
+      sendAnswer(ans.get(0)!);
     } else {
       const parts: string[] = [];
       for (let i = 0; i < totalQ; i++) {
-        parts.push(`${i + 1}. ${answers.get(i) ?? "(no answer)"}`);
+        parts.push(`${i + 1}. ${ans.get(i) ?? "(no answer)"}`);
       }
       sendAnswer(parts.join("\n"));
     }
   }
 
   function unsubmit() {
-    submitted = false;
-    answers.clear();
-    selectedOptions.clear();
-    customInputs.clear();
-    showCustomInput.clear();
+    submittedBatches.delete(batchKey);
+    batchAnswers.delete(batchKey);
+    // Clear per-question state for this batch
+    for (const key of [...selectedOptions.keys()]) {
+      if (key.startsWith(batchKey + ":")) {
+        selectedOptions.delete(key);
+        customInputs.delete(key);
+        showCustomInput.delete(key);
+      }
+    }
   }
 
   function toggleOption(qi: number, label: string) {
-    let current = selectedOptions.get(qi);
+    const k = qKey(qi);
+    let current = selectedOptions.get(k);
     if (!current) {
       current = new SvelteSet<string>();
-      selectedOptions.set(qi, current);
+      selectedOptions.set(k, current);
     }
     if (current.has(label)) {
       current.delete(label);
@@ -76,16 +95,16 @@
   }
 
   function submitMultiSelect(qi: number) {
-    const selected = selectedOptions.get(qi);
+    const selected = selectedOptions.get(qKey(qi));
     if (!selected || selected.size === 0) return;
-    const custom = customInputs.get(qi)?.trim();
+    const custom = customInputs.get(qKey(qi))?.trim();
     const parts = [...selected];
     if (custom) parts.push(custom);
     recordAnswer(qi, parts.join(", "));
   }
 
   function submitCustomInput(qi: number) {
-    const text = customInputs.get(qi)?.trim();
+    const text = customInputs.get(qKey(qi))?.trim();
     if (!text) return;
     recordAnswer(qi, text);
   }
@@ -112,7 +131,7 @@
         {#each parsed as q, qi (qi)}
           <div class="answer-summary-row">
             <span class="answer-summary-label">{q.header || q.question || `Q${qi + 1}`}</span>
-            <span class="question-answer-pill">{answers.get(qi)}</span>
+            <span class="question-answer-pill">{answers?.get(qi)}</span>
           </div>
         {/each}
       </div>
@@ -120,11 +139,11 @@
   {:else}
     {#each parsed as q, qi (qi)}
       {@const isMulti = q.multiSelect === true}
-      {@const answerText = answers.get(qi)}
+      {@const answerText = answers?.get(qi)}
       {@const hasAnswer = answerText != null}
-      {@const selected = selectedOptions.get(qi) ?? new SvelteSet()}
-      {@const customText = customInputs.get(qi) ?? ""}
-      {@const showCustom = showCustomInput.has(qi)}
+      {@const selected = selectedOptions.get(qKey(qi)) ?? new SvelteSet()}
+      {@const customText = customInputs.get(qKey(qi)) ?? ""}
+      {@const showCustom = showCustomInput.has(qKey(qi))}
       <div class="question-card">
         <div class="question-header">
           <span class="question-icon"><MessageCircleQuestion size={15} strokeWidth={2} /></span>
@@ -183,7 +202,7 @@
                   placeholder="Type your answer…"
                   value={customText}
                   disabled={sending}
-                  oninput={(e) => customInputs.set(qi, (e.target as HTMLInputElement).value)}
+                  oninput={(e) => customInputs.set(qKey(qi), (e.target as HTMLInputElement).value)}
                   onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); isMulti ? submitMultiSelect(qi) : submitCustomInput(qi); } }}
                 />
                 <button
@@ -200,7 +219,7 @@
                 type="button"
                 class="question-option other-option"
                 disabled={sending}
-                onclick={() => showCustomInput.add(qi)}
+                onclick={() => showCustomInput.add(qKey(qi))}
               >
                 <span class="option-content">
                   <span class="option-label">Other</span>
