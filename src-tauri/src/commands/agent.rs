@@ -182,6 +182,12 @@ fn extract_input_preview(
                 return Some(questions.to_string());
             }
         }
+        // TodoWrite: pass the full todos array for rich progress rendering
+        if name == "TodoWrite" {
+            if let Some(todos) = input.get("todos") {
+                return Some(todos.to_string());
+            }
+        }
         if let Some(fp) = input.get("file_path").and_then(|f| f.as_str()) {
             Some(strip(fp))
         } else if let Some(cmd) = input.get("command").and_then(|c| c.as_str()) {
