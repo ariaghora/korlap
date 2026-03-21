@@ -548,3 +548,54 @@ export function onWorkspaceUpdated(
 export async function suggestReplies(text: string): Promise<string[]> {
   return invoke<string[]>("suggest_replies", { text });
 }
+
+// ── Staging ─────────────────────────────────────────────────────────
+
+export interface StagingResult {
+  workspace: WorkspaceInfo;
+  merged_branches: string[];
+  conflicting_branches: string[];
+}
+
+export async function createStagingWorkspace(
+  repoId: string,
+  branchNames: string[],
+): Promise<StagingResult> {
+  return invoke<StagingResult>("create_staging_workspace", { repoId, branchNames });
+}
+
+export async function removeStagingWorkspace(repoId: string): Promise<void> {
+  return invoke("remove_staging_workspace", { repoId });
+}
+
+// ── System Resources ────────────────────────────────────────────────
+
+export interface SystemResources {
+  cpu_cores: number;
+  memory_gb: number;
+  available_memory_gb: number;
+}
+
+export async function getSystemResources(): Promise<SystemResources> {
+  return invoke<SystemResources>("get_system_resources");
+}
+
+// ── Autopilot ───────────────────────────────────────────────────────
+
+export async function prioritizeTodos(todoJson: string): Promise<string[]> {
+  return invoke<string[]>("prioritize_todos", { todoJson });
+}
+
+export interface AutopilotAction {
+  response: string;
+  action_type: string;
+  todo_ids: string[];
+  reorder: string[];
+}
+
+export async function interpretAutopilotCommand(
+  command: string,
+  contextJson: string,
+): Promise<AutopilotAction> {
+  return invoke<AutopilotAction>("interpret_autopilot_command", { command, contextJson });
+}

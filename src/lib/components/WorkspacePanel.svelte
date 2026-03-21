@@ -49,6 +49,9 @@
     onChatReady: (wsId: string, api: ChatPanelApi) => void;
     onReviewCancel: (wsId: string) => void;
     onReviewSendToChat: (wsId: string, markdown: string) => void;
+    isStaging?: boolean;
+    stagingMergedCount?: number;
+    stagingConflictingCount?: number;
   }
 
   let {
@@ -85,7 +88,14 @@
     onChatReady,
     onReviewCancel,
     onReviewSendToChat,
+    isStaging = false,
+    stagingMergedCount = 0,
+    stagingConflictingCount = 0,
   }: Props = $props();
+
+  let availableTabs = $derived(
+    isStaging ? ["files", "terminal"] as const : ["chat", "diff", "files", "terminal"] as const
+  );
 
   let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
 
@@ -128,7 +138,7 @@
   {#if selectedWs}
     <div class="tab-bar">
       <div class="tabs">
-        {#each ["chat", "diff", "files", "terminal"] as tab}
+        {#each availableTabs as tab}
           <button
             class="tab"
             class:active={activeTab === tab}
@@ -218,6 +228,15 @@
       </div>
     </div>
 
+    {#if isStaging}
+      <div class="staging-banner">
+        <span class="staging-label">Staging</span>
+        <span class="staging-info">{stagingMergedCount} branch{stagingMergedCount === 1 ? '' : 'es'} merged</span>
+        {#if stagingConflictingCount > 0}
+          <span class="staging-conflict">{stagingConflictingCount} skipped (conflicts)</span>
+        {/if}
+      </div>
+    {/if}
     <div class="tab-content">
       <!-- Chat: always mounted, stacked via absolute positioning.
            Visibility toggle = no reflow. display:none → flex forces full layout recomputation. -->
@@ -640,5 +659,34 @@
   .ws-terminal-layer.visible {
     display: flex;
     z-index: 2;
+  }
+
+  .staging-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 1rem;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    flex-shrink: 0;
+  }
+
+  .staging-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .staging-info {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+  }
+
+  .staging-conflict {
+    font-size: 0.72rem;
+    color: var(--diff-del);
+    font-weight: 600;
   }
 </style>

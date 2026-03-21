@@ -2,7 +2,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { RepoDetail, WorkspaceInfo } from "$lib/ipc";
   import { syncMain, getRepoHead, checkoutDefaultBranch, checkMainBehind } from "$lib/ipc";
-  import { Settings, Check, Plus, RefreshCw, AlertTriangle } from "lucide-svelte";
+  import { Settings, Check, Plus, RefreshCw, AlertTriangle, Zap } from "lucide-svelte";
   import Dropdown from "./Dropdown.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
 
@@ -19,9 +19,12 @@
     onGoHome: () => void;
     highlightedRepoIndex: number;
     onDropdownClose?: () => void;
+    autopilotEnabled?: boolean;
+    onAutopilotToggle?: () => void;
+    autopilotStatus?: string;
   }
 
-  let { repos, activeRepo, selectedWs, appMode, onModeChange, onSelectRepo, onSettings, onGoHome, highlightedRepoIndex, onDropdownClose }: Props =
+  let { repos, activeRepo, selectedWs, appMode, onModeChange, onSelectRepo, onSettings, onGoHome, highlightedRepoIndex, onDropdownClose, autopilotEnabled = false, onAutopilotToggle, autopilotStatus }: Props =
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
@@ -170,6 +173,16 @@
         Work <kbd class="mode-hint">⌘2</kbd>
       </button>
     </div>
+    <button
+      class="autopilot-btn"
+      class:active={autopilotEnabled}
+      onclick={onAutopilotToggle}
+      title="Toggle autopilot (⌘3)"
+    >
+      <Zap size={12} />
+      Autopilot
+      <kbd class="mode-hint">⌘3</kbd>
+    </button>
   </div>
 
   <div class="titlebar-center">
@@ -183,6 +196,9 @@
   </div>
 
   <div class="titlebar-right">
+    {#if autopilotEnabled && autopilotStatus}
+      <span class="autopilot-status">{autopilotStatus}</span>
+    {/if}
     {#if appMode === "plan"}
       {#if !onDefaultBranch}
         <div class="branch-warning">
@@ -510,6 +526,46 @@
 
   .add-item:hover {
     color: var(--text-primary);
+  }
+
+  .autopilot-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.4rem 0.55rem;
+    background: transparent;
+    border: 1px solid var(--border-light);
+    border-radius: 5px;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .autopilot-btn:hover:not(.active) {
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+  }
+
+  .autopilot-btn.active {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    animation: autopilot-glow 3s ease-in-out infinite;
+  }
+
+  @keyframes autopilot-glow {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 25%, transparent); }
+  }
+
+  .autopilot-status {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent);
+    white-space: nowrap;
   }
 
   .breadcrumb {

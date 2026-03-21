@@ -1,6 +1,11 @@
 export const DEFAULT_REVIEW_PROMPT = `## Code Review Instructions
 
-**CRITICAL — Output format:** Do NOT produce any text output until you reach step 8. No narration, no status updates, no "let me do X" messages. Use tool calls silently. Your ONLY text output must be the final result from step 8. If no issues survived validation, your entire text output must be exactly: "No issues found." — nothing else.
+**CRITICAL — Output format:** Do NOT produce any text output until you reach step 8. No narration, no status updates, no "let me do X" messages. Use tool calls silently. Your ONLY text output must be the final result from step 8. If no issues survived validation, your entire text output must be exactly two lines and nothing else:
+
+[CLEAN]
+No issues found.
+
+If issues were found, begin your output with [ISSUES] on its own line, followed by the issue list from step 8.
 
 **Getting the workspace diff:** All diff commands below use the merge-base to capture every change on this branch (committed and uncommitted) relative to the target:
 

@@ -114,6 +114,8 @@ pub fn run() {
             commands::agent::stop_agent,
             commands::agent::generate_commit_message,
             commands::agent::suggest_replies,
+            commands::agent::prioritize_todos,
+            commands::agent::interpret_autopilot_command,
             // scripts
             commands::scripts::run_script,
             // terminal
@@ -129,6 +131,11 @@ pub fn run() {
             commands::persistence::save_repo_settings,
             commands::persistence::save_todos,
             commands::persistence::load_todos,
+            // staging
+            commands::staging::create_staging_workspace,
+            commands::staging::remove_staging_workspace,
+            // system
+            commands::system::get_system_resources,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

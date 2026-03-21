@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { Play, X, Pencil, Lightbulb, BookOpen } from "lucide-svelte";
+  import { Play, X, Pencil, Lightbulb, BookOpen, CircleCheck, Circle } from "lucide-svelte";
 
   interface Props {
     type: "todo" | "workspace";
@@ -12,6 +12,7 @@
     imagePaths?: string[];
     planMode?: boolean;
     thinkingMode?: boolean;
+    ready?: boolean;
     repoName?: string;
     // Workspace fields
     workspace?: WorkspaceInfo;
@@ -24,6 +25,7 @@
     onAction?: () => void;
     onEdit?: () => void;
     onRemove?: () => void;
+    onToggleReady?: () => void;
   }
 
   let {
@@ -34,6 +36,7 @@
     imagePaths,
     planMode = false,
     thinkingMode = false,
+    ready = false,
     repoName,
     workspace,
     prStatus,
@@ -44,6 +47,7 @@
     onAction,
     onEdit,
     onRemove,
+    onToggleReady,
   }: Props = $props();
 
   let elapsed = $state("");
@@ -67,7 +71,7 @@
 </script>
 
 {#if type === "todo"}
-  <div class="card todo-card">
+  <div class="card todo-card" class:ready>
     <span class="card-title">{title}</span>
     {#if description}
       <span class="card-desc">{description}</span>
@@ -90,6 +94,14 @@
       </div>
     {/if}
     <div class="card-actions">
+      <button class="ready-btn" class:checked={ready} onclick={onToggleReady} title={ready ? "Unmark as ready for autopilot" : "Mark as ready for autopilot"}>
+        {#if ready}
+          <CircleCheck size={13} />
+        {:else}
+          <Circle size={13} />
+        {/if}
+        Ready
+      </button>
       <button class="spawn-btn" onclick={onAction} title="Start agent">
         <Play size={11} /> Start
       </button>
@@ -161,6 +173,10 @@
     gap: 0.35rem;
   }
 
+  .todo-card.ready {
+    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
+  }
+
   .card-title {
     font-size: 0.82rem;
     font-weight: 600;
@@ -222,6 +238,38 @@
     align-items: center;
     gap: 0.35rem;
     margin-top: 0.2rem;
+  }
+
+  .ready-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3rem 0.5rem;
+    background: transparent;
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .ready-btn:hover {
+    color: var(--text-secondary);
+    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
+    background: color-mix(in srgb, var(--status-ok) 6%, transparent);
+  }
+
+  .ready-btn.checked {
+    color: var(--status-ok);
+    border-color: color-mix(in srgb, var(--status-ok) 40%, transparent);
+    background: color-mix(in srgb, var(--status-ok) 10%, transparent);
+  }
+
+  .ready-btn.checked:hover {
+    background: color-mix(in srgb, var(--status-ok) 16%, transparent);
   }
 
   .spawn-btn {

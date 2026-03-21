@@ -56,7 +56,7 @@ export function clearPrStatusCacheForRepo(workspaceIds: string[]) {
 // ── PR Status Refresh ────────────────────────────────────
 
 // Only triggers reactivity when the status actually changed to avoid DOM thrash.
-export async function refreshPrStatus(wsId: string, prStatusMap: SvelteMap<string, PrStatus>) {
+export async function refreshPrStatus(wsId: string, prStatusMap: SvelteMap<string, PrStatus>): Promise<boolean> {
   try {
     const pr = await getPrStatus(wsId);
     const prev = prStatusMap.get(wsId);
@@ -71,12 +71,14 @@ export async function refreshPrStatus(wsId: string, prStatusMap: SvelteMap<strin
       prev.title === pr.title &&
       prev.ahead_by === pr.ahead_by
     ) {
-      return; // No change — skip reactive update
+      return false; // No change — skip reactive update
     }
     prStatusMap.set(wsId, pr);
     savePrStatusCache(prStatusMap);
+    return true;
   } catch (e) {
     console.warn(`refreshPrStatus(${wsId}):`, e);
+    return false;
   }
 }
 
