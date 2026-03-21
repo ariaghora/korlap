@@ -9,6 +9,7 @@
   import VirtualScroller from "./VirtualScroller.svelte";
   import AskUserQuestion from "./chat/AskUserQuestion.svelte";
   import EditDiffBlock from "./chat/EditDiffBlock.svelte";
+  import TodoListBlock from "./chat/TodoListBlock.svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import {
     toolIcons,
@@ -115,6 +116,9 @@
 
   // Parent-owned state for EditDiffBlock — survives VirtualScroller recycling
   const collapsedDiffs = new SvelteSet<string>();
+
+  // Parent-owned state for TodoListBlock — survives VirtualScroller recycling
+  const expandedTodoBlocks = new SvelteSet<string>();
 
   // Parent-owned state for AskUserQuestion — survives VirtualScroller recycling
   const askSelectedOptions = new SvelteMap<string, SvelteSet<string>>();
@@ -494,6 +498,15 @@
                   chunk={block.chunk}
                   collapsed={collapsedDiffs.has(diffKey)}
                   onToggle={() => { collapsedDiffs.has(diffKey) ? collapsedDiffs.delete(diffKey) : collapsedDiffs.add(diffKey); }}
+                />
+              </div>
+            {:else if block.kind === "todo-list"}
+              <div class="assistant-msg">
+                <TodoListBlock
+                  chunk={block.chunk}
+                  isLatest={block.isLatest}
+                  collapsed={block.isLatest ? false : !expandedTodoBlocks.has(block.key)}
+                  onToggle={() => { expandedTodoBlocks.has(block.key) ? expandedTodoBlocks.delete(block.key) : expandedTodoBlocks.add(block.key); }}
                 />
               </div>
             {/if}

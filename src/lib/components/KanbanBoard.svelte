@@ -279,7 +279,7 @@
     padding: 0.75rem;
     flex: 1;
     min-height: 0;
-    overflow-x: auto;
+    min-width: 0;
   }
 
   .empty-hint {
