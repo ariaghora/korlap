@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use super::helpers::{detect_default_branch, get_shell_env, inject_shell_env};
+use super::helpers::{detect_default_branch, get_shell_env, inject_shell_env, strip_ansi};
 
 // ── Agent event types (sent to frontend via Channel) ─────────────────
 
@@ -722,6 +722,169 @@ pub async fn suggest_replies(text: String) -> Result<Vec<String>, String> {
                     .args(["-9", &pid.to_string()])
                     .output();
                 Err("Timed out generating suggestions".to_string())
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+// ── Autopilot utilities ──────────────────────────────────────────────
+
+/// Strip markdown code fences from a JSON response.
+fn strip_json_fences(raw: &str) -> &str {
+    raw.strip_prefix("```json")
+        .or_else(|| raw.strip_prefix("```"))
+        .and_then(|s| s.strip_suffix("```"))
+        .map(|s| s.trim())
+        .unwrap_or(raw)
+}
+
+#[tauri::command]
+pub async fn prioritize_todos(
+    todo_json: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<String>, String> {
+    let data_dir = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.data_dir.clone()
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let system_prompt = "You are a task scheduler. Analyze these TODO items and return them \
+            ordered by priority, considering dependencies. Return ONLY a JSON array of the todo \
+            IDs in execution order. Example: [\"id1\", \"id2\", \"id3\"]";
+
+        let prompt = todo_json;
+
+        let claude_bin = get_shell_env()
+            .claude_path
+            .as_deref()
+            .unwrap_or("claude");
+
+        let mut cmd = std::process::Command::new(claude_bin);
+        cmd.arg("-p").arg(&prompt);
+        cmd.args(["--output-format", "text"]);
+        cmd.args(["--max-turns", "1"]);
+        cmd.arg("--system-prompt").arg(system_prompt);
+        cmd.current_dir(&data_dir);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+        inject_shell_env(&mut cmd);
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn claude: {}", e))?;
+
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let output = child.wait_with_output();
+            let _ = tx.send(output);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(Ok(output)) if output.status.success() => {
+                let raw = strip_ansi(
+                    &String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                );
+                let json_str = strip_json_fences(&raw);
+                let ids: Vec<String> = serde_json::from_str(json_str)
+                    .map_err(|e| format!("Failed to parse priority list: {} — raw: {}", e, raw))?;
+                Ok(ids)
+            }
+            Ok(Ok(_)) => Err("Claude exited with non-zero status".to_string()),
+            Ok(Err(e)) => Err(format!("Claude failed: {}", e)),
+            Err(_) => {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+                Err("Timed out prioritizing todos".to_string())
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct AutopilotAction {
+    pub response: String,
+    pub action_type: String,
+    pub todo_ids: Vec<String>,
+    pub reorder: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn interpret_autopilot_command(
+    command: String,
+    context_json: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<AutopilotAction, String> {
+    let data_dir = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.data_dir.clone()
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let system_prompt = "You are an autopilot orchestrator for a coding agent system. \
+            The user may ask questions about workspace status OR give commands to manage automated TODO pickup. \
+            Available action_types: 'pause', 'resume', 'skip_todo', 'prioritize', 'none'. \
+            Use 'none' for status questions, informational queries, or anything that doesn't require an action. \
+            You MUST ALWAYS respond with ONLY valid JSON — no markdown, no explanation outside JSON: \
+            {\"response\": \"<human-readable reply>\", \"action_type\": \"<type>\", \
+            \"todo_ids\": [\"<affected ids if applicable>\"], \"reorder\": [\"<new order if applicable>\"]}";
+
+        let prompt = format!("Command: {}\n\nCurrent state:\n{}", command, context_json);
+
+        let claude_bin = get_shell_env()
+            .claude_path
+            .as_deref()
+            .unwrap_or("claude");
+
+        let mut cmd = std::process::Command::new(claude_bin);
+        cmd.arg("-p").arg(&prompt);
+        cmd.args(["--output-format", "text"]);
+        cmd.args(["--max-turns", "1"]);
+        cmd.arg("--system-prompt").arg(system_prompt);
+        cmd.current_dir(&data_dir);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+        inject_shell_env(&mut cmd);
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn claude: {}", e))?;
+
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let output = child.wait_with_output();
+            let _ = tx.send(output);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(Ok(output)) if output.status.success() => {
+                let raw = strip_ansi(
+                    &String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                );
+                let json_str = strip_json_fences(&raw);
+                let action: AutopilotAction = serde_json::from_str(json_str)
+                    .unwrap_or_else(|_| AutopilotAction {
+                        response: raw,
+                        action_type: "none".to_string(),
+                        todo_ids: vec![],
+                        reorder: vec![],
+                    });
+                Ok(action)
+            }
+            Ok(Ok(_)) => Err("Claude exited with non-zero status".to_string()),
+            Ok(Err(e)) => Err(format!("Claude failed: {}", e)),
+            Err(_) => {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+                Err("Timed out interpreting autopilot command".to_string())
             }
         }
     })

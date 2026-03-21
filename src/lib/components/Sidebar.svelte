@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import { Eye, ChevronRight } from "lucide-svelte";
+  import { Eye, ChevronRight, GitMerge, Loader2 } from "lucide-svelte";
   import { SvelteSet } from "svelte/reactivity";
   import ResizeHandle from "./ResizeHandle.svelte";
 
@@ -13,9 +13,13 @@
     onSelect: (wsId: string) => void;
     onRename: (wsId: string, newName: string) => void;
     onRemove: (wsId: string) => void;
+    stagingWsId?: string | null;
+    stagingError?: string | null;
+    rebuildingStaging?: boolean;
+    stagingMergedCount?: number;
   }
 
-  let { workspaces, selectedWsId, creatingWsId = null, prStatusMap, reviewingWsIds = new Set(), onSelect, onRename, onRemove }: Props =
+  let { workspaces, selectedWsId, creatingWsId = null, prStatusMap, reviewingWsIds = new Set(), onSelect, onRename, onRemove, stagingWsId = null, stagingError = null, rebuildingStaging = false, stagingMergedCount = 0 }: Props =
     $props();
 
   let menuOpenId = $state<string | null>(null);
@@ -184,6 +188,28 @@
         </div>
       {/each}
     </div>
+    {#if stagingWsId}
+      <div class="staging-entry">
+        <button
+          class="ws-item staging"
+          class:active={selectedWsId === stagingWsId}
+          onclick={() => onSelect(stagingWsId!)}
+        >
+          {#if rebuildingStaging}
+            <Loader2 size={12} class="staging-spinner" />
+          {:else}
+            <GitMerge size={12} class="staging-icon" />
+          {/if}
+          <span class="staging-name">Staging</span>
+          {#if stagingMergedCount > 0}
+            <span class="staging-count">{stagingMergedCount}</span>
+          {/if}
+        </button>
+        {#if stagingError}
+          <span class="staging-error" title={stagingError}>conflicts</span>
+        {/if}
+      </div>
+    {/if}
   </div>
   <ResizeHandle onResize={handleSidebarResize} />
 </aside>
@@ -495,6 +521,56 @@
     padding: 0.1rem 0.3rem;
     outline: none;
     min-width: 0;
+  }
+
+  .staging-entry {
+    border-top: 1px solid var(--border);
+    padding: 0.25rem 0;
+  }
+
+  .ws-item.staging {
+    color: var(--accent);
+    gap: 0.4rem;
+  }
+
+  .ws-item.staging :global(.staging-icon) {
+    flex-shrink: 0;
+    color: var(--accent);
+  }
+
+  .ws-item.staging :global(.staging-spinner) {
+    flex-shrink: 0;
+    color: var(--accent);
+    animation: spin 1s linear infinite;
+  }
+
+  .staging-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    flex: 1;
+  }
+
+  .staging-count {
+    font-size: 0.62rem;
+    font-weight: 600;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+  }
+
+  .staging-error {
+    display: block;
+    font-size: 0.62rem;
+    color: var(--diff-del);
+    font-weight: 600;
+    padding: 0 0.5rem 0.15rem calc(12px + 0.9rem);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
 </style>

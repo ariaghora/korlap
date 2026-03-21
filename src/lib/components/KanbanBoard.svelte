@@ -5,6 +5,7 @@
   import KanbanCard from "./KanbanCard.svelte";
   import CardDetailOverlay from "./CardDetailOverlay.svelte";
   import TaskPopover, { type TaskData } from "./TaskPopover.svelte";
+  import AutopilotPill, { type AutopilotEvent } from "./AutopilotPill.svelte";
   import { Plus, Ellipsis, Trash2 } from "lucide-svelte";
 
   interface TodoItem {
@@ -16,6 +17,7 @@
     mentionPaths?: string[];
     planMode?: boolean;
     thinkingMode?: boolean;
+    ready?: boolean;
     created_at: number;
   }
 
@@ -36,8 +38,17 @@
     onNewTodo: (data: TaskData) => void;
     onEditTodo: (todoId: string, data: TaskData) => void;
     onRemoveTodo: (todoId: string) => void;
+    onToggleReady: (todoId: string) => void;
     onRemoveWorkspace: (wsId: string) => void;
     onRemoveAllDone: () => void;
+    autopilotEnabled?: boolean;
+    autopilotEvents?: AutopilotEvent[];
+    autopilotActiveAgents?: number;
+    autopilotMaxAgents?: number;
+    autopilotTodoQueue?: number;
+    autopilotPrioritizing?: boolean;
+    autopilotRebuildingStaging?: boolean;
+    onAutopilotCommand?: (command: string) => void;
   }
 
   let {
@@ -57,8 +68,17 @@
     onNewTodo,
     onEditTodo,
     onRemoveTodo,
+    onToggleReady,
     onRemoveWorkspace,
     onRemoveAllDone,
+    autopilotEnabled = false,
+    autopilotEvents = [],
+    autopilotActiveAgents = 0,
+    autopilotMaxAgents = 3,
+    autopilotTodoQueue = 0,
+    autopilotPrioritizing = false,
+    autopilotRebuildingStaging = false,
+    onAutopilotCommand,
   }: Props = $props();
 
   let showAddDialog = $state(false);
@@ -90,6 +110,7 @@
   }
 </script>
 
+<div class="kanban-wrapper">
 <div class="kanban-board">
   <KanbanColumn title="Todo" count={todos.length}>
     {#each todos as todo (todo.id)}
@@ -101,10 +122,12 @@
         imagePaths={todo.imagePaths}
         planMode={todo.planMode}
         thinkingMode={todo.thinkingMode}
+        ready={todo.ready ?? false}
         {repoName}
         onAction={() => onSpawnAgent(todo.id)}
         onEdit={() => { editingTodo = todo; }}
         onRemove={() => onRemoveTodo(todo.id)}
+        onToggleReady={() => onToggleReady(todo.id)}
       />
     {/each}
     {#if todos.length === 0}
@@ -177,6 +200,19 @@
   </KanbanColumn>
 </div>
 
+<AutopilotPill
+  enabled={autopilotEnabled}
+  events={autopilotEvents}
+  activeAgentCount={autopilotActiveAgents}
+  maxAgents={autopilotMaxAgents}
+  todoQueueLength={autopilotTodoQueue}
+  prioritizing={autopilotPrioritizing}
+  rebuildingStaging={autopilotRebuildingStaging}
+  onSendCommand={(cmd) => onAutopilotCommand?.(cmd)}
+  onCardClick={onCardClick}
+/>
+</div>
+
 {#if showAddDialog}
   <TaskPopover
     {repoId}
@@ -229,6 +265,14 @@
 {/if}
 
 <style>
+  .kanban-wrapper {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   .kanban-board {
     display: flex;
     gap: 0.75rem;

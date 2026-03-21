@@ -33,6 +33,11 @@
     cloneRepo,
     setRepoProfile,
     checkRepoGhAccess,
+    createStagingWorkspace,
+    removeStagingWorkspace,
+    getSystemResources,
+    prioritizeTodos,
+    interpretAutopilotCommand,
     type RepoDetail,
     type RepoSettings,
     type WorkspaceInfo,
@@ -40,6 +45,8 @@
     type PrStatus,
     type GhCliStatus,
     type GhRepoEntry,
+    type AutopilotAction,
+    suggestReplies,
   } from "$lib/ipc";
   import {
     addUserMessage,
@@ -49,6 +56,7 @@
     clearWorkspaceData,
     setSending,
     sendingByWorkspace,
+    getMessages,
   } from "$lib/stores/messages.svelte";
   import { onMount } from "svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -98,6 +106,43 @@
   let updatingBranchMap = new SvelteMap<string, boolean>();
   let titleBarRef: TitleBar | undefined = $state();
   let repoDropdownIndex = $state(-1);
+
+  // ── Autopilot state ──────────────────────────────────────
+  // TODO: remove after autopilot feature is merged
+  const AUTOPILOT_BLACKLISTED_BRANCHES = new Set(["feat/autopilot-mode"]);
+
+  let autopilotEnabled = $state(false);
+  let autopilotEvaluating = $state(false);
+  let autopilotPrioritizedIds = $state<string[]>([]);
+  let autopilotPrioritizing = $state(false);
+  let maxConcurrentAgents = $state(3);
+  const MAX_AUTO_REVIEW_CYCLES = 5;
+  const autoReviewCount = new SvelteMap<string, number>();
+  /** Workspaces where autopilot already triggered PR creation — skip further reviews until PR appears in prStatusMap. */
+  const autopilotPrPending = new Set<string>();
+  const autopilotErrorWs = new Set<string>();
+
+  interface AutopilotEvent {
+    id: string;
+    time: number;
+    type: "spawn" | "auto_answer" | "review_start" | "review_done" | "pr_created" | "conflict_resolve" | "prioritized" | "staging_rebuild" | "user_command" | "orchestrator_response" | "error";
+    message: string;
+    wsId?: string;
+    wsName?: string;
+  }
+  let autopilotEvents = $state<AutopilotEvent[]>([]);
+
+  function addAutopilotEvent(type: AutopilotEvent["type"], message: string, wsId?: string, wsName?: string) {
+    autopilotEvents.push({ id: crypto.randomUUID(), time: Date.now(), type, message, wsId, wsName });
+    if (autopilotEvents.length > 200) autopilotEvents.splice(0, autopilotEvents.length - 200);
+  }
+
+  // ── Staging state ──────────────────────────────────────
+  let stagingWsId = $state<string | null>(null);
+  let stagingError = $state<string | null>(null);
+  let rebuildingStaging = $state(false);
+  let stagingMergedBranches = $state<string[]>([]);
+  let stagingConflictingBranches = $state<string[]>([]);
 
   // ── Home screen state ──────────────────────────────────
   let ghStatus = $state<GhCliStatus | null>(null);
@@ -300,6 +345,7 @@
     mentionPaths?: string[];
     planMode?: boolean;
     thinkingMode?: boolean;
+    ready?: boolean;
     created_at: number;
   }
   let todos = $state<TodoItem[]>([]);
@@ -474,18 +520,26 @@
           e.preventDefault();
           appMode = "work";
           break;
+        case "3":
+          e.preventDefault();
+          autopilotEnabled = !autopilotEnabled;
+          if (autopilotEnabled) onAutopilotActivated();
+          break;
       }
     }
 
     window.addEventListener("keydown", handleKeydown);
 
     // Poll PR status every 5s for workspaces that have a PR open
-    const prPollInterval = setInterval(() => {
+    const prPollInterval = setInterval(async () => {
+      let anyChanged = false;
       for (const [wsId, pr] of prStatusMap) {
         if (pr.state === "open") {
-          refreshPrStatus(wsId);
+          const changed = await refreshPrStatus(wsId);
+          if (changed) anyChanged = true;
         }
       }
+      if (anyChanged && autopilotEnabled) evaluateAutopilot();
     }, 5_000);
 
     // Check base branch updates every 60s for the selected workspace.
@@ -624,6 +678,7 @@
         created_at: Date.now() / 1000,
       });
       persistTodos();
+      if (autopilotEnabled) reprioritizeTodos();
     } catch (e) {
       addToast(`Failed to save images: ${e}`);
     }
@@ -654,6 +709,320 @@
       todos.splice(idx, 1);
       persistTodos();
     }
+  }
+
+  function handleToggleReady(todoId: string) {
+    const todo = todos.find((t) => t.id === todoId);
+    if (todo) {
+      todo.ready = !todo.ready;
+      persistTodos();
+      if (todo.ready && autopilotEnabled) {
+        reprioritizeTodos().then(() => evaluateAutopilot());
+      }
+    }
+  }
+
+  // ── Autopilot engine ──────────────────────────────────────
+  function resultKind(text: string): "clean" | "failed" | "issues" {
+    const t = text.trim();
+    const tl = t.toLowerCase();
+    if (tl.startsWith("**review failed:**")) return "failed";
+    if (t.startsWith("[CLEAN]") || tl.includes("no issues found")) return "clean";
+    return "issues";
+  }
+
+  let activeAgentCount = $derived(
+    workspaces.filter(ws =>
+      ws.repo_id === activeRepo?.id &&
+      (sendingByWorkspace.get(ws.id) || reviewByWorkspace.has(ws.id) || ws.id === creatingWsId)
+    ).length
+  );
+
+  async function reprioritizeTodos() {
+    if (autopilotPrioritizing || !activeRepo) return;
+    const readyTodos = todos.filter(t => t.ready);
+    if (readyTodos.length <= 1) {
+      autopilotPrioritizedIds = readyTodos.map(t => t.id);
+      return;
+    }
+    autopilotPrioritizing = true;
+    try {
+      const todoData = readyTodos.map(t => ({ id: t.id, title: t.title, description: t.description }));
+      const ordered = await prioritizeTodos(JSON.stringify(todoData));
+      autopilotPrioritizedIds = ordered.filter(id => readyTodos.some(t => t.id === id));
+      addAutopilotEvent("prioritized", `Prioritized ${autopilotPrioritizedIds.length} tasks`);
+    } catch {
+      // Fallback to list order
+      autopilotPrioritizedIds = readyTodos.map(t => t.id);
+    } finally {
+      autopilotPrioritizing = false;
+    }
+  }
+
+  /** Get the last assistant text from a workspace's messages. */
+  function getLastAssistantText(wsId: string): string {
+    const msgs = getMessages(wsId);
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i];
+      if (msg.role === "user") break;
+      if (msg.role === "assistant") {
+        for (let j = msg.chunks.length - 1; j >= 0; j--) {
+          if (msg.chunks[j].type === "text") {
+            const content = (msg.chunks[j] as { type: "text"; content: string }).content.trim();
+            if (content) return content;
+          }
+        }
+      }
+    }
+    return "";
+  }
+
+  async function evaluateAutopilot() {
+    if (!autopilotEnabled || !activeRepo || autopilotEvaluating) return;
+    autopilotEvaluating = true;
+    try {
+      // Cleanup: clear PR-pending flag for workspaces that now have a PR
+      for (const wsId of autopilotPrPending) {
+        const pr = prStatusMap.get(wsId);
+        if (pr && pr.state !== "none") autopilotPrPending.delete(wsId);
+      }
+
+      // 0. Auto-answer: if an agent is waiting and asking a question, respond automatically
+      for (const ws of workspaces) {
+        if (ws.repo_id !== activeRepo.id) continue;
+        if (AUTOPILOT_BLACKLISTED_BRANCHES.has(ws.branch)) continue;
+        if (ws.status !== "waiting" || sendingByWorkspace.get(ws.id) || reviewByWorkspace.has(ws.id)) continue;
+        if (ws.id === creatingWsId) continue;
+
+        // Plan-mode workspace finished planning — execute the plan
+        if (planModeByWorkspace.get(ws.id) === true) {
+          addAutopilotEvent("auto_answer", `Executing plan for ${ws.name}`, ws.id, ws.name);
+          planModeByWorkspace.set(ws.id, false);
+          sendPrompt(ws.id, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
+          return;
+        }
+
+        const lastText = getLastAssistantText(ws.id);
+        if (!lastText) continue;
+
+        // Check if last message ends with a question
+        const hasQuestion = lastText.split("\n").some(line => line.trimEnd().endsWith("?"));
+        if (!hasQuestion) continue;
+
+        // Use AI to decide what to respond
+        try {
+          const replies = await suggestReplies(lastText);
+          if (replies.length > 0) {
+            addAutopilotEvent("auto_answer", `Auto-answering "${replies[0]}" for ${ws.name}`, ws.id, ws.name);
+            sendPrompt(ws.id, replies[0]);
+            return;
+          }
+        } catch {
+          // If AI fails, just say "Yes, proceed"
+          addAutopilotEvent("auto_answer", `Auto-answering "Yes, proceed" for ${ws.name}`, ws.id, ws.name);
+          sendPrompt(ws.id, "Yes, proceed.");
+          return;
+        }
+      }
+
+      // 1. Handle completed reviews first — finalize in-flight work before starting new
+      for (const ws of workspaces) {
+        if (ws.repo_id !== activeRepo.id) continue;
+        if (AUTOPILOT_BLACKLISTED_BRANCHES.has(ws.branch)) continue;
+        const review = reviewByWorkspace.get(ws.id);
+        if (review?.status !== "complete") continue;
+
+        const kind = resultKind(review.resultMarkdown);
+        if (kind === "clean" || kind === "failed") {
+          // No issues or review failed → create PR, done with this workspace
+          const pr = prStatusMap.get(ws.id);
+          if (!pr || pr.state === "none") {
+            addAutopilotEvent("pr_created", `Creating PR for ${ws.name} (review: ${kind})`, ws.id, ws.name);
+            reviewByWorkspace.delete(ws.id);
+            autoReviewCount.delete(ws.id);
+            autopilotPrPending.add(ws.id);
+            triggerPrAction(ws.id, { skipMerge: true });
+            return;
+          }
+          reviewByWorkspace.delete(ws.id);
+          autoReviewCount.delete(ws.id);
+        } else if (kind === "issues") {
+          // Send issues back to agent to fix, then it'll come back for another review cycle
+          addAutopilotEvent("review_done", `Review found issues on ${ws.name}, sending fixes`, ws.id, ws.name);
+          sendPrompt(ws.id, `The code review found these issues. Fix them all:\n\n${review.resultMarkdown}`, "Fixing review issues");
+          reviewByWorkspace.delete(ws.id);
+          return;
+        }
+      }
+
+      // 2. Auto-pickup: spawn from next ready TODO if under limit
+      const readyTodos = todos.filter(t => t.ready);
+      if (activeAgentCount < maxConcurrentAgents && !creatingWsId && readyTodos.length > 0) {
+        // Pick from prioritized list, or first ready todo
+        const nextId = autopilotPrioritizedIds.find(id => readyTodos.some(t => t.id === id))
+          ?? readyTodos[0].id;
+        const todo = readyTodos.find(t => t.id === nextId);
+        if (todo) {
+          addAutopilotEvent("spawn", `Spawning agent for "${todo.title}"`, undefined, todo.title);
+          handleSpawnFromTodo(todo.id);
+          return;
+        }
+      }
+
+      // 3. Auto-review: for in-progress workspaces that are idle with diffs
+      //    Skip if PR creation already in flight, or reviewed MAX_AUTO_REVIEW_CYCLES times.
+      for (const ws of inProgressWs) {
+        if (AUTOPILOT_BLACKLISTED_BRANCHES.has(ws.branch)) continue;
+        if (autopilotPrPending.has(ws.id)) continue;
+        if (ws.status !== "waiting" || sendingByWorkspace.get(ws.id) || reviewByWorkspace.has(ws.id)) continue;
+        if (ws.id === creatingWsId) continue;
+        if (autopilotErrorWs.has(ws.id)) { autopilotErrorWs.delete(ws.id); continue; }
+        const cc = changeCounts.get(ws.id);
+        if (cc && (cc.additions > 0 || cc.deletions > 0)) {
+          const cycles = autoReviewCount.get(ws.id) ?? 0;
+          if (cycles >= MAX_AUTO_REVIEW_CYCLES) {
+            // Hit review cap — skip review, go straight to PR
+            addAutopilotEvent("pr_created", `Review cap reached for ${ws.name}, creating PR`, ws.id, ws.name);
+            autoReviewCount.delete(ws.id);
+            autopilotPrPending.add(ws.id);
+            triggerPrAction(ws.id, { skipMerge: true });
+            return;
+          }
+          autoReviewCount.set(ws.id, cycles + 1);
+          addAutopilotEvent("review_start", `Auto-reviewing ${ws.name} (${cycles + 1}/${MAX_AUTO_REVIEW_CYCLES})`, ws.id, ws.name);
+          triggerReview(ws.id);
+          return;
+        }
+      }
+
+      // 4. Auto-conflict-resolution and failing checks for open PRs
+      for (const ws of reviewWs) {
+        if (AUTOPILOT_BLACKLISTED_BRANCHES.has(ws.branch)) continue;
+        if (sendingByWorkspace.get(ws.id)) continue;
+        const pr = prStatusMap.get(ws.id);
+        if (pr?.mergeable === "conflicting") {
+          addAutopilotEvent("conflict_resolve", `Resolving conflicts on ${ws.name}`, ws.id, ws.name);
+          triggerPrAction(ws.id, { skipMerge: true });
+          return;
+        }
+        if (pr?.checks === "failing") {
+          addAutopilotEvent("auto_answer", `Fixing failing checks on ${ws.name}`, ws.id, ws.name);
+          triggerPrAction(ws.id, { skipMerge: true });
+          return;
+        }
+      }
+    } finally {
+      autopilotEvaluating = false;
+    }
+  }
+
+  async function rebuildStaging() {
+    if (!activeRepo || rebuildingStaging) return;
+    if (reviewWs.length === 0) {
+      if (stagingWsId) {
+        try {
+          await removeStagingWorkspace(activeRepo.id);
+          workspaces = workspaces.filter(w => w.id !== stagingWsId);
+        } catch { /* ignore */ }
+        stagingWsId = null;
+        stagingError = null;
+        stagingMergedBranches = [];
+        stagingConflictingBranches = [];
+      }
+      return;
+    }
+
+    rebuildingStaging = true;
+    const branchNames = reviewWs.map(ws => ws.branch);
+    try {
+      const result = await createStagingWorkspace(activeRepo.id, branchNames);
+      // Remove old staging from workspaces if different id
+      if (stagingWsId && stagingWsId !== result.workspace.id) {
+        workspaces = workspaces.filter(w => w.id !== stagingWsId);
+      }
+      stagingWsId = result.workspace.id;
+      stagingMergedBranches = result.merged_branches;
+      stagingConflictingBranches = result.conflicting_branches;
+      // Add/update in workspaces array
+      const idx = workspaces.findIndex(w => w.id === result.workspace.id);
+      if (idx >= 0) {
+        workspaces[idx] = result.workspace;
+      } else {
+        workspaces.push(result.workspace);
+      }
+      stagingError = result.conflicting_branches.length > 0
+        ? `Could not merge: ${result.conflicting_branches.join(", ")}`
+        : null;
+      addAutopilotEvent("staging_rebuild", `Staging rebuilt: ${result.merged_branches.length} merged, ${result.conflicting_branches.length} conflicting`);
+    } catch (e) {
+      stagingError = String(e);
+      addAutopilotEvent("error", `Staging rebuild failed: ${e}`);
+    } finally {
+      rebuildingStaging = false;
+    }
+  }
+
+  // Called when autopilot is toggled on — fetch resources, prioritize, evaluate.
+  // NOT a $effect — avoids reactive loops that re-trigger on state mutations.
+  function onAutopilotActivated() {
+    getSystemResources().then(res => {
+      // Claude agents are I/O-bound, not memory-hungry. Use total RAM (not available — macOS
+      // reports free-minus-cache which is always tiny) and be generous with the ratio.
+      maxConcurrentAgents = Math.max(2, Math.min(Math.floor(res.cpu_cores / 2), Math.floor(res.memory_gb / 4)));
+    }).catch(() => { maxConcurrentAgents = 3; });
+    reprioritizeTodos();
+    rebuildStaging();
+    evaluateAutopilot();
+  }
+
+  async function handleAutopilotCommand(command: string) {
+    if (!activeRepo) return;
+    addAutopilotEvent("user_command", command);
+    try {
+      const context = JSON.stringify({
+        todos: todos.map(t => ({ id: t.id, title: t.title, ready: t.ready })),
+        workspaces: workspaces.filter(w => w.repo_id === activeRepo!.id).map(w => ({
+          id: w.id, name: w.name, branch: w.branch, status: w.status, task_title: w.task_title,
+          isSending: sendingByWorkspace.get(w.id) ?? false,
+          isReviewing: reviewByWorkspace.has(w.id),
+          reviewStatus: reviewByWorkspace.get(w.id)?.status ?? null,
+          reviewCycles: autoReviewCount.get(w.id) ?? 0,
+          changes: changeCounts.get(w.id) ?? null,
+          planMode: planModeByWorkspace.get(w.id) ?? false,
+        })),
+        prStatuses: [...prStatusMap.entries()].map(([id, pr]) => ({
+          wsId: id, state: pr.state, mergeable: pr.mergeable, checks: pr.checks,
+          additions: pr.additions, deletions: pr.deletions,
+        })),
+        autopilotEnabled,
+        activeAgentCount,
+        maxConcurrentAgents,
+      });
+      const action = await interpretAutopilotCommand(command, context);
+      addAutopilotEvent("orchestrator_response", action.response);
+
+      switch (action.action_type) {
+        case "pause":
+          autopilotEnabled = false;
+          break;
+        case "resume":
+          autopilotEnabled = true;
+          break;
+        case "skip_todo":
+          for (const id of action.todo_ids) {
+            const todo = todos.find(t => t.id === id);
+            if (todo) { todo.ready = false; persistTodos(); }
+          }
+          break;
+        case "prioritize":
+          if (action.reorder.length > 0) autopilotPrioritizedIds = action.reorder;
+          break;
+      }
+    } catch (e) {
+      addAutopilotEvent("error", `Command failed: ${e}`);
+    }
+    // Re-evaluate after command — tasks may have finished during the AI call
+    if (autopilotEnabled) evaluateAutopilot();
   }
 
   async function handleSpawnFromTodo(todoId: string) {
@@ -688,6 +1057,7 @@
       if (idx >= 0) workspaces[idx] = ws;
       selectedWsId = ws.id;
       creatingWsId = null;
+      if (todo.planMode) planModeByWorkspace.set(ws.id, true);
 
       // Build prompt from title + description
       const promptText = todo.description
@@ -729,6 +1099,9 @@
         thinkingMode: todo.thinkingMode ?? repoSettings?.default_thinking ?? false,
         hidden: true,
       });
+
+      // Re-evaluate so autopilot can spawn the next task if slots remain
+      if (autopilotEnabled) evaluateAutopilot();
     } catch (e) {
       const failIdx = workspaces.findIndex((w) => w.id === tempId);
       if (failIdx >= 0) workspaces.splice(failIdx, 1);
@@ -855,8 +1228,10 @@
         } else if (event.type === "done") {
           setSending(wsId, false);
           diffRefreshTrigger++;
-          refreshChangeCounts(wsId);
-          refreshPrStatus(wsId);
+          const doneRefresh = Promise.all([
+            refreshChangeCounts(wsId),
+            refreshPrStatus(wsId),
+          ]);
           chatPanelApis.get(wsId)?.refreshSuggestions();
           if (activeRepo) {
             listWorkspaces(activeRepo.id)
@@ -879,10 +1254,19 @@
               .catch(() => {});
           }
           pendingDrain.set(wsId, true);
+          if (autopilotEnabled) {
+            doneRefresh.then(() => evaluateAutopilot());
+          }
         } else if (event.type === "error") {
           addToast(event.message);
           setSending(wsId, false);
           pendingDrain.delete(wsId);
+          if (autopilotEnabled) {
+            autopilotErrorWs.add(wsId);
+            const ws = workspaces.find(w => w.id === wsId);
+            addAutopilotEvent("error", `Agent error on ${ws?.name ?? wsId}: ${event.message}`, wsId, ws?.name);
+            evaluateAutopilot();
+          }
         }
       }, msg.planMode, msg.thinkingMode);
     } catch (e) {
@@ -1039,9 +1423,9 @@
     }
   }
 
-  async function handlePrAction() {
-    if (!selectedWs || !activeRepo) return;
-    const wsId = selectedWs.id;
+  async function triggerPrAction(wsId: string, opts?: { skipMerge?: boolean }) {
+    const ws = workspaces.find(w => w.id === wsId);
+    if (!ws || !activeRepo) return;
     if (gitOpInProgress.get(wsId)) return;
 
     const pr = prStatusMap.get(wsId);
@@ -1054,12 +1438,10 @@
       if (pr.mergeable === "conflicting") {
         const baseBranch = activeRepo.default_branch;
         sendPrompt(wsId, `PR #${pr.number} has merge conflicts with ${baseBranch}.\n\nResolve them:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n5. Push\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving conflicts on PR #${pr.number}`);
-        activeTab = "chat";
         return;
       }
       if (pr.checks === "failing") {
         sendPrompt(wsId, `PR #${pr.number} has failing checks. Investigate the failures using \`gh pr checks ${pr.number}\`, fix the issues, commit, and push.`, `Fixing checks on PR #${pr.number}`);
-        activeTab = "chat";
         return;
       }
 
@@ -1076,7 +1458,6 @@
           refreshPrStatus(wsId);
         } catch (e) {
           addToast(String(e));
-          activeTab = "chat";
           sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
         } finally {
           gitOpInProgress.delete(wsId);
@@ -1094,7 +1475,6 @@
           refreshPrStatus(wsId);
         } catch (e) {
           addToast(String(e));
-          activeTab = "chat";
           sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
         } finally {
           gitOpInProgress.delete(wsId);
@@ -1102,7 +1482,8 @@
         return;
       }
 
-      // ── Direct CLI: merge ──
+      // ── Direct CLI: merge (skipped in autopilot) ──
+      if (opts?.skipMerge) return;
       gitOpInProgress.set(wsId, true);
       addActionMessage(wsId, crypto.randomUUID(), `Merging PR #${pr.number}`);
       try {
@@ -1111,7 +1492,6 @@
         refreshPrStatus(wsId);
       } catch (e) {
         addToast(String(e));
-        activeTab = "chat";
         sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
       } finally {
         gitOpInProgress.delete(wsId);
@@ -1119,41 +1499,36 @@
       return;
     }
 
-    // ── No PR: commit & push directly, then agent creates PR (needs conversation context) ──
+    // ── No PR: commit & push directly, then agent creates PR ──
     const baseBranch = activeRepo.default_branch;
     const files = await getChangedFiles(wsId).catch(() => []);
     const template = await getPrTemplate(activeRepo.id).catch(() => "");
 
     gitOpInProgress.set(wsId, true);
     try {
-      // Commit & push if there are local changes
       if (files.length > 0) {
         addActionMessage(wsId, crypto.randomUUID(), "Committing & pushing changes");
         const msg = await generateCommitMessage(wsId);
         await gitCommit(wsId, msg);
         await gitPush(wsId);
       } else {
-        // Just push any unpushed commits
         addActionMessage(wsId, crypto.randomUUID(), "Pushing to origin");
         await gitPush(wsId);
       }
     } catch (e) {
       addToast(String(e));
-      activeTab = "chat";
       sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
       gitOpInProgress.delete(wsId);
       return;
     }
     gitOpInProgress.delete(wsId);
 
-    // Agent creates PR — it has conversation context for a good description
-    activeTab = "chat";
     let prompt: string;
     const customMsg = repoSettings?.pr_message?.trim();
 
     if (customMsg) {
       prompt = customMsg
-        .replace(/\{\{branch\}\}/g, selectedWs.branch)
+        .replace(/\{\{branch\}\}/g, ws.branch)
         .replace(/\{\{base_branch\}\}/g, baseBranch)
         .replace(/\{\{file_count\}\}/g, String(files.length))
         .replace(/\{\{pr_template\}\}/g, template
@@ -1171,6 +1546,12 @@
     }
 
     sendPrompt(wsId, prompt, "Creating pull request");
+  }
+
+  async function handlePrAction() {
+    if (!selectedWs) return;
+    activeTab = "chat";
+    triggerPrAction(selectedWs.id);
   }
 
   async function handleStop() {
@@ -1197,9 +1578,10 @@
     return inputPreview ? `${verb} ${inputPreview}` : `${verb}...`;
   }
 
-  async function handleReview() {
-    if (!selectedWsId || !activeRepo) return;
-    const wsId = selectedWsId;
+  async function triggerReview(wsId: string) {
+    if (!activeRepo) return;
+    const ws = workspaces.find(w => w.id === wsId);
+    if (!ws) return;
 
     if (sendingByWorkspace.get(wsId) || reviewByWorkspace.has(wsId)) return;
     const pr = prStatusMap.get(wsId);
@@ -1212,7 +1594,7 @@
       reviewPrompt += `\n\n## Additional Instructions\n\n${customMsg}`;
     }
     reviewPrompt = reviewPrompt
-      .replace(/\{\{branch\}\}/g, selectedWs!.branch)
+      .replace(/\{\{branch\}\}/g, ws.branch)
       .replace(/\{\{base_branch\}\}/g, baseBranch)
       .replace(/\{\{pr_number\}\}/g, pr?.state === "open" ? String(pr.number) : "N/A")
       .replace(/\{\{pr_title\}\}/g, pr?.state === "open" ? (pr.title ?? "") : "N/A");
@@ -1242,10 +1624,12 @@
         } else if (event.type === "done") {
           review.status = "complete";
           reviewByWorkspace.set(wsId, { ...review });
+          evaluateAutopilot();
         } else if (event.type === "error") {
           review.status = "complete";
           review.resultMarkdown = `**Review failed:** ${event.message}`;
           reviewByWorkspace.set(wsId, { ...review });
+          evaluateAutopilot();
         }
       });
     } catch (e) {
@@ -1258,9 +1642,22 @@
     }
   }
 
+  async function handleReview() {
+    if (!selectedWsId) return;
+    triggerReview(selectedWsId);
+  }
+
   // Thin wrappers binding the reactive maps to the extracted helpers
   const refreshChangeCounts = (wsId: string) => _refreshChangeCounts(wsId, changeCounts);
-  const refreshPrStatus = (wsId: string) => _refreshPrStatus(wsId, prStatusMap);
+  const refreshPrStatus = async (wsId: string): Promise<boolean> => {
+    const changed = await _refreshPrStatus(wsId, prStatusMap);
+    if (changed) {
+      rebuildStaging();
+      const pr = prStatusMap.get(wsId);
+      if (pr && pr.state !== "none") autopilotPrPending.delete(wsId);
+    }
+    return changed;
+  };
   const refreshBaseUpdates = (wsId: string) => _refreshBaseUpdates(wsId, baseBehindMap);
 
   async function handleUpdateBranch() {
@@ -1464,6 +1861,9 @@
       onSelectRepo={selectRepo}
       onSettings={() => (showSettings = true)}
       onGoHome={() => { activeRepo = null; }}
+      {autopilotEnabled}
+      onAutopilotToggle={() => { autopilotEnabled = !autopilotEnabled; if (autopilotEnabled) onAutopilotActivated(); }}
+      autopilotStatus={autopilotEnabled ? `${activeAgentCount}/${maxConcurrentAgents} agents · ${todos.filter(t => t.ready).length} queued` : undefined}
     />
 
     {#if reviewAlertWs}
@@ -1490,6 +1890,10 @@
             onSelect={selectWorkspace}
             onRename={handleRename}
             onRemove={handleRemove}
+            {stagingWsId}
+            {stagingError}
+            {rebuildingStaging}
+            stagingMergedCount={stagingMergedBranches.length}
           />
 
           <WorkspacePanel
@@ -1510,6 +1914,9 @@
             wsChanges={selectedWsId ? changeCounts.get(selectedWsId) : undefined}
             baseBehindBy={selectedWsId ? baseBehindMap.get(selectedWsId) ?? 0 : 0}
             updatingBranch={selectedWsId ? updatingBranchMap.get(selectedWsId) ?? false : false}
+            isStaging={selectedWsId === stagingWsId}
+            stagingMergedCount={stagingMergedBranches.length}
+            stagingConflictingCount={stagingConflictingBranches.length}
             onPrAction={handlePrAction}
             onUpdateBranch={handleUpdateBranch}
             onReview={handleReview}
@@ -1564,8 +1971,17 @@
           onNewTodo={handleNewTodo}
           onEditTodo={handleEditTodo}
           onRemoveTodo={handleRemoveTodo}
+          onToggleReady={handleToggleReady}
           onRemoveWorkspace={handleRemove}
           onRemoveAllDone={handleRemoveAllDone}
+          {autopilotEnabled}
+          {autopilotEvents}
+          autopilotActiveAgents={activeAgentCount}
+          autopilotMaxAgents={maxConcurrentAgents}
+          autopilotTodoQueue={todos.filter(t => t.ready).length}
+          autopilotPrioritizing={autopilotPrioritizing}
+          autopilotRebuildingStaging={rebuildingStaging}
+          onAutopilotCommand={handleAutopilotCommand}
         />
       </div>
     </div>
