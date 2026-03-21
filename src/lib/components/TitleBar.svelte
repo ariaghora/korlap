@@ -2,7 +2,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { RepoDetail, WorkspaceInfo } from "$lib/ipc";
   import { syncMain, getRepoHead, checkoutDefaultBranch, checkMainBehind } from "$lib/ipc";
-  import { Settings, Check, Plus, RefreshCw, AlertTriangle } from "lucide-svelte";
+  import { Settings, Check, Plus, RefreshCw, AlertTriangle, ChevronLeft } from "lucide-svelte";
   import Dropdown from "./Dropdown.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
 
@@ -128,7 +128,7 @@
   ondblclick={handleDoubleClick}
 >
   <div class="titlebar-left">
-    <button class="home-btn" onclick={onGoHome} title="Home">K</button>
+    <button class="home-btn" onclick={onGoHome} title="Home"><ChevronLeft size={14} /></button>
     <div class="btn-group">
       <Dropdown bind:this={dropdownRef} onclose={onDropdownClose}>
         {#snippet trigger()}
@@ -255,18 +255,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--accent);
+    color: var(--text-dim);
     cursor: pointer;
-    font-family: inherit;
     padding: 0;
     flex-shrink: 0;
-    transition: border-color 0.15s ease;
+    transition: border-color 0.15s ease, color 0.15s ease;
   }
 
   .home-btn:hover {
     border-color: var(--accent);
+    color: var(--text-primary);
   }
 
   .titlebar-center {
