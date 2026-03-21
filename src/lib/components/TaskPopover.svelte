@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { type PastedImage } from "./ChatPanel.svelte";
+  import { type PastedImage } from "$lib/chat-utils";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { X, TextSearch, Lightbulb, BookOpen } from "lucide-svelte";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
