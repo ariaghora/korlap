@@ -353,6 +353,10 @@ pub fn send_message(
         cmd.arg("--dangerously-skip-permissions");
     }
 
+    // Grant agent access to the images directory so it can read pasted images
+    let images_dir = data_dir.join("images");
+    cmd.arg("--add-dir").arg(&images_dir);
+
     // Thinking mode: use high effort for deeper reasoning
     if thinking_mode {
         cmd.args(["--effort", "high"]);
