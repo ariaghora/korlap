@@ -3,7 +3,7 @@
   import type { WorkspaceInfo, RepoSettings, PrStatus, ScriptEvent } from "$lib/ipc";
   import { runScript } from "$lib/ipc";
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
-  import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/components/ChatPanel.svelte";
+  import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
   import type { Mention } from "$lib/components/MentionInput.svelte";
   import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";

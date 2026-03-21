@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
-  import type { PastedImage } from "./ChatPanel.svelte";
+  import type { PastedImage } from "$lib/chat-utils";
   import KanbanColumn from "./KanbanColumn.svelte";
   import KanbanCard from "./KanbanCard.svelte";
   import CardDetailOverlay from "./CardDetailOverlay.svelte";
