@@ -1,7 +1,7 @@
 import type { Message, MessageChunk, MessageMention } from "$lib/stores/messages.svelte.js";
 import {
   FileText, Pencil, FilePlus, Terminal, FolderSearch, TextSearch,
-  Bot, Globe, Zap, Settings, MessageCircleQuestion,
+  Bot, Globe, Zap, Settings, MessageCircleQuestion, ListChecks,
 } from "lucide-svelte";
 
 // ── Tool icon mapping ────────────────────────────────────────────────
@@ -19,6 +19,7 @@ export const toolIcons: Record<string, typeof Settings> = {
   Skill: Zap,
   ToolSearch: Settings,
   AskUserQuestion: MessageCircleQuestion,
+  TodoWrite: ListChecks,
 };
 
 // ── Shared types ─────────────────────────────────────────────────────
@@ -90,6 +91,7 @@ export type VisualBlock =
   | { kind: "thinking"; chunk: MessageChunk & { type: "thinking" }; key: string }
   | { kind: "text"; chunk: MessageChunk & { type: "text" }; msgId: string; key: string }
   | { kind: "special-tool"; chunk: MessageChunk & { type: "tool" }; msgId: string; ci: number; key: string }
+  | { kind: "todo-list"; chunk: MessageChunk & { type: "tool" }; msgId: string; ci: number; isLatest: boolean; key: string }
   | { kind: "tool-group"; tools: ToolEntry[]; key: string };
 
 export function buildVisualBlocks(msgs: Message[]): VisualBlock[] {
@@ -134,17 +136,31 @@ export function buildVisualBlocks(msgs: Message[]): VisualBlock[] {
         flushTools();
         blocks.push({ kind: "text", chunk, msgId: msg.id, key: `text:${msg.id}` });
       } else if (chunk.type === "tool") {
-        const isSpecial = chunk.name === "AskUserQuestion" ||
-                          (chunk.oldString != null && chunk.newString != null);
-        if (isSpecial) {
+        if (chunk.name === "TodoWrite") {
           flushTools();
-          blocks.push({ kind: "special-tool", chunk, msgId: msg.id, ci, key: `st:${msg.id}:${ci}` });
+          blocks.push({ kind: "todo-list", chunk, msgId: msg.id, ci, isLatest: false, key: `todo:${msg.id}:${ci}` });
         } else {
-          pendingTools.push({ chunk, msgId: msg.id, ci });
+          const isSpecial = chunk.name === "AskUserQuestion" ||
+                            (chunk.oldString != null && chunk.newString != null);
+          if (isSpecial) {
+            flushTools();
+            blocks.push({ kind: "special-tool", chunk, msgId: msg.id, ci, key: `st:${msg.id}:${ci}` });
+          } else {
+            pendingTools.push({ chunk, msgId: msg.id, ci });
+          }
         }
       }
     }
   }
   flushTools();
+
+  // Mark the last TodoWrite block as the latest (it reflects current state)
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].kind === "todo-list") {
+      (blocks[i] as Extract<VisualBlock, { kind: "todo-list" }>).isLatest = true;
+      break;
+    }
+  }
+
   return blocks;
 }
