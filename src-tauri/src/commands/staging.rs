@@ -89,8 +89,9 @@ pub async fn create_staging_workspace(
         }
     }
 
-    // Create the staging worktree
-    let worktree_path = worktree_base.join("staging");
+    // Create the staging worktree (per-repo path to avoid conflicts when multiple repos have autopilot)
+    let staging_dir = format!("staging-{}", &repo_id[..repo_id.len().min(8)]);
+    let worktree_path = worktree_base.join(&staging_dir);
     let start_point = format!("origin/{}", base_branch);
 
     // Always clean up stale worktree/branch even if not tracked in state
@@ -98,6 +99,15 @@ pub async fn create_staging_workspace(
         let _ = std::process::Command::new("git")
             .args(["worktree", "remove", "--force"])
             .arg(&worktree_path)
+            .current_dir(&repo_path)
+            .output();
+    }
+    // Migration: clean up old shared "staging" path from before per-repo paths
+    let old_staging_path = worktree_base.join("staging");
+    if old_staging_path.exists() {
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&old_staging_path)
             .current_dir(&repo_path)
             .output();
     }
