@@ -93,10 +93,6 @@
 
 <style>
   .review-pill {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    z-index: 10;
     background: var(--bg-card);
     border: 1px solid var(--border-light);
     border-radius: 20px;
