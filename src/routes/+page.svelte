@@ -107,7 +107,7 @@
   let titleBarRef: TitleBar | undefined = $state();
   let repoDropdownIndex = $state(-1);
 
-  // ── Autopilot state ──────────────────────────────────────
+  // ── Autopilot state (per-repo) ──────────────────────────
   // TODO: remove after autopilot feature is merged
   const AUTOPILOT_BLACKLISTED_BRANCHES = new Set(["feat/autopilot-mode"]);
 
@@ -143,6 +143,65 @@
   let rebuildingStaging = $state(false);
   let stagingMergedBranches = $state<string[]>([]);
   let stagingConflictingBranches = $state<string[]>([]);
+
+  // ── Per-repo autopilot persistence ─────────────────────
+  // Saves/restores autopilot + staging state when switching repos so each repo
+  // has its own independent autopilot lifecycle.
+  interface SavedAutopilotState {
+    enabled: boolean;
+    evaluating: boolean;
+    prioritizedIds: string[];
+    prioritizing: boolean;
+    events: AutopilotEvent[];
+    stagingWsId: string | null;
+    stagingError: string | null;
+    rebuildingStaging: boolean;
+    stagingMergedBranches: string[];
+    stagingConflictingBranches: string[];
+  }
+  const autopilotByRepo = new Map<string, SavedAutopilotState>();
+
+  function saveAutopilotForRepo(repoId: string) {
+    autopilotByRepo.set(repoId, {
+      enabled: autopilotEnabled,
+      evaluating: autopilotEvaluating,
+      prioritizedIds: [...autopilotPrioritizedIds],
+      prioritizing: autopilotPrioritizing,
+      events: [...autopilotEvents],
+      stagingWsId,
+      stagingError,
+      rebuildingStaging,
+      stagingMergedBranches: [...stagingMergedBranches],
+      stagingConflictingBranches: [...stagingConflictingBranches],
+    });
+  }
+
+  function restoreAutopilotForRepo(repoId: string) {
+    const saved = autopilotByRepo.get(repoId);
+    if (saved) {
+      autopilotEnabled = saved.enabled;
+      autopilotEvaluating = saved.evaluating;
+      autopilotPrioritizedIds = saved.prioritizedIds;
+      autopilotPrioritizing = saved.prioritizing;
+      autopilotEvents = saved.events;
+      stagingWsId = saved.stagingWsId;
+      stagingError = saved.stagingError;
+      rebuildingStaging = saved.rebuildingStaging;
+      stagingMergedBranches = saved.stagingMergedBranches;
+      stagingConflictingBranches = saved.stagingConflictingBranches;
+    } else {
+      autopilotEnabled = false;
+      autopilotEvaluating = false;
+      autopilotPrioritizedIds = [];
+      autopilotPrioritizing = false;
+      autopilotEvents = [];
+      stagingWsId = null;
+      stagingError = null;
+      rebuildingStaging = false;
+      stagingMergedBranches = [];
+      stagingConflictingBranches = [];
+    }
+  }
 
   // ── Home screen state ──────────────────────────────────
   let ghStatus = $state<GhCliStatus | null>(null);
@@ -373,7 +432,7 @@
     new Set([...reviewByWorkspace.entries()].filter(([, r]) => r.status === "running").map(([id]) => id)),
   );
   let activeWorkspaces = $derived(
-    [...workspaces].sort((a, b) => a.created_at - b.created_at),
+    [...workspaces].filter((ws) => ws.id !== stagingWsId).sort((a, b) => a.created_at - b.created_at),
   );
 
   // ── Kanban derived state ────────────────────────────────
@@ -560,9 +619,18 @@
   // ── Handlers ───────────────────────────────────────────
 
   function selectRepo(repo: RepoDetail) {
+    if (activeRepo?.id === repo.id) return;
+
+    // Save autopilot state for the repo we're leaving
+    if (activeRepo) {
+      saveAutopilotForRepo(activeRepo.id);
+    }
+
     activeRepo = repo;
     selectedWsId = null;
 
+    // Restore autopilot state for the repo we're entering
+    restoreAutopilotForRepo(repo.id);
 
     listWorkspaces(repo.id).then((ws) => {
       workspaces = ws;
@@ -602,6 +670,7 @@
       updatingBranchMap.clear();
       planModeByWorkspace.clear();
       thinkingModeByWorkspace.clear();
+      autopilotByRepo.delete(repoId);
       todos = [];
       activeRepo = repos.length > 0 ? repos[0] : null;
       if (activeRepo) selectRepo(activeRepo);
@@ -920,10 +989,12 @@
     if (!activeRepo || rebuildingStaging) return;
     if (reviewWs.length === 0) {
       if (stagingWsId) {
+        const removedId = stagingWsId;
         try {
           await removeStagingWorkspace(activeRepo.id);
-          workspaces = workspaces.filter(w => w.id !== stagingWsId);
+          workspaces = workspaces.filter(w => w.id !== removedId);
         } catch { /* ignore */ }
+        if (selectedWsId === removedId) selectedWsId = null;
         stagingWsId = null;
         stagingError = null;
         stagingMergedBranches = [];
@@ -937,8 +1008,10 @@
     try {
       const result = await createStagingWorkspace(activeRepo.id, branchNames);
       // Remove old staging from workspaces if different id
-      if (stagingWsId && stagingWsId !== result.workspace.id) {
-        workspaces = workspaces.filter(w => w.id !== stagingWsId);
+      const oldStagingId = stagingWsId;
+      if (oldStagingId && oldStagingId !== result.workspace.id) {
+        workspaces = workspaces.filter(w => w.id !== oldStagingId);
+        if (selectedWsId === oldStagingId) selectedWsId = result.workspace.id;
       }
       stagingWsId = result.workspace.id;
       stagingMergedBranches = result.merged_branches;
@@ -1860,7 +1933,7 @@
       onModeChange={(m) => { appMode = m; }}
       onSelectRepo={selectRepo}
       onSettings={() => (showSettings = true)}
-      onGoHome={() => { activeRepo = null; }}
+      onGoHome={() => { if (activeRepo) saveAutopilotForRepo(activeRepo.id); activeRepo = null; }}
       {autopilotEnabled}
       onAutopilotToggle={() => { autopilotEnabled = !autopilotEnabled; if (autopilotEnabled) onAutopilotActivated(); }}
       autopilotStatus={autopilotEnabled ? `${activeAgentCount}/${maxConcurrentAgents} agents · ${todos.filter(t => t.ready).length} queued` : undefined}
