@@ -807,6 +807,75 @@ pub async fn prioritize_todos(
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
+#[tauri::command]
+pub async fn determine_dependencies(
+    todo_json: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<String, String> {
+    let data_dir = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.data_dir.clone()
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let system_prompt = "You are a task dependency analyzer for a software project. Given a list of TODO items \
+            (each with id, title, description), determine which tasks depend on other tasks. Task A depends on task B \
+            if A requires B's code changes to exist first — e.g., \"write API tests\" depends on \"build the API endpoint\". \
+            Only include direct dependencies, not transitive ones. Return ONLY a JSON object mapping task IDs to arrays \
+            of dependency task IDs. Only include entries for tasks that have dependencies. \
+            Example: {\"id2\": [\"id1\"], \"id3\": [\"id1\"]}. If no dependencies exist, return: {}";
+
+        let claude_bin = get_shell_env()
+            .claude_path
+            .as_deref()
+            .unwrap_or("claude");
+
+        let mut cmd = std::process::Command::new(claude_bin);
+        cmd.arg("-p").arg(&todo_json);
+        cmd.args(["--output-format", "text"]);
+        cmd.args(["--max-turns", "1"]);
+        cmd.arg("--system-prompt").arg(system_prompt);
+        cmd.current_dir(&data_dir);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+        inject_shell_env(&mut cmd);
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn claude: {}", e))?;
+
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let output = child.wait_with_output();
+            let _ = tx.send(output);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(Ok(output)) if output.status.success() => {
+                let raw = strip_ansi(
+                    &String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                );
+                let json_str = strip_json_fences(&raw);
+                // Validate it's valid JSON before returning
+                let _: serde_json::Value = serde_json::from_str(json_str)
+                    .map_err(|e| format!("Failed to parse dependencies: {} — raw: {}", e, raw))?;
+                Ok(json_str.to_string())
+            }
+            Ok(Ok(_)) => Err("Claude exited with non-zero status".to_string()),
+            Ok(Err(e)) => Err(format!("Claude failed: {}", e)),
+            Err(_) => {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+                Err("Timed out determining dependencies".to_string())
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct AutopilotAction {
     pub response: String,

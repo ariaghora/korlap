@@ -32,6 +32,8 @@ pub struct WorkspaceInfo {
     pub task_title: Option<String>,
     #[serde(default)]
     pub task_description: Option<String>,
+    #[serde(default)]
+    pub source_todo_id: Option<String>,
 }
 
 pub struct AgentHandle {

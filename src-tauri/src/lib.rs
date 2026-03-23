@@ -115,6 +115,7 @@ pub fn run() {
             commands::agent::generate_commit_message,
             commands::agent::suggest_replies,
             commands::agent::prioritize_todos,
+            commands::agent::determine_dependencies,
             commands::agent::interpret_autopilot_command,
             // scripts
             commands::scripts::run_script,
