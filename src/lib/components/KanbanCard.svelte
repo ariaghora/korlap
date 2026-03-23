@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { Play, X, Pencil, Lightbulb, BookOpen, CircleCheck, Circle } from "lucide-svelte";
+  import { Play, X, Trash2, Pencil, Lightbulb, BookOpen, CircleCheck, Circle } from "lucide-svelte";
 
   interface Props {
     type: "todo" | "workspace";
@@ -129,6 +129,11 @@
       <span class="card-name" class:has-title={!!workspace.task_title}>{workspace.task_title ?? workspace.name}</span>
       {#if workspace.status === "running" && !isReviewing}
         <span class="card-elapsed">{elapsed}</span>
+      {/if}
+      {#if onRemove}
+        <button class="ws-remove-btn" onclick={(e) => { e.stopPropagation(); onRemove(); }} title="Remove workspace">
+          <Trash2 size={11} />
+        </button>
       {/if}
     </div>
     {#if workspace.task_description}
@@ -323,6 +328,29 @@
   }
 
   .remove-btn:hover {
+    color: var(--diff-del);
+    background: var(--bg-hover);
+  }
+
+  .ws-remove-btn {
+    display: flex;
+    align-items: center;
+    padding: 0.2rem;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+  }
+
+  .ws-card:hover .ws-remove-btn {
+    opacity: 1;
+  }
+
+  .ws-remove-btn:hover {
     color: var(--diff-del);
     background: var(--bg-hover);
   }
