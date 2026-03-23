@@ -314,7 +314,7 @@ pub async fn git_push(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
-    let (worktree_path, branch, gh_profile) = {
+    let (worktree_path, fallback_branch, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
@@ -324,6 +324,16 @@ pub async fn git_push(
     let gh_token = resolve_gh_token(&gh_profile);
 
     tauri::async_runtime::spawn_blocking(move || {
+        // Use actual git branch — metadata may be stale after a rename failure
+        let branch = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(&worktree_path)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or(fallback_branch);
+
         let mut cmd = git_cmd_with_auth(&worktree_path, &gh_token);
         cmd.args(["push", "-u", "origin", &branch]);
 
