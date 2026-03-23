@@ -29,6 +29,7 @@
     planModeByWorkspace: SvelteMap<string, boolean>;
     thinkingModeByWorkspace: SvelteMap<string, boolean>;
     reviewByWorkspace: SvelteMap<string, ReviewState>;
+    agentTaskByWorkspace: SvelteMap<string, string>;
     repoSettings: RepoSettings | null;
     diffRefreshTrigger: number;
     prStatus: PrStatus | undefined;
@@ -72,6 +73,7 @@
     planModeByWorkspace,
     thinkingModeByWorkspace,
     reviewByWorkspace,
+    agentTaskByWorkspace,
     repoSettings,
     diffRefreshTrigger,
     prStatus,
@@ -401,8 +403,10 @@
             </div>
           {:else}
             <!-- Collapsed pill -->
+            {@const agentTask = agentTaskByWorkspace.get(ws.id)}
             <button
               class="chat-pill"
+              class:chat-pill-active={isAgentRunning}
               onclick={() => { focusedPanel = "chat"; onChatExpandedChange(true); }}
               title="Open chat"
               style={chatDragOffset.x || chatDragOffset.y ? `transform: translate(${chatDragOffset.x}px, ${chatDragOffset.y}px)` : ""}
@@ -412,7 +416,7 @@
               {:else}
                 <MessageSquare size={13} strokeWidth={2} />
               {/if}
-              <span class="chat-pill-label">Chat</span>
+              <span class="chat-pill-label">{#if isAgentRunning && agentTask}{agentTask}{:else}Chat{/if}</span>
               <ChevronUp size={13} />
             </button>
           {/if}
@@ -971,6 +975,23 @@
     border-color: var(--border);
   }
 
+  .chat-pill-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  .chat-pill-active:hover {
+    background: color-mix(in srgb, var(--accent) 85%, #000);
+    border-color: color-mix(in srgb, var(--accent) 85%, #000);
+    color: #fff;
+  }
+
+  .chat-pill-active :global(.status-icon.spinning) {
+    animation: spin 1.5s linear infinite;
+    color: #fff;
+  }
+
   .chat-pill :global(.status-icon.spinning) {
     animation: spin 1.5s linear infinite;
     color: var(--accent);
@@ -978,6 +999,9 @@
 
   .chat-pill-label {
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
   }
 
   .staging-banner {
