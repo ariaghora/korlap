@@ -31,6 +31,7 @@
     cancelGhAuthLogin,
     listGhRepos,
     cloneRepo,
+    createGhRepo,
     setRepoProfile,
     checkRepoGhAccess,
     createStagingWorkspace,
@@ -215,6 +216,12 @@
   let ghAuthInProgress = $state(false);
   let ghAuthCode = $state<string | null>(null);
   let ghSearchTriggered = $state(false);
+  let showCreateForm = $state(false);
+  let createName = $state("");
+  let createPrivate = $state(true);
+  let createDescription = $state("");
+  let createReadme = $state(true);
+  let creating = $state(false);
 
   let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -344,6 +351,33 @@
       addToast(String(e));
     } finally {
       cloning = false;
+    }
+  }
+
+  async function handleCreateRepo() {
+    if (!selectedProfile || !createName.trim()) return;
+    creating = true;
+    try {
+      const result = await createGhRepo(
+        {
+          name: createName.trim(),
+          private: createPrivate,
+          description: createDescription.trim() || null,
+          add_readme: createReadme,
+        },
+        selectedProfile,
+      );
+      if (!repos.find((r) => r.id === result.id)) {
+        repos = [...repos, result];
+      }
+      showCreateForm = false;
+      createName = "";
+      createDescription = "";
+      await selectRepo(result);
+    } catch (e) {
+      addToast(String(e));
+    } finally {
+      creating = false;
     }
   }
 
@@ -1906,11 +1940,64 @@
           {/if}
         </div>
 
-        {#if cloning}
+        {#if cloning || creating}
           <div class="gh-loading">
             <div class="spinner"></div>
-            <span>Cloning repository...</span>
+            <span>{creating ? "Creating repository..." : "Cloning repository..."}</span>
           </div>
+        {:else if selectedProfile && repoSearch.trim() && /^[a-zA-Z0-9._-]+$/.test(repoSearch.trim())}
+          {#if !showCreateForm}
+            <button
+              class="open-repo-btn secondary"
+              onclick={() => { createName = repoSearch.trim(); showCreateForm = true; }}
+            >
+              Create "{repoSearch.trim()}" on GitHub
+            </button>
+          {:else}
+            <div class="create-repo-form">
+              <input
+                type="text"
+                class="create-input"
+                placeholder="Repository name"
+                bind:value={createName}
+              />
+              <input
+                type="text"
+                class="create-input"
+                placeholder="Description (optional)"
+                bind:value={createDescription}
+              />
+              <div class="create-options">
+                <div class="visibility-toggle">
+                  <button
+                    class="vis-btn"
+                    class:selected={createPrivate}
+                    onclick={() => (createPrivate = true)}
+                  >Private</button>
+                  <button
+                    class="vis-btn"
+                    class:selected={!createPrivate}
+                    onclick={() => (createPrivate = false)}
+                  >Public</button>
+                </div>
+                <label class="readme-check">
+                  <input type="checkbox" bind:checked={createReadme} />
+                  Add README
+                </label>
+              </div>
+              <div class="create-actions">
+                <button
+                  class="open-repo-btn"
+                  disabled={!createName.trim() || creating}
+                  onclick={handleCreateRepo}
+                >Create & Open</button>
+                <button
+                  class="open-repo-btn secondary"
+                  onclick={() => (showCreateForm = false)}
+                >Cancel</button>
+              </div>
+            </div>
+          {/if}
         {/if}
 
         {#if selectedProfile}
@@ -2544,6 +2631,94 @@
 
   .open-repo-btn.secondary:hover {
     background: var(--bg-hover);
+  }
+
+  .create-repo-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+  }
+
+  .create-input {
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .create-input:focus {
+    border-color: var(--accent);
+  }
+
+  .create-options {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .visibility-toggle {
+    display: flex;
+    gap: 0;
+  }
+
+  .vis-btn {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.78rem;
+    font-family: inherit;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    background: var(--bg-base);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  .vis-btn:first-child {
+    border-radius: 5px 0 0 5px;
+  }
+
+  .vis-btn:last-child {
+    border-radius: 0 5px 5px 0;
+    border-left: none;
+  }
+
+  .vis-btn.selected {
+    background: var(--accent);
+    color: var(--bg-base);
+    border-color: var(--accent);
+  }
+
+  .vis-btn.selected + .vis-btn {
+    border-left: none;
+  }
+
+  .readme-check {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .readme-check input[type="checkbox"] {
+    accent-color: var(--accent);
+  }
+
+  .create-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
   }
 
   /* ── App layout ──────────────────────────────────── */

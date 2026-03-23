@@ -45,10 +45,15 @@ pub fn detect_default_branch(repo_path: &Path) -> Result<String, String> {
         .map_err(|e| format!("Failed to run git: {}", e))?;
 
     if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        // Empty repos or detached HEAD return empty string or "HEAD"
+        if !branch.is_empty() && branch != "HEAD" {
+            return Ok(branch);
+        }
     }
 
-    Err("Could not detect default branch".into())
+    // Final fallback for empty repos (no commits yet)
+    Ok("main".to_string())
 }
 
 pub fn repo_display_name(repo_path: &Path) -> String {

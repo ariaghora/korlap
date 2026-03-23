@@ -105,6 +105,7 @@ pub fn run() {
             commands::github::cancel_gh_auth_login,
             commands::github::list_gh_repos,
             commands::github::clone_repo,
+            commands::github::create_gh_repo,
             commands::github::check_repo_gh_access,
             commands::github::get_pr_status,
             commands::github::get_pr_template,
