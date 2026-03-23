@@ -118,6 +118,9 @@
   let hasRunScript = $derived(!!repoSettings?.run_script?.trim());
 
   // ── Terminal pane ──────────────────────────────────────────────
+  // ── Floating panel focus (OS-style z-ordering) ──────────────────
+  let focusedPanel = $state<"review" | "chat">("chat");
+
   let terminalPaneWidth = $state(400);
   const TERMINAL_PANE_MIN = 200;
   const TERMINAL_PANE_MAX = 800;
@@ -305,14 +308,21 @@
 
       <!-- Review pill: floats top-right over left pane -->
       {#if selectedWsId && reviewByWorkspace.has(selectedWsId)}
-        <ReviewPill
-          state={reviewByWorkspace.get(selectedWsId)!}
-          onCancel={() => onReviewCancel(selectedWsId!)}
-          onSendToChat={(markdown) => {
-            onChatExpandedChange(true);
-            onReviewSendToChat(selectedWsId!, markdown);
-          }}
-        />
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="floating-panel-wrapper review-pos"
+          class:panel-focused={focusedPanel === "review"}
+          onmousedown={() => { focusedPanel = "review"; }}
+        >
+          <ReviewPill
+            state={reviewByWorkspace.get(selectedWsId)!}
+            onCancel={() => onReviewCancel(selectedWsId!)}
+            onSendToChat={(markdown) => {
+              onChatExpandedChange(true);
+              onReviewSendToChat(selectedWsId!, markdown);
+            }}
+          />
+        </div>
       {/if}
 
       <!-- Chat overlay: floating panel, per-workspace, always mounted -->
@@ -321,7 +331,8 @@
         {@const isAgentRunning = ws.status === "running"}
         {#if isActive}
           {#if chatExpanded}
-            <div class="chat-overlay">
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="chat-overlay" class:panel-focused={focusedPanel === "chat"} onmousedown={() => { focusedPanel = "chat"; }}>
               <div class="chat-overlay-header">
                 <span class="chat-overlay-title">
                   <MessageSquare size={13} strokeWidth={2} />
@@ -358,7 +369,7 @@
             <!-- Collapsed pill -->
             <button
               class="chat-pill"
-              onclick={() => onChatExpandedChange(true)}
+              onclick={() => { focusedPanel = "chat"; onChatExpandedChange(true); }}
               title="Open chat"
             >
               {#if isAgentRunning}
@@ -796,6 +807,22 @@
     z-index: 1;
   }
 
+  /* ── Floating panel focus (OS-style z-ordering) ── */
+
+  .floating-panel-wrapper {
+    position: absolute;
+    z-index: 10;
+  }
+
+  .floating-panel-wrapper.panel-focused {
+    z-index: 11;
+  }
+
+  .floating-panel-wrapper.review-pos {
+    top: 12px;
+    right: 12px;
+  }
+
   /* ── Chat overlay (floating) ───────────────────── */
 
   .chat-overlay {
@@ -814,6 +841,10 @@
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
     overflow: hidden;
+  }
+
+  .chat-overlay.panel-focused {
+    z-index: 11;
   }
 
   .chat-overlay-header {
