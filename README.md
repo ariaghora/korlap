@@ -1,3 +1,7 @@
+> [!WARNING]  
+> This is an alpha quality software. It is usable at least for the maintainer's use cases and workflows.
+> By using this you acknowledge that this tool will undergo tons of changes anytime as the maintainer wishes and deems appropriate.
+
 # Korlap
 
 A macOS app for running multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in parallel, each isolated in its own `git worktree`.
