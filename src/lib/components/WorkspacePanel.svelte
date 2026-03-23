@@ -566,6 +566,7 @@
     align-items: stretch;
     border: 1px solid var(--border-light);
     border-radius: 5px;
+    overflow: hidden;
   }
 
   .pr-link-btn {
