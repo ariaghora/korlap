@@ -18,6 +18,7 @@
     planMode?: boolean;
     thinkingMode?: boolean;
     ready?: boolean;
+    depends_on?: string[];
     created_at: number;
   }
 

@@ -28,6 +28,7 @@ export interface WorkspaceInfo {
   created_at: number;
   task_title?: string | null;
   task_description?: string | null;
+  source_todo_id?: string | null;
 }
 
 export interface ToolUseInfo {
@@ -155,11 +156,13 @@ export async function createWorkspace(
   repoId: string,
   taskTitle?: string,
   taskDescription?: string,
+  sourceTodoId?: string,
 ): Promise<WorkspaceInfo> {
   return invoke<WorkspaceInfo>("create_workspace", {
     repoId,
     taskTitle: taskTitle ?? null,
     taskDescription: taskDescription ?? null,
+    sourceTodoId: sourceTodoId ?? null,
   });
 }
 
@@ -591,6 +594,11 @@ export interface AutopilotAction {
   action_type: string;
   todo_ids: string[];
   reorder: string[];
+}
+
+export async function determineDependencies(todoJson: string): Promise<Record<string, string[]>> {
+  const raw = await invoke<string>("determine_dependencies", { todoJson });
+  return JSON.parse(raw);
 }
 
 export async function interpretAutopilotCommand(

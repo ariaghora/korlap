@@ -37,6 +37,7 @@
     removeStagingWorkspace,
     getSystemResources,
     prioritizeTodos,
+    determineDependencies,
     interpretAutopilotCommand,
     type RepoDetail,
     type RepoSettings,
@@ -68,6 +69,7 @@
   import type { Mention } from "$lib/components/MentionInput.svelte";
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
   import SearchModal from "$lib/components/SearchModal.svelte";
+  import DependencyGraph from "$lib/components/DependencyGraph.svelte";
   import { type ReviewState } from "$lib/components/ReviewPill.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
@@ -137,6 +139,10 @@
     autopilotEvents.push({ id: crypto.randomUUID(), time: Date.now(), type, message, wsId, wsName });
     if (autopilotEvents.length > 200) autopilotEvents.splice(0, autopilotEvents.length - 200);
   }
+
+  // ── Dependency graph overlay ─────────────────────────────
+  let showDepGraph = $state(false);
+  $effect(() => { if (!autopilotEnabled) showDepGraph = false; });
 
   // ── Staging state ──────────────────────────────────────
   let stagingWsId = $state<string | null>(null);
@@ -406,6 +412,7 @@
     planMode?: boolean;
     thinkingMode?: boolean;
     ready?: boolean;
+    depends_on?: string[];
     created_at: number;
   }
   let todos = $state<TodoItem[]>([]);
@@ -748,7 +755,7 @@
         created_at: Date.now() / 1000,
       });
       persistTodos();
-      if (autopilotEnabled) reprioritizeTodos();
+      if (autopilotEnabled) { await updateDependencies(); reprioritizeTodos(); }
     } catch (e) {
       addToast(`Failed to save images: ${e}`);
     }
@@ -768,6 +775,7 @@
       todo.planMode = data.planMode || undefined;
       todo.thinkingMode = data.thinkingMode || undefined;
       persistTodos();
+      if (autopilotEnabled) updateDependencies();
     } catch (e) {
       addToast(`Failed to save images: ${e}`);
     }
@@ -817,7 +825,7 @@
     }
     autopilotPrioritizing = true;
     try {
-      const todoData = readyTodos.map(t => ({ id: t.id, title: t.title, description: t.description }));
+      const todoData = readyTodos.map(t => ({ id: t.id, title: t.title, description: t.description, depends_on: t.depends_on ?? [] }));
       const ordered = await prioritizeTodos(JSON.stringify(todoData));
       autopilotPrioritizedIds = ordered.filter(id => readyTodos.some(t => t.id === id));
       addAutopilotEvent("prioritized", `Prioritized ${autopilotPrioritizedIds.length} tasks`);
@@ -826,6 +834,39 @@
       autopilotPrioritizedIds = readyTodos.map(t => t.id);
     } finally {
       autopilotPrioritizing = false;
+    }
+  }
+
+  // ── Dependency tracking ─────────────────────────────────
+  function isDependencyResolved(depId: string): boolean {
+    // Still in todo list → not even started
+    if (todos.some(t => t.id === depId)) return false;
+    // Find workspace spawned from this todo
+    const ws = workspaces.find(w => w.source_todo_id === depId);
+    if (!ws) return true; // todo deleted without spawning → treat as resolved
+    // Resolved only when PR is merged
+    const pr = prStatusMap.get(ws.id);
+    return pr?.state === "merged";
+  }
+
+  function isTodoBlocked(todo: TodoItem): boolean {
+    return todo.depends_on?.some(depId => !isDependencyResolved(depId)) ?? false;
+  }
+
+  async function updateDependencies() {
+    if (!activeRepo) return;
+    const allTodos = todos.filter(t => t.repo_id === activeRepo!.id);
+    if (allTodos.length <= 1) return;
+    try {
+      const todoData = allTodos.map(t => ({ id: t.id, title: t.title, description: t.description }));
+      const deps = await determineDependencies(JSON.stringify(todoData));
+      for (const todo of allTodos) {
+        const depList = deps[todo.id];
+        todo.depends_on = depList && depList.length > 0 ? depList : undefined;
+      }
+      persistTodos();
+    } catch {
+      // Non-fatal: tasks just won't have dep info
     }
   }
 
@@ -925,8 +966,8 @@
         }
       }
 
-      // 2. Auto-pickup: spawn from next ready TODO if under limit
-      const readyTodos = todos.filter(t => t.ready);
+      // 2. Auto-pickup: spawn from next ready TODO if under limit (skip blocked)
+      const readyTodos = todos.filter(t => t.ready && !isTodoBlocked(t));
       if (activeAgentCount < maxConcurrentAgents && !creatingWsId && readyTodos.length > 0) {
         // Pick from prioritized list, or first ready todo
         const nextId = autopilotPrioritizedIds.find(id => readyTodos.some(t => t.id === id))
@@ -1038,13 +1079,16 @@
 
   // Called when autopilot is toggled on — fetch resources, prioritize, evaluate.
   // NOT a $effect — avoids reactive loops that re-trigger on state mutations.
-  function onAutopilotActivated() {
+  async function onAutopilotActivated() {
     getSystemResources().then(res => {
       // Claude agents are I/O-bound, not memory-hungry. Use total RAM (not available — macOS
       // reports free-minus-cache which is always tiny) and be generous with the ratio.
       maxConcurrentAgents = Math.max(2, Math.min(Math.floor(res.cpu_cores / 2), Math.floor(res.memory_gb / 4)));
     }).catch(() => { maxConcurrentAgents = 3; });
-    reprioritizeTodos();
+    // Dependencies + prioritization must complete before evaluation — otherwise
+    // all tasks spawn unconditionally because depends_on is still empty.
+    await updateDependencies();
+    await reprioritizeTodos();
     rebuildStaging();
     evaluateAutopilot();
   }
@@ -1117,6 +1161,7 @@
       created_at: Date.now() / 1000,
       task_title: todo.title,
       task_description: todo.description || null,
+      source_todo_id: todoId,
     };
     creatingWsId = tempId;
     workspaces.push(placeholder);
@@ -1126,7 +1171,7 @@
     handleRemoveTodo(todoId);
 
     try {
-      const ws = await createWorkspace(repoId, todo.title, todo.description || undefined);
+      const ws = await createWorkspace(repoId, todo.title, todo.description || undefined, todoId);
       const idx = workspaces.findIndex((w) => w.id === tempId);
       if (idx >= 0) workspaces[idx] = ws;
       selectedWsId = ws.id;
@@ -1938,6 +1983,7 @@
       {autopilotEnabled}
       onAutopilotToggle={() => { autopilotEnabled = !autopilotEnabled; if (autopilotEnabled) onAutopilotActivated(); }}
       autopilotStatus={autopilotEnabled ? `${activeAgentCount}/${maxConcurrentAgents} agents · ${todos.filter(t => t.ready).length} queued` : undefined}
+      onShowDepGraph={() => { showDepGraph = !showDepGraph; }}
     />
 
     {#if reviewAlertWs}
@@ -2069,6 +2115,14 @@
       </div>
     </div>
 
+    {#if showDepGraph}
+      <DependencyGraph
+        todos={todoItems}
+        workspaces={activeWorkspaces}
+        {prStatusMap}
+        onClose={() => { showDepGraph = false; }}
+      />
+    {/if}
 
     {#if showSearchModal && selectedWsId}
       <SearchModal

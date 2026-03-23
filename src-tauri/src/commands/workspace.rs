@@ -47,6 +47,7 @@ pub async fn create_workspace(
     repo_id: String,
     task_title: Option<String>,
     task_description: Option<String>,
+    source_todo_id: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {
     let (repo_path, gh_profile) = {
@@ -205,6 +206,7 @@ pub async fn create_workspace(
         created_at: now_unix(),
         task_title,
         task_description,
+        source_todo_id,
     };
 
     // Check if there's a setup script to run

@@ -2,7 +2,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { RepoDetail, WorkspaceInfo } from "$lib/ipc";
   import { syncMain, getRepoHead, checkoutDefaultBranch, checkMainBehind } from "$lib/ipc";
-  import { Settings, Check, Plus, RefreshCw, AlertTriangle, ChevronLeft, Zap } from "lucide-svelte";
+  import { Settings, Check, Plus, RefreshCw, AlertTriangle, ChevronLeft, Zap, Network } from "lucide-svelte";
   import Dropdown from "./Dropdown.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
 
@@ -22,9 +22,10 @@
     autopilotEnabled?: boolean;
     onAutopilotToggle?: () => void;
     autopilotStatus?: string;
+    onShowDepGraph?: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, appMode, onModeChange, onSelectRepo, onSettings, onGoHome, highlightedRepoIndex, onDropdownClose, autopilotEnabled = false, onAutopilotToggle, autopilotStatus }: Props =
+  let { repos, activeRepo, selectedWs, appMode, onModeChange, onSelectRepo, onSettings, onGoHome, highlightedRepoIndex, onDropdownClose, autopilotEnabled = false, onAutopilotToggle, autopilotStatus, onShowDepGraph }: Props =
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
@@ -222,6 +223,15 @@
       Autopilot
       <kbd class="mode-hint">⌘3</kbd>
     </button>
+    {#if autopilotEnabled}
+      <button
+        class="dep-graph-btn"
+        onclick={onShowDepGraph}
+        title="Task dependencies"
+      >
+        <Network size={12} />
+      </button>
+    {/if}
   </div>
 </header>
 
@@ -544,6 +554,26 @@
   @keyframes autopilot-glow {
     0%, 100% { box-shadow: none; }
     50% { box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 25%, transparent); }
+  }
+
+  .dep-graph-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 5px;
+    color: var(--accent);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .dep-graph-btn:hover {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   }
 
   .autopilot-status {
