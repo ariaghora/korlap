@@ -5,7 +5,7 @@
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, Timer } from "lucide-svelte";
+  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, Timer, RefreshCcw } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
@@ -13,6 +13,7 @@
   import TerminalView from "$lib/components/Terminal.svelte";
   import ReviewPill from "$lib/components/ReviewPill.svelte";
   import ResizeHandle from "$lib/components/ResizeHandle.svelte";
+  import { draggable, resizable, type DragOffset } from "$lib/actions";
 
   export type PanelTab = "diff" | "files";
 
@@ -117,9 +118,22 @@
   );
   let hasRunScript = $derived(!!repoSettings?.run_script?.trim());
 
-  // ── Terminal pane ──────────────────────────────────────────────
-  // ── Floating panel focus (OS-style z-ordering) ──────────────────
+  // ── Floating panel focus & drag offsets ─────────────────────────
   let focusedPanel = $state<"review" | "chat">("chat");
+  let reviewDragOffset = $state<DragOffset>({ x: 0, y: 0 });
+  let chatDragOffset = $state<DragOffset>({ x: 0, y: 0 });
+  let chatSize = $state<{ w: number; h: number } | null>(null);
+  let resizeStartDrag = { x: 0, y: 0 };
+
+  function onChatResizeStart(size: { w: number; h: number }) {
+    if (!chatSize) chatSize = size;
+    resizeStartDrag = { ...chatDragOffset };
+  }
+
+  function onChatResize(size: { w: number; h: number }, posDelta: { dx: number; dy: number }) {
+    chatSize = size;
+    chatDragOffset = { x: resizeStartDrag.x + posDelta.dx, y: resizeStartDrag.y + posDelta.dy };
+  }
 
   let terminalPaneWidth = $state(400);
   const TERMINAL_PANE_MIN = 200;
@@ -313,6 +327,7 @@
           class="floating-panel-wrapper review-pos"
           class:panel-focused={focusedPanel === "review"}
           onmousedown={() => { focusedPanel = "review"; }}
+          use:draggable={{ offset: reviewDragOffset, onDrag: (o) => { reviewDragOffset = o; } }}
         >
           <ReviewPill
             state={reviewByWorkspace.get(selectedWsId)!}
@@ -332,19 +347,38 @@
         {#if isActive}
           {#if chatExpanded}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="chat-overlay" class:panel-focused={focusedPanel === "chat"} onmousedown={() => { focusedPanel = "chat"; }}>
+            <div
+              class="chat-overlay"
+              class:panel-focused={focusedPanel === "chat"}
+              onmousedown={() => { focusedPanel = "chat"; }}
+              use:draggable={{ handle: ".chat-overlay-header", offset: chatDragOffset, onDrag: (o) => { chatDragOffset = o; } }}
+              use:resizable={{ minWidth: 380, minHeight: 280, onResizeStart: onChatResizeStart, onResize: onChatResize }}
+              style:width={chatSize ? `${chatSize.w}px` : undefined}
+              style:height={chatSize ? `${chatSize.h}px` : undefined}
+            >
               <div class="chat-overlay-header">
                 <span class="chat-overlay-title">
                   <MessageSquare size={13} strokeWidth={2} />
                   Chat
                 </span>
-                <button
-                  class="chat-overlay-collapse"
-                  onclick={() => onChatExpandedChange(false)}
-                  title="Collapse chat"
-                >
-                  <Minus size={14} />
-                </button>
+                <div class="chat-overlay-actions">
+                  {#if chatDragOffset.x || chatDragOffset.y || chatSize}
+                    <button
+                      class="chat-overlay-btn"
+                      onclick={() => { chatDragOffset = { x: 0, y: 0 }; chatSize = null; }}
+                      title="Reset position and size"
+                    >
+                      <RefreshCcw size={12} />
+                    </button>
+                  {/if}
+                  <button
+                    class="chat-overlay-btn"
+                    onclick={() => onChatExpandedChange(false)}
+                    title="Collapse chat"
+                  >
+                    <Minus size={14} />
+                  </button>
+                </div>
               </div>
               <div class="chat-overlay-body">
                 <ChatPanel
@@ -371,6 +405,7 @@
               class="chat-pill"
               onclick={() => { focusedPanel = "chat"; onChatExpandedChange(true); }}
               title="Open chat"
+              style={chatDragOffset.x || chatDragOffset.y ? `transform: translate(${chatDragOffset.x}px, ${chatDragOffset.y}px)` : ""}
             >
               {#if isAgentRunning}
                 <Loader size={13} class="status-icon spinning" />
@@ -865,7 +900,13 @@
     color: var(--text-secondary);
   }
 
-  .chat-overlay-collapse {
+  .chat-overlay-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .chat-overlay-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -879,7 +920,7 @@
     cursor: pointer;
   }
 
-  .chat-overlay-collapse:hover {
+  .chat-overlay-btn:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
   }
