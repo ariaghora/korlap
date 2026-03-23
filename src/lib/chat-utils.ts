@@ -33,6 +33,8 @@ export interface PastedImage {
 
 export interface ChatPanelApi {
   addMention: (mention: { type: "file" | "folder"; path: string; displayName: string; lineNumber?: number }) => void;
+  /** Insert plain text into the chat input (e.g. a quoted diff block). */
+  insertText: (text: string) => void;
   /** Call when the agent finishes to trigger AI-powered suggestion generation. */
   refreshSuggestions: () => void;
 }

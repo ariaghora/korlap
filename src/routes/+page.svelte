@@ -2017,6 +2017,12 @@
               sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
             }}
             onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
+            onDiffQuote={(text) => {
+              if (selectedWsId) {
+                chatPanelApis.get(selectedWsId)?.insertText(text);
+                chatExpanded = true;
+              }
+            }}
             onReviewCancel={(wsId) => {
               const wasRunning = reviewByWorkspace.get(wsId)?.status === "running";
               reviewByWorkspace.delete(wsId);

@@ -88,6 +88,10 @@
           mentionInputApi?.appendMention(mention);
           mentionInputApi?.focus();
         },
+        insertText: (text: string) => {
+          mentionInputApi?.insertText(text);
+          mentionInputApi?.focus();
+        },
         refreshSuggestions,
       });
     }

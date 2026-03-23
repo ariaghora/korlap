@@ -1,13 +1,15 @@
 <script lang="ts">
   import { getChangedFiles, getDiff, type ChangedFile } from "$lib/ipc";
+  import { MessageSquare } from "lucide-svelte";
   import ResizeHandle from "./ResizeHandle.svelte";
 
   interface Props {
     workspaceId: string;
     refreshTrigger?: number;
+    onQuote?: (text: string) => void;
   }
 
-  let { workspaceId, refreshTrigger = 0 }: Props = $props();
+  let { workspaceId, refreshTrigger = 0, onQuote }: Props = $props();
 
   let files = $state<ChangedFile[]>([]);
   let selectedFile = $state<string | null>(null);
@@ -96,10 +98,14 @@
   interface DiffLine {
     type: "add" | "remove" | "context" | "header" | "hunk";
     text: string;
+    oldNo?: number;
+    newNo?: number;
   }
 
   function parseDiff(raw: string): DiffLine[] {
     if (!raw.trim()) return [];
+    let oldLine = 0;
+    let newLine = 0;
     return raw.split("\n").map((line) => {
       if (
         line.startsWith("+++") ||
@@ -110,15 +116,21 @@
         return { type: "header" as const, text: line };
       }
       if (line.startsWith("@@")) {
+        const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (m) {
+          oldLine = parseInt(m[1], 10);
+          newLine = parseInt(m[2], 10);
+        }
         return { type: "hunk" as const, text: line };
       }
       if (line.startsWith("+")) {
-        return { type: "add" as const, text: line };
+        return { type: "add" as const, text: line, newNo: newLine++ };
       }
       if (line.startsWith("-")) {
-        return { type: "remove" as const, text: line };
+        return { type: "remove" as const, text: line, oldNo: oldLine++ };
       }
-      return { type: "context" as const, text: line };
+      const result: DiffLine = { type: "context" as const, text: line, oldNo: oldLine++, newNo: newLine++ };
+      return result;
     });
   }
 
@@ -150,6 +162,74 @@
       case "A": return "+";
       case "D": return "−";
       default: return "~";
+    }
+  }
+
+  // ── Line selection for quoting ──────────────────────────
+  // Indices are into the `visibleLines` array (lines minus headers)
+  let selStart = $state<number | null>(null);
+  let selEnd = $state<number | null>(null);
+
+  let visibleLines = $derived(
+    lines
+      .map((line, i) => ({ line, idx: i }))
+      .filter(({ line }) => line.type !== "header")
+  );
+
+  let selMin = $derived(selStart !== null && selEnd !== null ? Math.min(selStart, selEnd) : null);
+  let selMax = $derived(selStart !== null && selEnd !== null ? Math.max(selStart, selEnd) : null);
+
+  function handleLineMousedown(visIdx: number, e: MouseEvent) {
+    // Prevent native text selection on shift+click
+    if (e.shiftKey) e.preventDefault();
+  }
+
+  function handleLineClick(visIdx: number, e: MouseEvent) {
+    if (e.shiftKey && selStart !== null) {
+      selEnd = visIdx;
+    } else {
+      selStart = visIdx;
+      selEnd = visIdx;
+    }
+  }
+
+  function clearSelection() {
+    selStart = null;
+    selEnd = null;
+  }
+
+  // Clear selection when file or diff content changes
+  $effect(() => {
+    void selectedFile;
+    void lines;
+    clearSelection();
+  });
+
+  function buildQuotedText(): string {
+    if (selMin === null || selMax === null || !selectedFile) return "";
+    const selected = visibleLines.slice(selMin, selMax + 1);
+    if (selected.length === 0) return "";
+    const diffLines = selected.map(({ line }) => line.text).join("\n");
+
+    // Determine line range for display
+    const first = selected[0].line;
+    const last = selected[selected.length - 1].line;
+    const startLine = first.newNo ?? first.oldNo;
+    const endLine = last.newNo ?? last.oldNo;
+    const range = startLine !== undefined && endLine !== undefined && startLine !== endLine
+      ? `L${startLine}-${endLine}`
+      : startLine !== undefined
+        ? `L${startLine}`
+        : "";
+
+    return `\`${selectedFile}\` ${range}\n\`\`\`diff\n${diffLines}\n\`\`\`\n\n`;
+  }
+
+  function handleQuote() {
+    const text = buildQuotedText();
+    if (text && onQuote) {
+      onQuote(text);
+      clearSelection();
     }
   }
 </script>
@@ -200,16 +280,30 @@
       <ResizeHandle onResize={handleFileSidebarResize} />
 
       <!-- Diff content -->
-      <div class="diff-content">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="diff-content" onclick={(e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.line-no')) clearSelection(); }}>
         {#if selectedFile}
-          {#each lines as line}
-            {#if line.type !== "header"}
-              <div class="diff-line {line.type}">
-                <span class="diff-gutter">{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</span>
-                <span class="diff-text">{line.type === "hunk" ? line.text : line.text.slice(1) || " "}</span>
-              </div>
-            {/if}
+          {#each visibleLines as { line, idx: _origIdx }, visIdx}
+            {@const selected = selMin !== null && selMax !== null && visIdx >= selMin && visIdx <= selMax}
+            <div class="diff-line {line.type}" class:selected>
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span class="line-no old" onmousedown={(e: MouseEvent) => handleLineMousedown(visIdx, e)} onclick={(e: MouseEvent) => { e.stopPropagation(); handleLineClick(visIdx, e); }}>{line.oldNo ?? ""}</span>
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span class="line-no new" onmousedown={(e: MouseEvent) => handleLineMousedown(visIdx, e)} onclick={(e: MouseEvent) => { e.stopPropagation(); handleLineClick(visIdx, e); }}>{line.newNo ?? ""}</span>
+              <span class="diff-gutter">{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</span>
+              <span class="diff-text">{line.type === "hunk" ? line.text : line.text.slice(1) || " "}</span>
+            </div>
           {/each}
+
+          {#if selMin !== null && onQuote}
+            <button class="quote-btn" onclick={handleQuote}>
+              <MessageSquare size={12} />
+              Quote in Chat
+            </button>
+          {/if}
         {:else}
           <div class="diff-empty">Select a file</div>
         {/if}
@@ -423,6 +517,21 @@
     font-size: 0.72rem;
   }
 
+  .line-no {
+    width: 4ch;
+    flex-shrink: 0;
+    text-align: right;
+    color: var(--text-dim);
+    opacity: 0.5;
+    user-select: none;
+    padding-right: 0.4ch;
+  }
+
+  .line-no.new {
+    border-right: 1px solid var(--border);
+    margin-right: 0.5ch;
+  }
+
   .diff-gutter {
     width: 1.5ch;
     flex-shrink: 0;
@@ -433,5 +542,54 @@
 
   .diff-text {
     flex: 1;
+  }
+
+  /* ── Line selection ──────────────────────── */
+
+  .line-no {
+    cursor: pointer;
+  }
+
+  .line-no:hover {
+    opacity: 0.9;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .diff-line.selected {
+    background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
+    outline: none;
+  }
+
+  .diff-line.selected .line-no {
+    opacity: 0.9;
+    color: var(--accent);
+  }
+
+  /* ── Quote button ──────────────────────── */
+
+  .quote-btn {
+    position: sticky;
+    bottom: 8px;
+    left: 50%;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0.5rem auto 0;
+    padding: 0.35rem 0.7rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    color: var(--accent);
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    z-index: 5;
+  }
+
+  .quote-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
   }
 </style>
