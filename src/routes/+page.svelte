@@ -105,6 +105,7 @@
   let showSearchModal = $state(false);
   let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
   let reviewByWorkspace = new SvelteMap<string, ReviewState>();
+  let agentTaskByWorkspace = new SvelteMap<string, string>();
   let gitOpInProgress = new SvelteMap<string, boolean>();
   let baseBehindMap = new SvelteMap<string, number>();
   let updatingBranchMap = new SvelteMap<string, boolean>();
@@ -712,6 +713,7 @@
       updatingBranchMap.clear();
       planModeByWorkspace.clear();
       thinkingModeByWorkspace.clear();
+      agentTaskByWorkspace.clear();
       autopilotByRepo.delete(repoId);
       todos = [];
       activeRepo = repos.length > 0 ? repos[0] : null;
@@ -1377,9 +1379,14 @@
           );
           if (event.tool_uses.length > 0) {
             diffRefreshTrigger++;
+            const last = event.tool_uses[event.tool_uses.length - 1];
+            agentTaskByWorkspace.set(wsId, formatToolTask(last.name, last.input_preview));
+          } else if (event.text.trim()) {
+            agentTaskByWorkspace.set(wsId, "Thinking...");
           }
         } else if (event.type === "done") {
           setSending(wsId, false);
+          agentTaskByWorkspace.delete(wsId);
           diffRefreshTrigger++;
           const doneRefresh = Promise.all([
             refreshChangeCounts(wsId),
@@ -1413,6 +1420,7 @@
         } else if (event.type === "error") {
           addToast(event.message);
           setSending(wsId, false);
+          agentTaskByWorkspace.delete(wsId);
           pendingDrain.delete(wsId);
           if (autopilotEnabled) {
             autopilotErrorWs.add(wsId);
@@ -2118,6 +2126,7 @@
             {planModeByWorkspace}
             {thinkingModeByWorkspace}
             {reviewByWorkspace}
+            {agentTaskByWorkspace}
             {repoSettings}
             {diffRefreshTrigger}
             prStatus={selectedWsId ? prStatusMap.get(selectedWsId) : undefined}
