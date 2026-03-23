@@ -456,7 +456,7 @@ pub async fn get_pr_status(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<PrStatus, String> {
-    let (worktree_path, branch, gh_profile) = {
+    let (worktree_path, fallback_branch, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
@@ -468,6 +468,16 @@ pub async fn get_pr_status(
             .ok_or("Repo not found")?;
         (ws.worktree_path.clone(), ws.branch.clone(), repo.gh_profile.clone())
     };
+
+    // Use actual git branch — metadata may be stale after a rename failure
+    let branch = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(&worktree_path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or(fallback_branch);
 
     // Resolve GH token outside the lock to avoid blocking other commands
     let gh_token = if let Some(ref profile) = gh_profile {
