@@ -8,16 +8,17 @@
 
   interface Props {
     workspaceId: string;
+    visible?: boolean;
   }
 
-  let { workspaceId }: Props = $props();
+  let { workspaceId, visible = true }: Props = $props();
 
   let containerEl: HTMLDivElement | undefined = $state();
   let term: Terminal | undefined;
   let fitAddon: FitAddon | undefined;
   let resizeObserver: ResizeObserver | undefined;
   let opened = false;
-  let fitRafId: number | undefined;
+  let fitDebounceId: ReturnType<typeof setTimeout> | undefined;
 
   function onThemeChange() {
     if (term) {
@@ -27,7 +28,6 @@
 
   function initTerminal() {
     if (!containerEl || opened) return;
-    // Don't open if container is hidden (zero dimensions)
     if (containerEl.offsetHeight === 0) return;
 
     term = new Terminal({
@@ -43,20 +43,17 @@
     fitAddon.fit();
     opened = true;
 
-    // Send keystrokes to PTY
     term.onData((data) => {
       const bytes = Array.from(new TextEncoder().encode(data));
       writeTerminal(workspaceId, bytes).catch(() => {});
     });
 
-    // Open PTY and stream output
     openTerminal(workspaceId, (data: number[]) => {
       if (term) {
         term.write(new Uint8Array(data));
       }
     })
       .then(() => {
-        // Sync PTY size with actual xterm dimensions (PTY defaults to 24x80)
         if (term) {
           resizeTerminal(workspaceId, term.rows, term.cols).catch(() => {});
         }
@@ -68,37 +65,45 @@
       });
   }
 
+  // Init when visible prop transitions to true (parent controls display)
+  $effect(() => {
+    if (visible && !opened && containerEl) {
+      // rAF ensures layout has settled after display:none → display:flex
+      const id = requestAnimationFrame(() => {
+        if (!opened && containerEl && containerEl.offsetHeight > 0) {
+          initTerminal();
+        }
+      });
+      return () => cancelAnimationFrame(id);
+    }
+  });
+
   onMount(() => {
     if (!containerEl) return;
 
-    // Listen for theme changes (color scheme + theme picker)
     window.addEventListener("korlap-theme-change", onThemeChange);
 
-    // Use ResizeObserver to detect when container becomes visible.
-    // Guard fit() against zero dimensions (display:none when tab not active).
+    // ResizeObserver handles fit() on resize. Also inits if visible at mount.
     resizeObserver = new ResizeObserver(() => {
       if (!containerEl || containerEl.offsetHeight === 0) return;
       if (!opened) {
         initTerminal();
       } else if (fitAddon && term) {
-        // Debounce fit() to next frame to avoid ResizeObserver loop warnings.
-        // fit() mutates the DOM which can trigger another resize notification
-        // in the same observation cycle — deferring breaks the loop.
-        if (fitRafId !== undefined) cancelAnimationFrame(fitRafId);
-        fitRafId = requestAnimationFrame(() => {
-          fitRafId = undefined;
+        if (fitDebounceId !== undefined) clearTimeout(fitDebounceId);
+        fitDebounceId = setTimeout(() => {
+          fitDebounceId = undefined;
           if (fitAddon && term) {
             fitAddon.fit();
             resizeTerminal(workspaceId, term.rows, term.cols).catch(() => {});
           }
-        });
+        }, 100);
       }
     });
     resizeObserver.observe(containerEl);
   });
 
   onDestroy(() => {
-    if (fitRafId !== undefined) cancelAnimationFrame(fitRafId);
+    if (fitDebounceId !== undefined) clearTimeout(fitDebounceId);
     window.removeEventListener("korlap-theme-change", onThemeChange);
     resizeObserver?.disconnect();
     term?.dispose();
