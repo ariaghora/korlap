@@ -269,40 +269,34 @@ pub async fn list_gh_repos(profile: String, search: Option<String>) -> Result<Ve
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
-#[tauri::command]
-pub fn clone_repo(
-    clone_url: String,
-    repo_name: String,
-    dest_path: Option<String>,
-    profile: String,
+/// Shared helper: clone a repo and register it in app state.
+pub(super) fn clone_and_register(
+    clone_url: &str,
+    repo_name: &str,
+    dest_path: Option<&str>,
+    profile: &str,
+    token: &Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<super::repo::RepoDetail, String> {
-    let token = resolve_gh_token(&Some(profile.clone()));
-
-    // Determine destination
-    let dest = if let Some(ref p) = dest_path {
+    let dest = if let Some(p) = dest_path {
         std::path::PathBuf::from(p)
     } else {
-        // Default to ~/Developer/<repo-name>
         let home = std::env::var("HOME").map_err(|_| "Cannot determine HOME directory")?;
-        std::path::PathBuf::from(home).join("Developer").join(&repo_name)
+        std::path::PathBuf::from(home).join("Developer").join(repo_name)
     };
 
     if dest.exists() {
-        // If it already exists and is a git repo, just add it
         if dest.join(".git").exists() {
-            return super::repo::register_repo(dest, Some(profile), state);
+            return super::repo::register_repo(dest, Some(profile.to_string()), state);
         }
         return Err(format!("Destination already exists: {}", dest.display()));
     }
 
-    // Create parent dir if needed
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
-    // Clone with token auth
     let mut cmd = std::process::Command::new("git");
     if let Some(ref t) = token {
         cmd.args([
@@ -318,7 +312,7 @@ pub fn clone_repo(
             ),
         ]);
     }
-    cmd.args(["clone", &clone_url, &dest.to_string_lossy()]);
+    cmd.args(["clone", clone_url, &dest.to_string_lossy()]);
     inject_shell_env(&mut cmd);
 
     let output = cmd.output().map_err(|e| format!("Failed to run git clone: {}", e))?;
@@ -327,7 +321,85 @@ pub fn clone_repo(
         return Err(format!("git clone failed: {}", stderr));
     }
 
-    super::repo::register_repo(dest, Some(profile), state)
+    super::repo::register_repo(dest, Some(profile.to_string()), state)
+}
+
+#[tauri::command]
+pub fn clone_repo(
+    clone_url: String,
+    repo_name: String,
+    dest_path: Option<String>,
+    profile: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<super::repo::RepoDetail, String> {
+    let token = resolve_gh_token(&Some(profile.clone()));
+    clone_and_register(
+        &clone_url,
+        &repo_name,
+        dest_path.as_deref(),
+        &profile,
+        &token,
+        state,
+    )
+}
+
+// ── Create repo on GitHub ────────────────────────────────────────────
+
+#[derive(Clone, serde::Deserialize)]
+pub struct CreateRepoOptions {
+    pub name: String,
+    pub private: bool,
+    pub description: Option<String>,
+    pub add_readme: bool,
+}
+
+#[tauri::command]
+pub fn create_gh_repo(
+    options: CreateRepoOptions,
+    profile: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<super::repo::RepoDetail, String> {
+    let token = resolve_gh_token(&Some(profile.clone()));
+
+    let full_name = format!("{}/{}", profile, options.name);
+
+    // Create the repo on GitHub
+    let mut cmd = std::process::Command::new("gh");
+    cmd.args(["repo", "create", &full_name]);
+    if options.private {
+        cmd.arg("--private");
+    } else {
+        cmd.arg("--public");
+    }
+    if let Some(ref desc) = options.description {
+        if !desc.is_empty() {
+            cmd.args(["-d", desc]);
+        }
+    }
+    if options.add_readme {
+        cmd.arg("--add-readme");
+    }
+    inject_shell_env(&mut cmd);
+    if let Some(ref t) = token {
+        cmd.env("GH_TOKEN", t);
+    }
+
+    let output = cmd.output().map_err(|e| format!("Failed to run gh: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!("Failed to create repository: {}", stderr));
+    }
+
+    // Clone the newly created repo
+    let clone_url = format!("git@github.com:{}.git", full_name);
+    clone_and_register(
+        &clone_url,
+        &options.name,
+        None,
+        &profile,
+        &token,
+        state,
+    )
 }
 
 /// Check which connected GH profile has access to the repo at `path`.

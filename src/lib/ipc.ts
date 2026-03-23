@@ -133,6 +133,20 @@ export async function cloneRepo(
   });
 }
 
+export interface CreateRepoOptions {
+  name: string;
+  private: boolean;
+  description: string | null;
+  add_readme: boolean;
+}
+
+export async function createGhRepo(
+  options: CreateRepoOptions,
+  profile: string,
+): Promise<RepoDetail> {
+  return invoke<RepoDetail>("create_gh_repo", { options, profile });
+}
+
 export async function checkRepoGhAccess(
   path: string,
   profiles: string[],
