@@ -432,7 +432,7 @@
     new Set([...reviewByWorkspace.entries()].filter(([, r]) => r.status === "running").map(([id]) => id)),
   );
   let activeWorkspaces = $derived(
-    [...workspaces].sort((a, b) => a.created_at - b.created_at),
+    [...workspaces].filter((ws) => ws.id !== stagingWsId).sort((a, b) => a.created_at - b.created_at),
   );
 
   // ── Kanban derived state ────────────────────────────────
@@ -989,10 +989,12 @@
     if (!activeRepo || rebuildingStaging) return;
     if (reviewWs.length === 0) {
       if (stagingWsId) {
+        const removedId = stagingWsId;
         try {
           await removeStagingWorkspace(activeRepo.id);
-          workspaces = workspaces.filter(w => w.id !== stagingWsId);
+          workspaces = workspaces.filter(w => w.id !== removedId);
         } catch { /* ignore */ }
+        if (selectedWsId === removedId) selectedWsId = null;
         stagingWsId = null;
         stagingError = null;
         stagingMergedBranches = [];
@@ -1006,8 +1008,10 @@
     try {
       const result = await createStagingWorkspace(activeRepo.id, branchNames);
       // Remove old staging from workspaces if different id
-      if (stagingWsId && stagingWsId !== result.workspace.id) {
-        workspaces = workspaces.filter(w => w.id !== stagingWsId);
+      const oldStagingId = stagingWsId;
+      if (oldStagingId && oldStagingId !== result.workspace.id) {
+        workspaces = workspaces.filter(w => w.id !== oldStagingId);
+        if (selectedWsId === oldStagingId) selectedWsId = result.workspace.id;
       }
       stagingWsId = result.workspace.id;
       stagingMergedBranches = result.merged_branches;

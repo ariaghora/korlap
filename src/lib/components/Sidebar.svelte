@@ -40,7 +40,7 @@
   }
 
   let activeWorkspaces = $derived(
-    [...workspaces].sort((a, b) => a.created_at - b.created_at),
+    [...workspaces].filter((ws) => ws.id !== stagingWsId).sort((a, b) => a.created_at - b.created_at),
   );
 
   type GroupKey = "active" | "review" | "done";
