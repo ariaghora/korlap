@@ -14,6 +14,7 @@
   export interface MentionInputApi {
     insertMention: (mention: Mention) => void;
     appendMention: (mention: Mention) => void;
+    insertText: (text: string) => void;
     focus: () => void;
     submit: () => void;
     getValue: () => MentionInputValue;
@@ -112,9 +113,30 @@
     placeCursorAfter(spacer);
   }
 
+  function insertText(text: string) {
+    if (!editorEl) return;
+    // Split on newlines and interleave text nodes with <br> elements
+    // so line breaks render correctly in contenteditable
+    const parts = text.split("\n");
+    let lastNode: Node | undefined;
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        const br = document.createElement("br");
+        editorEl.appendChild(br);
+        lastNode = br;
+      }
+      if (parts[i]) {
+        const textNode = document.createTextNode(parts[i]);
+        editorEl.appendChild(textNode);
+        lastNode = textNode;
+      }
+    }
+    if (lastNode) placeCursorAfter(lastNode);
+  }
+
   // Expose API via bindable ref
   $effect(() => {
-    ref = { insertMention, appendMention, focus, submit: handleSubmit, getValue: serialize };
+    ref = { insertMention, appendMention, insertText, focus, submit: handleSubmit, getValue: serialize };
   });
 
   function serialize(): MentionInputValue {

@@ -53,6 +53,7 @@
     defaultBranch: string;
     chatExpanded: boolean;
     onChatExpandedChange: (expanded: boolean) => void;
+    onDiffQuote?: (text: string) => void;
     isStaging?: boolean;
     stagingMergedCount?: number;
     stagingConflictingCount?: number;
@@ -95,6 +96,7 @@
     defaultBranch,
     chatExpanded,
     onChatExpandedChange,
+    onDiffQuote,
     isStaging = false,
     stagingMergedCount = 0,
     stagingConflictingCount = 0,
@@ -267,6 +269,7 @@
               <DiffViewer
                 workspaceId={selectedWs.id}
                 refreshTrigger={diffRefreshTrigger}
+                onQuote={onDiffQuote}
               />
             </div>
           {/if}
