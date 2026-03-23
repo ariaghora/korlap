@@ -21,7 +21,7 @@
     isReviewing?: boolean;
     isCreating?: boolean;
     // Common
-    onClick?: () => void;
+    onClick?: (e: MouseEvent) => void;
     onAction?: () => void;
     onEdit?: () => void;
     onRemove?: () => void;
@@ -118,7 +118,7 @@
 {:else if workspace}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="card ws-card" onclick={onClick}>
+  <div class="card ws-card" onclick={(e) => onClick?.(e)}>
     <div class="card-top" class:has-title={!!workspace.task_title}>
       <span
         class="ws-dot"
