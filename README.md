@@ -1,6 +1,8 @@
 > [!WARNING]  
 > This is an alpha-quality software, where major parts of the code was written by Claude. It is usable at least for the maintainer's use cases and workflows.
 > By using this you acknowledge that this tool will undergo tons of changes anytime as the maintainer wishes and deems appropriate.
+>
+> The author will agressively reject most PRs, since he's too tired and doesn't want to maintain codes produced by himself (with Claude under his control).
 
 # Korlap
 
