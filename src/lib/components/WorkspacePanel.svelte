@@ -5,15 +5,16 @@
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX } from "lucide-svelte";
+  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, Timer } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
   import FileBrowser from "$lib/components/FileBrowser.svelte";
   import TerminalView from "$lib/components/Terminal.svelte";
   import ReviewPill from "$lib/components/ReviewPill.svelte";
+  import ResizeHandle from "$lib/components/ResizeHandle.svelte";
 
-  export type PanelTab = "chat" | "diff" | "files" | "terminal";
+  export type PanelTab = "diff" | "files";
 
   interface Props {
     activeTab: PanelTab;
@@ -49,13 +50,16 @@
     onChatReady: (wsId: string, api: ChatPanelApi) => void;
     onReviewCancel: (wsId: string) => void;
     onReviewSendToChat: (wsId: string, markdown: string) => void;
+    defaultBranch: string;
+    chatExpanded: boolean;
+    onChatExpandedChange: (expanded: boolean) => void;
     isStaging?: boolean;
     stagingMergedCount?: number;
     stagingConflictingCount?: number;
   }
 
   let {
-    activeTab = $bindable("chat"),
+    activeTab = $bindable("diff"),
     fileNavigatePath = $bindable(null),
     fileNavigateLine = $bindable(null),
     selectedWs,
@@ -88,13 +92,16 @@
     onChatReady,
     onReviewCancel,
     onReviewSendToChat,
+    defaultBranch,
+    chatExpanded,
+    onChatExpandedChange,
     isStaging = false,
     stagingMergedCount = 0,
     stagingConflictingCount = 0,
   }: Props = $props();
 
   let availableTabs = $derived(
-    isStaging ? ["files", "terminal"] as const : ["chat", "diff", "files", "terminal"] as const
+    isStaging ? ["files"] as const : ["diff", "files"] as const
   );
 
   let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
@@ -107,6 +114,15 @@
     selectedWsId ? scriptStatusMap.get(selectedWsId) ?? "idle" : "idle"
   );
   let hasRunScript = $derived(!!repoSettings?.run_script?.trim());
+
+  // ── Terminal pane ──────────────────────────────────────────────
+  let terminalPaneWidth = $state(400);
+  const TERMINAL_PANE_MIN = 200;
+  const TERMINAL_PANE_MAX = 800;
+
+  function handleTerminalResize(delta: number) {
+    terminalPaneWidth = Math.min(TERMINAL_PANE_MAX, Math.max(TERMINAL_PANE_MIN, terminalPaneWidth - delta));
+  }
 
   function handleRunScript() {
     if (!selectedWs || !repoSettings?.run_script?.trim()) return;
@@ -136,28 +152,13 @@
 
 <main class="panel">
   {#if selectedWs}
-    <div class="tab-bar">
-      <div class="tabs">
-        {#each availableTabs as tab}
-          <button
-            class="tab"
-            class:active={activeTab === tab}
-            onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") { fileNavigatePath = null; fileNavigateLine = null; } }}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            {#if tab === "diff" && changeCounts.get(selectedWs.id)}
-              {@const cc = changeCounts.get(selectedWs.id)}
-              {#if cc && (cc.additions > 0 || cc.deletions > 0)}
-                <span class="diff-badge">
-                  <span class="diff-add">+{cc.additions}</span>
-                  <span class="diff-del">-{cc.deletions}</span>
-                </span>
-              {/if}
-            {/if}
-          </button>
-        {/each}
-      </div>
-
+    <!-- Action bar: breadcrumb + Run + PR actions -->
+    <div class="action-bar">
+      <span class="breadcrumb">
+        <span class="breadcrumb-branch">{selectedWs.branch}</span>
+        <span class="breadcrumb-sep">›</span>
+        <span class="breadcrumb-base">{defaultBranch}</span>
+      </span>
       {#if hasRunScript}
         <button
           class="run-script-btn"
@@ -238,73 +239,155 @@
       </div>
     {/if}
     <div class="tab-content">
-      <!-- Chat: always mounted, stacked via absolute positioning.
-           Visibility toggle = no reflow. display:none → flex forces full layout recomputation. -->
-      {#each activeWorkspaces as ws (ws.id)}
-        {@const isVisible = activeTab === "chat" && ws.id === selectedWsId}
-        <div
-          class="ws-chat-layer"
-          class:visible={isVisible}
-          inert={!isVisible}
-        >
-          <ChatPanel
-            workspaceId={ws.id}
-            creating={ws.id === creatingWsId}
-            planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
-            thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
-            queue={getQueueItems(ws.id)}
-            onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
-            onSendImmediate={(prompt) => onSendImmediate(prompt)}
-            {onStop}
-            onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
-            onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
-            onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}
-            onExecutePlan={() => onExecutePlan(ws.id)}
-            onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
-            onReady={(api) => onChatReady(ws.id, api)}
-          />
-          {#if reviewByWorkspace.has(ws.id)}
-            <ReviewPill
-              state={reviewByWorkspace.get(ws.id)!}
-              onCancel={() => onReviewCancel(ws.id)}
-              onSendToChat={(markdown) => {
-                activeTab = "chat";
-                onReviewSendToChat(ws.id, markdown);
-              }}
-            />
+      <!-- Left pane: Diff / Files -->
+      <div class="content-left">
+        <div class="pane-tabs">
+          {#each availableTabs as tab}
+            <button
+              class="pane-tab"
+              class:active={activeTab === tab}
+              onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") { fileNavigatePath = null; fileNavigateLine = null; } }}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {#if tab === "diff" && changeCounts.get(selectedWs.id)}
+                {@const cc = changeCounts.get(selectedWs.id)}
+                {#if cc && (cc.additions > 0 || cc.deletions > 0)}
+                  <span class="diff-badge">
+                    <span class="diff-add">+{cc.additions}</span>
+                    <span class="diff-del">-{cc.deletions}</span>
+                  </span>
+                {/if}
+              {/if}
+            </button>
+          {/each}
+        </div>
+        <div class="content-left-body">
+          {#if activeTab === "diff" && selectedWs}
+            <div class="ws-tab-container active-layer">
+              <DiffViewer
+                workspaceId={selectedWs.id}
+                refreshTrigger={diffRefreshTrigger}
+              />
+            </div>
+          {/if}
+
+          {#if activeTab === "files" && selectedWs}
+            <div class="ws-tab-container active-layer">
+              <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} navigateToLine={fileNavigateLine} />
+            </div>
           {/if}
         </div>
-      {/each}
+      </div>
 
-      <!-- Diff/Terminal: mount on demand, positioned absolute to fill tab-content -->
-      {#if activeTab === "diff" && selectedWs}
-        <div class="ws-tab-container active-layer">
-          <DiffViewer
-            workspaceId={selectedWs.id}
-            refreshTrigger={diffRefreshTrigger}
-          />
+      <ResizeHandle onResize={handleTerminalResize} />
+
+      <!-- Right pane: Terminal -->
+      <div class="terminal-pane" style="width: {terminalPaneWidth}px">
+        <div class="pane-tabs">
+          <button class="pane-tab active">Terminal</button>
         </div>
+        <div class="terminal-body">
+          {#each activeWorkspaces as ws (ws.id)}
+            {@const isVisible = ws.id === selectedWsId}
+            <div
+              class="ws-terminal-layer"
+              class:visible={isVisible}
+              inert={!isVisible}
+            >
+              <TerminalView workspaceId={ws.id} visible={isVisible} />
+            </div>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Review pill: floats top-right over left pane -->
+      {#if selectedWsId && reviewByWorkspace.has(selectedWsId)}
+        <ReviewPill
+          state={reviewByWorkspace.get(selectedWsId)!}
+          onCancel={() => onReviewCancel(selectedWsId!)}
+          onSendToChat={(markdown) => {
+            onChatExpandedChange(true);
+            onReviewSendToChat(selectedWsId!, markdown);
+          }}
+        />
       {/if}
 
-      <!-- Files: mount on demand like diff -->
-      {#if activeTab === "files" && selectedWs}
-        <div class="ws-tab-container active-layer">
-          <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} navigateToLine={fileNavigateLine} />
-        </div>
-      {/if}
-
-      <!-- Terminal: always mounted per workspace, toggle display.
-           Uses display:none (not visibility:hidden) so xterm.js only
-           inits when it has real dimensions via ResizeObserver. -->
+      <!-- Chat overlay: floating panel, per-workspace, always mounted -->
       {#each activeWorkspaces as ws (ws.id)}
-        {@const isVisible = activeTab === "terminal" && ws.id === selectedWsId}
-        <div
-          class="ws-terminal-layer"
-          class:visible={isVisible}
-          inert={!isVisible}
-        >
-          <TerminalView workspaceId={ws.id} />
-        </div>
+        {@const isActive = ws.id === selectedWsId}
+        {@const isAgentRunning = ws.status === "running"}
+        {#if isActive}
+          {#if chatExpanded}
+            <div class="chat-overlay">
+              <div class="chat-overlay-header">
+                <span class="chat-overlay-title">
+                  <MessageSquare size={13} strokeWidth={2} />
+                  Chat
+                </span>
+                <button
+                  class="chat-overlay-collapse"
+                  onclick={() => onChatExpandedChange(false)}
+                  title="Collapse chat"
+                >
+                  <Minus size={14} />
+                </button>
+              </div>
+              <div class="chat-overlay-body">
+                <ChatPanel
+                  workspaceId={ws.id}
+                  creating={ws.id === creatingWsId}
+                  planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
+                  thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
+                  queue={getQueueItems(ws.id)}
+                  onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
+                  onSendImmediate={(prompt) => onSendImmediate(prompt)}
+                  {onStop}
+                  onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
+                  onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
+                  onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}
+                  onExecutePlan={() => onExecutePlan(ws.id)}
+                  onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
+                  onReady={(api) => onChatReady(ws.id, api)}
+                />
+              </div>
+            </div>
+          {:else}
+            <!-- Collapsed pill -->
+            <button
+              class="chat-pill"
+              onclick={() => onChatExpandedChange(true)}
+              title="Open chat"
+            >
+              {#if isAgentRunning}
+                <Loader size={13} class="status-icon spinning" />
+              {:else}
+                <MessageSquare size={13} strokeWidth={2} />
+              {/if}
+              <span class="chat-pill-label">Chat</span>
+              <ChevronUp size={13} />
+            </button>
+          {/if}
+        {:else}
+          <!-- Hidden but mounted for non-active workspaces to preserve state -->
+          <div class="chat-overlay-hidden" inert>
+            <ChatPanel
+              workspaceId={ws.id}
+              creating={ws.id === creatingWsId}
+              planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
+              thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
+              queue={getQueueItems(ws.id)}
+              onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
+              onSendImmediate={(prompt) => onSendImmediate(prompt)}
+              {onStop}
+              onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
+              onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
+              onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}
+              onExecutePlan={() => onExecutePlan(ws.id)}
+              onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
+              onReady={(api) => onChatReady(ws.id, api)}
+            />
+          </div>
+        {/if}
       {/each}
     </div>
   {:else}
@@ -333,32 +416,67 @@
     font-size: 0.85rem;
   }
 
-  /* ── Tab bar ───────────────────────────────────── */
+  /* ── Action bar (top) ──────────────────────────── */
 
-  .tab-bar {
+  .action-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 0.5rem;
     padding: 0 1rem;
     height: 38px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
-  .tabs {
+  .breadcrumb {
+    font-size: 0.75rem;
+    color: var(--text-dim);
     display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .breadcrumb-branch {
+    color: var(--accent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .breadcrumb-sep {
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .breadcrumb-base {
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  /* ── Pane tab bars (shared by left + right panes) ── */
+
+  .pane-tabs {
+    display: flex;
+    align-items: center;
+    padding: 0 0.5rem;
+    height: 30px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
     gap: 0.15rem;
   }
 
-  .tab {
-    padding: 0.35rem 0.65rem;
+  .pane-tab {
+    padding: 0.25rem 0.55rem;
     background: transparent;
     border: none;
-    border-radius: 5px;
+    border-radius: 4px;
     color: var(--text-dim);
     cursor: pointer;
     font-family: inherit;
-    font-size: 0.82rem;
+    font-size: 0.72rem;
     font-weight: 500;
     display: flex;
     align-items: center;
@@ -380,12 +498,12 @@
     color: var(--diff-del);
   }
 
-  .tab:hover {
+  .pane-tab:hover {
     color: var(--text-primary);
     background: var(--bg-hover);
   }
 
-  .tab.active {
+  .pane-tab.active {
     color: var(--text-bright);
     background: var(--border);
   }
@@ -610,27 +728,25 @@
   .tab-content {
     flex: 1;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     min-height: 0;
     position: relative;
   }
 
-  /* Chat layers: stacked absolutely so all stay laid out.
-     Switching = visibility toggle (compositor-only, no reflow). */
-  .ws-chat-layer {
-    position: absolute;
-    inset: 0;
+  /* ── Left pane: Diff / Files ────────────────────── */
+
+  .content-left {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    visibility: hidden;
-    pointer-events: none;
-    z-index: 0;
+    min-width: 0;
+    min-height: 0;
   }
 
-  .ws-chat-layer.visible {
-    visibility: visible;
-    pointer-events: auto;
-    z-index: 1;
+  .content-left-body {
+    flex: 1;
+    position: relative;
+    min-height: 0;
   }
 
   .ws-tab-container {
@@ -639,11 +755,26 @@
     min-height: 0;
   }
 
-  /* Diff/terminal: also absolute to coexist with stacked chat layers */
   .ws-tab-container.active-layer {
     position: absolute;
     inset: 0;
-    z-index: 2;
+    z-index: 1;
+  }
+
+  /* ── Right pane: Terminal ────────────────────────── */
+
+  .terminal-pane {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    min-height: 0;
+  }
+
+
+  .terminal-body {
+    flex: 1;
+    position: relative;
+    min-height: 0;
   }
 
   /* Terminal layers: kept alive per workspace, toggled via display.
@@ -658,7 +789,119 @@
 
   .ws-terminal-layer.visible {
     display: flex;
-    z-index: 2;
+    z-index: 1;
+  }
+
+  /* ── Chat overlay (floating) ───────────────────── */
+
+  .chat-overlay {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    width: 380px;
+    height: 55%;
+    min-height: 280px;
+    max-height: calc(100% - 24px);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-base);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+  }
+
+  .chat-overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.65rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .chat-overlay-title {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .chat-overlay-collapse {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .chat-overlay-collapse:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .chat-overlay-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* Hidden chat panels for non-active workspaces (preserve state) */
+  .chat-overlay-hidden {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  /* ── Collapsed chat pill ───────────────────────── */
+
+  .chat-pill {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.65rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: 20px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .chat-pill:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border);
+  }
+
+  .chat-pill :global(.status-icon.spinning) {
+    animation: spin 1.5s linear infinite;
+    color: var(--accent);
+  }
+
+  .chat-pill-label {
+    white-space: nowrap;
   }
 
   .staging-banner {

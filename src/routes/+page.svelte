@@ -87,7 +87,8 @@
   let workspaces = $state<WorkspaceInfo[]>([]);
   let activeRepo = $state<RepoDetail | null>(null);
   let selectedWsId = $state<string | null>(null);
-  let activeTab = $state<PanelTab>("chat");
+  let activeTab = $state<PanelTab>("diff");
+  let chatExpanded = $state(true);
   let diffRefreshTrigger = $state(0);
   let showSettings = $state(false);
   let creatingWsId = $state<string | null>(null);
@@ -629,7 +630,7 @@
     creatingWsId = tempId;
     workspaces.push(placeholder);
     selectWorkspace(tempId);
-    activeTab = "chat";
+    chatExpanded = true;
     // Handler returns here. Browser paints the placeholder.
 
     createWorkspace(repoId).then((ws) => {
@@ -1117,7 +1118,7 @@
   function handleKanbanCardClick(wsId: string) {
     selectedWsId = wsId;
     appMode = "work";
-    activeTab = "chat";
+    chatExpanded = true;
     refreshPrStatus(wsId);
     refreshBaseUpdates(wsId);
   }
@@ -1550,7 +1551,7 @@
 
   async function handlePrAction() {
     if (!selectedWs) return;
-    activeTab = "chat";
+    chatExpanded = true;
     triggerPrAction(selectedWs.id);
   }
 
@@ -1678,7 +1679,7 @@
         addToast("Merge conflicts — delegating to agent", "info");
         const baseBranch = activeRepo.default_branch;
         sendPrompt(wsId, `Updating from ${baseBranch} caused merge conflicts. The automatic merge was aborted.\n\nPlease resolve this:\n1. Run \`git fetch origin ${baseBranch}\`\n2. Run \`git merge origin/${baseBranch}\`\n3. Resolve all conflicts\n4. Commit the merge\n\nIf the conflicts are complex, explain what's conflicting before resolving.`, `Resolving merge conflicts with ${baseBranch}`);
-        activeTab = "chat";
+        chatExpanded = true;
       } else {
         addToast(errMsg);
       }
@@ -1900,6 +1901,9 @@
             bind:activeTab
             bind:fileNavigatePath
             bind:fileNavigateLine
+            {chatExpanded}
+            onChatExpandedChange={(v) => { chatExpanded = v; }}
+            defaultBranch={activeRepo?.default_branch ?? "main"}
             {selectedWs}
             {selectedWsId}
             {activeWorkspaces}
@@ -1994,7 +1998,7 @@
         onAddToContext={(path, displayName, lineNumber) => {
           showSearchModal = false;
           chatPanelApis.get(selectedWsId!)?.addMention({ type: "file", path, displayName, lineNumber });
-          activeTab = "chat";
+          chatExpanded = true;
         }}
         onOpenInFiles={(path, lineNumber) => {
           showSearchModal = false;

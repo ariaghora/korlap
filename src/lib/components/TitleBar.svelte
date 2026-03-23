@@ -173,27 +173,9 @@
         Work <kbd class="mode-hint">⌘2</kbd>
       </button>
     </div>
-    <button
-      class="autopilot-btn"
-      class:active={autopilotEnabled}
-      onclick={onAutopilotToggle}
-      title="Toggle autopilot (⌘3)"
-    >
-      <Zap size={12} />
-      Autopilot
-      <kbd class="mode-hint">⌘3</kbd>
-    </button>
   </div>
 
-  <div class="titlebar-center">
-    {#if appMode === "work" && selectedWs}
-      <span class="breadcrumb">
-        <span class="breadcrumb-branch">{selectedWs.branch}</span>
-        <span class="breadcrumb-sep">›</span>
-        <span class="breadcrumb-base">{activeRepo.default_branch}</span>
-      </span>
-    {/if}
-  </div>
+  <div class="titlebar-center"></div>
 
   <div class="titlebar-right">
     {#if autopilotEnabled && autopilotStatus}
@@ -230,6 +212,16 @@
         </button>
       {/if}
     {/if}
+    <button
+      class="autopilot-btn"
+      class:active={autopilotEnabled}
+      onclick={onAutopilotToggle}
+      title="Toggle autopilot (⌘3)"
+    >
+      <Zap size={12} />
+      Autopilot
+      <kbd class="mode-hint">⌘3</kbd>
+    </button>
   </div>
 </header>
 
@@ -287,10 +279,6 @@
     left: 50%;
     transform: translateX(-50%);
     pointer-events: none;
-  }
-
-  .titlebar-center .breadcrumb {
-    pointer-events: auto;
   }
 
   .mode-switcher {
@@ -563,26 +551,6 @@
     font-weight: 600;
     color: var(--accent);
     white-space: nowrap;
-  }
-
-  .breadcrumb {
-    font-size: 0.75rem;
-    color: var(--text-dim);
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
-
-  .breadcrumb-branch {
-    color: var(--accent);
-  }
-
-  .breadcrumb-sep {
-    color: var(--text-muted);
-  }
-
-  .breadcrumb-base {
-    color: var(--text-dim);
   }
 
   /* ── Button groups (segmented) ───────────────── */
