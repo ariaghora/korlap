@@ -144,6 +144,7 @@
     </div>
 
     <div class="dialog-footer">
+      <span class="shortcut-hint">Tip: <kbd>&#8984;</kbd>+click card to open directly</span>
       <button class="go-btn" onclick={onGoToWorkspace}>
         Go to workspace
         <ArrowRight size={14} />
@@ -354,7 +355,25 @@
   .dialog-footer {
     padding: 0 0.85rem 0.75rem;
     display: flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: 0.6rem;
+  }
+
+  .shortcut-hint {
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    opacity: 0.6;
+    margin-right: auto;
+  }
+
+  .shortcut-hint kbd {
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    padding: 0.08rem 0.25rem;
+    background: color-mix(in srgb, var(--border) 50%, transparent);
+    border: 0.5px solid var(--border);
+    border-radius: 3px;
   }
 
   .go-btn {

@@ -150,7 +150,7 @@
         changeCounts={changeCounts.get(ws.id)}
         isReviewing={reviewingWsIds.has(ws.id)}
         isCreating={ws.id === creatingWsId}
-        onClick={() => { detailWs = ws; }}
+        onClick={(e) => { e.metaKey ? onCardClick(ws.id) : detailWs = ws; }}
         onRemove={() => onRemoveWorkspace(ws.id)}
       />
     {/each}
@@ -167,7 +167,7 @@
         prStatus={prStatusMap.get(ws.id)}
         changeCounts={changeCounts.get(ws.id)}
         isReviewing={reviewingWsIds.has(ws.id)}
-        onClick={() => { detailWs = ws; }}
+        onClick={(e) => { e.metaKey ? onCardClick(ws.id) : detailWs = ws; }}
         onRemove={() => onRemoveWorkspace(ws.id)}
       />
     {/each}
@@ -183,7 +183,7 @@
         workspace={ws}
         prStatus={prStatusMap.get(ws.id)}
         changeCounts={changeCounts.get(ws.id)}
-        onClick={() => { detailWs = ws; }}
+        onClick={(e) => { e.metaKey ? onCardClick(ws.id) : detailWs = ws; }}
         onRemove={() => onRemoveWorkspace(ws.id)}
       />
     {/each}
