@@ -1,11 +1,11 @@
 <script lang="ts">
   import { SvelteMap } from "svelte/reactivity";
   import type { WorkspaceInfo, RepoSettings, PrStatus, ScriptEvent } from "$lib/ipc";
-  import { runScript } from "$lib/ipc";
+  import { runScript, closeTerminal } from "$lib/ipc";
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, Timer, RefreshCcw } from "lucide-svelte";
+  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, Timer, RefreshCcw, Plus } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
@@ -146,6 +146,78 @@
   function handleTerminalResize(delta: number) {
     terminalPaneWidth = Math.min(TERMINAL_PANE_MAX, Math.max(TERMINAL_PANE_MIN, terminalPaneWidth - delta));
   }
+
+  // ── Multi-terminal tab state ──────────────────────────────────────
+
+  interface TerminalTab {
+    id: string;
+    label: string;
+  }
+
+  let terminalTabs = new SvelteMap<string, TerminalTab[]>();
+  let activeTerminalTab = new SvelteMap<string, string>();
+  let terminalCounters = new SvelteMap<string, number>();
+
+  // Ensure every active workspace has at least one terminal tab
+  $effect(() => {
+    for (const ws of activeWorkspaces) {
+      if (!terminalTabs.has(ws.id)) {
+        const id = crypto.randomUUID();
+        terminalTabs.set(ws.id, [{ id, label: "Terminal 1" }]);
+        activeTerminalTab.set(ws.id, id);
+        terminalCounters.set(ws.id, 1);
+      }
+    }
+  });
+
+  // Clean up stale entries when workspaces are removed
+  $effect(() => {
+    const wsIds = new Set(activeWorkspaces.map((ws) => ws.id));
+    for (const id of terminalTabs.keys()) {
+      if (!wsIds.has(id)) {
+        terminalTabs.delete(id);
+        activeTerminalTab.delete(id);
+        terminalCounters.delete(id);
+      }
+    }
+  });
+
+  function addTerminalTab(wsId: string) {
+    const count = (terminalCounters.get(wsId) ?? 0) + 1;
+    terminalCounters.set(wsId, count);
+    const id = crypto.randomUUID();
+    const tabs = terminalTabs.get(wsId) ?? [];
+    terminalTabs.set(wsId, [...tabs, { id, label: `Terminal ${count}` }]);
+    activeTerminalTab.set(wsId, id);
+  }
+
+  function removeTerminalTab(wsId: string, tabId: string) {
+    const tabs = terminalTabs.get(wsId);
+    if (!tabs || tabs.length <= 1) return;
+
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    if (idx === -1) return;
+
+    const newTabs = tabs.filter((t) => t.id !== tabId);
+    terminalTabs.set(wsId, newTabs);
+
+    // Close backend PTY
+    closeTerminal(wsId, tabId).catch(() => {});
+
+    // Switch active tab if needed
+    if (activeTerminalTab.get(wsId) === tabId) {
+      const newIdx = Math.min(idx, newTabs.length - 1);
+      activeTerminalTab.set(wsId, newTabs[newIdx].id);
+    }
+  }
+
+  let currentTerminalTabs = $derived(
+    selectedWsId ? terminalTabs.get(selectedWsId) ?? [] : []
+  );
+
+  let currentActiveTermTab = $derived(
+    selectedWsId ? activeTerminalTab.get(selectedWsId) ?? null : null
+  );
 
   function handleRunScript() {
     if (!selectedWs || !repoSettings?.run_script?.trim()) return;
@@ -307,19 +379,45 @@
 
       <!-- Right pane: Terminal -->
       <div class="terminal-pane" style="width: {terminalPaneWidth}px">
-        <div class="pane-tabs">
-          <button class="pane-tab active">Terminal</button>
+        <div class="pane-tabs terminal-tabs">
+          {#each currentTerminalTabs as tab (tab.id)}
+            <button
+              class="pane-tab"
+              class:active={tab.id === currentActiveTermTab}
+              onclick={() => selectedWsId && activeTerminalTab.set(selectedWsId, tab.id)}
+            >
+              {tab.label}
+              {#if currentTerminalTabs.length > 1}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <span
+                  class="tab-close"
+                  role="button"
+                  tabindex="-1"
+                  onclick={(e) => { e.stopPropagation(); selectedWsId && removeTerminalTab(selectedWsId, tab.id); }}
+                >×</span>
+              {/if}
+            </button>
+          {/each}
+          <button
+            class="term-add-btn"
+            title="New terminal"
+            onclick={() => selectedWsId && addTerminalTab(selectedWsId)}
+          >
+            <Plus size={12} />
+          </button>
         </div>
         <div class="terminal-body">
           {#each activeWorkspaces as ws (ws.id)}
-            {@const isVisible = ws.id === selectedWsId}
-            <div
-              class="ws-terminal-layer"
-              class:visible={isVisible}
-              inert={!isVisible}
-            >
-              <TerminalView workspaceId={ws.id} visible={isVisible} />
-            </div>
+            {#each (terminalTabs.get(ws.id) ?? []) as tab (tab.id)}
+              {@const isVisible = ws.id === selectedWsId && tab.id === activeTerminalTab.get(ws.id)}
+              <div
+                class="ws-terminal-layer"
+                class:visible={isVisible}
+                inert={!isVisible}
+              >
+                <TerminalView workspaceId={ws.id} terminalId={tab.id} visible={isVisible} />
+              </div>
+            {/each}
           {/each}
         </div>
       </div>
@@ -828,6 +926,55 @@
     min-height: 0;
   }
 
+  .terminal-tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .terminal-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--text-dim);
+    cursor: pointer;
+    margin-left: 2px;
+    flex-shrink: 0;
+  }
+
+  .tab-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .term-add-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .term-add-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
 
   .terminal-body {
     flex: 1;

@@ -8,10 +8,11 @@
 
   interface Props {
     workspaceId: string;
+    terminalId: string;
     visible?: boolean;
   }
 
-  let { workspaceId, visible = true }: Props = $props();
+  let { workspaceId, terminalId, visible = true }: Props = $props();
 
   let containerEl: HTMLDivElement | undefined = $state();
   let term: Terminal | undefined;
@@ -45,17 +46,17 @@
 
     term.onData((data) => {
       const bytes = Array.from(new TextEncoder().encode(data));
-      writeTerminal(workspaceId, bytes).catch(() => {});
+      writeTerminal(workspaceId, terminalId, bytes).catch(() => {});
     });
 
-    openTerminal(workspaceId, (data: number[]) => {
+    openTerminal(workspaceId, terminalId, (data: number[]) => {
       if (term) {
         term.write(new Uint8Array(data));
       }
     })
       .then(() => {
         if (term) {
-          resizeTerminal(workspaceId, term.rows, term.cols).catch(() => {});
+          resizeTerminal(workspaceId, terminalId, term.rows, term.cols).catch(() => {});
         }
       })
       .catch((e) => {
@@ -94,7 +95,7 @@
           fitDebounceId = undefined;
           if (fitAddon && term) {
             fitAddon.fit();
-            resizeTerminal(workspaceId, term.rows, term.cols).catch(() => {});
+            resizeTerminal(workspaceId, terminalId, term.rows, term.cols).catch(() => {});
           }
         }, 100);
       }

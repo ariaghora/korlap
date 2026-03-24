@@ -3,15 +3,41 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::State;
 
+/// Composite key for the terminals HashMap: `{workspace_id}:{terminal_id}`
+fn terminal_key(workspace_id: &str, terminal_id: &str) -> String {
+    format!("{}:{}", workspace_id, terminal_id)
+}
+
+/// Remove and kill all terminals belonging to a workspace.
+/// Call while holding the lock.
+pub fn kill_workspace_terminals(
+    terminals: &mut std::collections::HashMap<String, crate::state::TerminalHandle>,
+    workspace_id: &str,
+) {
+    let prefix = format!("{}:", workspace_id);
+    let keys: Vec<String> = terminals
+        .keys()
+        .filter(|k| k.starts_with(&prefix))
+        .cloned()
+        .collect();
+    for key in keys {
+        if let Some(mut handle) = terminals.remove(&key) {
+            let _ = handle.child.kill();
+        }
+    }
+}
+
 #[tauri::command]
 pub fn open_terminal(
     workspace_id: String,
+    terminal_id: String,
     on_data: Channel<Vec<u8>>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
+    let key = terminal_key(&workspace_id, &terminal_id);
     let worktree_path = {
         let st = state.lock().map_err(|e| e.to_string())?;
-        if st.terminals.contains_key(&workspace_id) {
+        if st.terminals.contains_key(&key) {
             return Ok(()); // Already open
         }
         let ws = st
@@ -96,7 +122,7 @@ pub fn open_terminal(
     {
         let mut st = state.lock().map_err(|e| e.to_string())?;
         st.terminals.insert(
-            workspace_id.clone(),
+            key.clone(),
             crate::state::TerminalHandle {
                 writer,
                 child,
@@ -106,7 +132,7 @@ pub fn open_terminal(
     }
 
     // Stream PTY output to frontend via Channel
-    let ws_id = workspace_id.clone();
+    let log_key = key.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         loop {
@@ -118,7 +144,7 @@ pub fn open_terminal(
                 Err(_) => break,
             }
         }
-        tracing::info!("Terminal reader exited for {}", ws_id);
+        tracing::info!("Terminal reader exited for {}", log_key);
     });
 
     Ok(())
@@ -127,13 +153,15 @@ pub fn open_terminal(
 #[tauri::command]
 pub fn write_terminal(
     workspace_id: String,
+    terminal_id: String,
     data: Vec<u8>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
+    let key = terminal_key(&workspace_id, &terminal_id);
     let mut st = state.lock().map_err(|e| e.to_string())?;
     let handle = st
         .terminals
-        .get_mut(&workspace_id)
+        .get_mut(&key)
         .ok_or("No terminal open for this workspace")?;
 
     std::io::Write::write_all(&mut handle.writer, &data)
@@ -145,14 +173,16 @@ pub fn write_terminal(
 #[tauri::command]
 pub fn resize_terminal(
     workspace_id: String,
+    terminal_id: String,
     rows: u16,
     cols: u16,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
+    let key = terminal_key(&workspace_id, &terminal_id);
     let mut st = state.lock().map_err(|e| e.to_string())?;
     let handle = st
         .terminals
-        .get_mut(&workspace_id)
+        .get_mut(&key)
         .ok_or("No terminal open for this workspace")?;
 
     handle
@@ -171,10 +201,12 @@ pub fn resize_terminal(
 #[tauri::command]
 pub fn close_terminal(
     workspace_id: String,
+    terminal_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
+    let key = terminal_key(&workspace_id, &terminal_id);
     let mut st = state.lock().map_err(|e| e.to_string())?;
-    if let Some(mut handle) = st.terminals.remove(&workspace_id) {
+    if let Some(mut handle) = st.terminals.remove(&key) {
         let _ = handle.child.kill();
         let _ = handle.child.wait();
     }

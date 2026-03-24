@@ -261,10 +261,8 @@ pub async fn remove_workspace(
             let _ = handle.child.wait();
         }
 
-        // Kill terminal if running
-        if let Some(mut term) = st.terminals.remove(&workspace_id) {
-            let _ = term.child.kill();
-        }
+        // Kill all terminals for this workspace
+        super::terminal::kill_workspace_terminals(&mut st.terminals, &workspace_id);
 
         let ws = st
             .workspaces
