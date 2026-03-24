@@ -67,24 +67,12 @@
     requestAnimationFrame(() => titleRef?.focus());
   });
 
-  // Seed initial description text into MentionInput after mount
+  // Seed initial description + inline mention chips on mount
+  let contentRestored = false;
   $effect(() => {
-    if (mentionInputApi && initialDescription) {
-      // MentionInput is contenteditable — set initial text by calling focus and relying on the DOM
-      // We do this once on mount
-      const el = descWrapperEl?.querySelector(".mention-input") as HTMLDivElement | null;
-      if (el && !el.textContent) {
-        el.textContent = initialDescription;
-      }
-    }
-  });
-
-  // Seed initial mentions as chips
-  $effect(() => {
-    if (mentionInputApi && initialMentions.length > 0) {
-      for (const m of initialMentions) {
-        mentionInputApi.appendMention(m);
-      }
+    if (mentionInputApi && !contentRestored && (initialDescription || initialMentions.length > 0)) {
+      contentRestored = true;
+      mentionInputApi.restoreContent(initialDescription, initialMentions);
     }
   });
 
