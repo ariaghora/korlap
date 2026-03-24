@@ -1,15 +1,26 @@
 import { themes, defaultThemeId, type ThemeId, type ThemeDefinition, type TerminalColors, type EditorColors } from "$lib/themes";
 
 const STORAGE_KEY = "korlap-theme";
+const MODE_STORAGE_KEY = "korlap-color-mode";
+
+export type ColorMode = "dark" | "light" | "system";
 
 // ── Reactive state ────────────────────────────────────────
 
 let activeId = $state<ThemeId>(readStoredTheme());
+let colorMode = $state<ColorMode>(readStoredColorMode());
 
 function readStoredTheme(): ThemeId {
   if (typeof localStorage === "undefined") return defaultThemeId;
   const stored = localStorage.getItem(STORAGE_KEY);
   return stored && stored in themes ? (stored as ThemeId) : defaultThemeId;
+}
+
+function readStoredColorMode(): ColorMode {
+  if (typeof localStorage === "undefined") return "system";
+  const stored = localStorage.getItem(MODE_STORAGE_KEY);
+  if (stored === "dark" || stored === "light" || stored === "system") return stored;
+  return "system";
 }
 
 // ── Public API ────────────────────────────────────────────
@@ -25,6 +36,19 @@ export function getTheme(): ThemeDefinition {
 export function setTheme(id: ThemeId): void {
   activeId = id;
   localStorage.setItem(STORAGE_KEY, id);
+  applyCssVars();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("korlap-theme-change"));
+  }
+}
+
+export function getColorMode(): ColorMode {
+  return colorMode;
+}
+
+export function setColorMode(mode: ColorMode): void {
+  colorMode = mode;
+  localStorage.setItem(MODE_STORAGE_KEY, mode);
   applyCssVars();
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("korlap-theme-change"));
@@ -51,6 +75,8 @@ export function getEditorColorsLight(): EditorColors {
 // ── CSS application ───────────────────────────────────────
 
 function isDark(): boolean {
+  if (colorMode === "dark") return true;
+  if (colorMode === "light") return false;
   return typeof window === "undefined" || window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
