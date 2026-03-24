@@ -54,10 +54,8 @@ pub async fn create_staging_workspace(
                 let _ = handle.child.kill();
                 let _ = handle.child.wait();
             }
-            // Kill terminal if running
-            if let Some(mut term) = st.terminals.remove(&existing_id) {
-                let _ = term.child.kill();
-            }
+            // Kill all terminals for this workspace
+            super::terminal::kill_workspace_terminals(&mut st.terminals, &existing_id);
 
             let existing_path = st
                 .workspaces
@@ -242,10 +240,8 @@ pub async fn remove_staging_workspace(
             let _ = handle.child.wait();
         }
 
-        // Kill terminal if running
-        if let Some(mut term) = st.terminals.remove(&ws_id) {
-            let _ = term.child.kill();
-        }
+        // Kill all terminals for this workspace
+        super::terminal::kill_workspace_terminals(&mut st.terminals, &ws_id);
 
         (ws_id, worktree_path, repo_path)
     };

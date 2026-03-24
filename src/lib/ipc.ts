@@ -429,30 +429,36 @@ export async function generateCommitMessage(
 
 export async function openTerminal(
   workspaceId: string,
+  terminalId: string,
   onData: (data: number[]) => void,
 ): Promise<void> {
   const channel = new Channel<number[]>();
   channel.onmessage = onData;
-  return invoke("open_terminal", { workspaceId, onData: channel });
+  return invoke("open_terminal", { workspaceId, terminalId, onData: channel });
 }
 
 export async function writeTerminal(
   workspaceId: string,
+  terminalId: string,
   data: number[],
 ): Promise<void> {
-  return invoke("write_terminal", { workspaceId, data });
+  return invoke("write_terminal", { workspaceId, terminalId, data });
 }
 
 export async function resizeTerminal(
   workspaceId: string,
+  terminalId: string,
   rows: number,
   cols: number,
 ): Promise<void> {
-  return invoke("resize_terminal", { workspaceId, rows, cols });
+  return invoke("resize_terminal", { workspaceId, terminalId, rows, cols });
 }
 
-export async function closeTerminal(workspaceId: string): Promise<void> {
-  return invoke("close_terminal", { workspaceId });
+export async function closeTerminal(
+  workspaceId: string,
+  terminalId: string,
+): Promise<void> {
+  return invoke("close_terminal", { workspaceId, terminalId });
 }
 // ── Messages ────────────────────────────────────────────────────────
 
