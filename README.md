@@ -8,6 +8,12 @@
 
 A macOS app for running multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in parallel, each isolated in its own `git worktree`.
 
+<img width="1331" height="825" alt="image" src="https://github.com/user-attachments/assets/ef599734-bd8a-4a99-a85f-9479f8b2fcd1" />
+
+<img width="1331" height="825" alt="image" src="https://github.com/user-attachments/assets/2bafd622-3596-4d62-8841-ab953fcccd25" />
+
+
+
 Built with Tauri v2, Svelte 5, and Rust.
 
 ## What it does
