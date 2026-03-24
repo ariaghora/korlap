@@ -347,12 +347,12 @@ pub fn send_message(
     let mut cmd = std::process::Command::new(claude_bin);
     cmd.arg("-p").arg(&prompt);
     cmd.args(["--output-format", "stream-json", "--verbose"]);
-    // Permission mode: plan mode uses --permission-mode plan, otherwise bypass all
+    // Permission mode: plan = read-only, auto = full autonomy within directory bounds
     if plan_mode {
         cmd.args(["--permission-mode", "plan"]);
         cmd.args(["--allowedTools", "mcp__korlap__rename_branch,WebSearch,WebFetch"]);
     } else {
-        cmd.arg("--dangerously-skip-permissions");
+        cmd.args(["--permission-mode", "auto"]);
     }
 
     // Grant agent access to the images directory so it can read pasted images
@@ -370,17 +370,25 @@ pub fn send_message(
         // Inject system prompt only on first message (resume inherits it)
         let base_branch = detect_default_branch(&repo_path)
             .unwrap_or_else(|_| "main".to_string());
+        let wt_display = worktree_path.to_string_lossy();
+        let repo_display = repo_path.to_string_lossy();
         let mut system_prompt = format!(
             "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
              Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
-             Target branch: {}\n\
-             Base branch: {}\n\
+             Target branch: {ws_branch}\n\
+             Base branch: {base_branch}\n\
+             \n\
+             CRITICAL — workspace isolation:\n\
+             • Your workspace is a git worktree at: {wt_display}\n\
+             • The main repository lives at: {repo_display} — NEVER read, write, or cd into it.\n\
+             • ALL file operations (Read, Edit, Write, Bash) MUST use paths under {wt_display}.\n\
+             • The .git file in the worktree references the main repo — that is normal for worktrees. Do NOT follow it.\n\
+             • If you discover paths outside {wt_display}, ignore them. You have no business there.\n\
+             \n\
              You have access to Korlap tools via MCP. Use the rename_branch tool to give your branch a meaningful name based on the task. Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
              IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. Parse the user's request, pick a name, and rename immediately.\n\
              If the task scope changes mid-conversation, rename the branch again to reflect the new direction.\n\
              Keep all changes on the target branch. Do not modify other branches.",
-            ws_branch,
-            base_branch,
         );
         // Inject warm context from knowledge base (if built)
         if context_dir.exists() {
@@ -466,6 +474,15 @@ pub fn send_message(
         );
     }
 
+    // Snapshot main repo status BEFORE agent runs (for post-hoc contamination check)
+    let repo_status_before = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&repo_path)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn claude: {}", e))?;
@@ -503,6 +520,7 @@ pub fn send_message(
     let ws_id = workspace_id.clone();
     let app_clone = app.clone();
     let wt_path_str = worktree_path.to_string_lossy().to_string();
+    let repo_path_for_thread = repo_path.clone();
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
         let mut new_session_id: Option<String> = None;
@@ -559,6 +577,33 @@ pub fn send_message(
                 "status": "waiting"
             }),
         );
+
+        // Post-hoc contamination check: did the agent modify the main repo?
+        let repo_status_after = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&repo_path_for_thread)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+
+        if repo_status_after != repo_status_before {
+            tracing::error!(
+                "CONTAMINATION DETECTED: agent {} modified main repo at {}",
+                ws_id,
+                repo_path_for_thread.display()
+            );
+            let _ = app_clone.emit(
+                "agent-warning",
+                serde_json::json!({
+                    "workspace_id": ws_id,
+                    "message": format!(
+                        "Agent modified files in the main repository at {}. Please review and revert unintended changes.",
+                        repo_path_for_thread.display()
+                    ),
+                }),
+            );
+        }
 
         tracing::info!("Agent finished for workspace {}", ws_id);
     });
