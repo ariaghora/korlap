@@ -113,6 +113,48 @@
 
   let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
 
+  // ── ANSI → HTML converter ───────────────────────────────────────
+  const ANSI_COLORS: Record<number, string> = {
+    30: "#666", 31: "#e06c75", 32: "#98c379", 33: "#e5c07b",
+    34: "#61afef", 35: "#c678dd", 36: "#56b6c2", 37: "#abb2bf",
+    90: "#5c6370", 91: "#e06c75", 92: "#98c379", 93: "#e5c07b",
+    94: "#61afef", 95: "#c678dd", 96: "#56b6c2", 97: "#c8ccd4",
+  };
+
+  function ansiToHtml(text: string): string {
+    // Escape HTML entities first
+    let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    let result = "";
+    let open = false;
+
+    // Split on ANSI escape sequences, keeping the delimiters
+    const parts = html.split(/(\x1b\[[0-9;]*m)/);
+    for (const part of parts) {
+      const m = part.match(/^\x1b\[([0-9;]*)m$/);
+      if (m) {
+        const codes = m[1].split(";").map(Number);
+        if (open) { result += "</span>"; open = false; }
+        const styles: string[] = [];
+        for (const c of codes) {
+          if (c === 0) continue; // reset — span already closed
+          if (c === 1) styles.push("font-weight:bold");
+          else if (c === 2) styles.push("opacity:0.6");
+          else if (c === 3) styles.push("font-style:italic");
+          else if (c === 4) styles.push("text-decoration:underline");
+          else if (ANSI_COLORS[c]) styles.push(`color:${ANSI_COLORS[c]}`);
+        }
+        if (styles.length) {
+          result += `<span style="${styles.join(";")}">`;
+          open = true;
+        }
+      } else {
+        result += part;
+      }
+    }
+    if (open) result += "</span>";
+    return result;
+  }
+
   // ── Script runner state ──────────────────────────────────────────
   type ScriptStatus = "idle" | "running" | "success" | "error";
   let scriptStatusMap = new SvelteMap<string, ScriptStatus>();
@@ -250,9 +292,8 @@
     runScript(wsId, repoSettings.run_script, (event: ScriptEvent) => {
       if (event.type === "output") {
         const prev = scriptOutputMap.get(wsId) ?? [];
-        // Strip ANSI escape codes and cap at 500 lines
-        const clean = event.data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-        const lines = prev.length >= 500 ? [...prev.slice(1), clean] : [...prev, clean];
+        // Cap at 500 lines to avoid unbounded memory growth
+        const lines = prev.length >= 500 ? [...prev.slice(1), event.data] : [...prev, event.data];
         scriptOutputMap.set(wsId, lines);
         requestAnimationFrame(scrollOutputToBottom);
       } else if (event.type === "exit") {
@@ -360,7 +401,7 @@
                   <X size={12} />
                 </button>
               </div>
-              <pre class="script-popover-output" bind:this={outputEl}>{#each currentScriptOutput as line}{line}{/each}</pre>
+              <pre class="script-popover-output" bind:this={outputEl}>{#each currentScriptOutput as line}{@html ansiToHtml(line)}{/each}</pre>
               {#if currentScriptExitCode !== null}
                 <div class="script-popover-exit" class:ok={currentScriptExitCode === 0} class:fail={currentScriptExitCode !== 0}>
                   {currentScriptExitCode === 0 ? "✓ Exited successfully" : `✗ Exit code ${currentScriptExitCode}`}
