@@ -1620,7 +1620,12 @@
         addActionMessage(wsId, crypto.randomUUID(), `Committing & pushing to PR #${pr.number}`);
         try {
           const msg = await generateCommitMessage(wsId);
-          await gitCommit(wsId, msg);
+          try {
+            await gitCommit(wsId, msg);
+          } catch (commitErr) {
+            // Agent may have already committed — nothing to commit is not fatal
+            if (!String(commitErr).includes("Nothing to commit")) throw commitErr;
+          }
           await gitPush(wsId);
           addToast("Pushed successfully", "success");
           refreshChangeCounts(wsId);
@@ -1691,7 +1696,11 @@
       if (files.length > 0) {
         addActionMessage(wsId, crypto.randomUUID(), "Committing & pushing changes");
         const msg = await generateCommitMessage(wsId);
-        await gitCommit(wsId, msg);
+        try {
+          await gitCommit(wsId, msg);
+        } catch (commitErr) {
+          if (!String(commitErr).includes("Nothing to commit")) throw commitErr;
+        }
         await gitPush(wsId);
       } else {
         addActionMessage(wsId, crypto.randomUUID(), "Pushing to origin");
