@@ -6,6 +6,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::helpers::{detect_default_branch, get_shell_env, inject_shell_env, strip_ansi};
 
+/// Tools blocked to prevent agent from escaping Korlap worktree isolation.
+/// EnterWorktree creates worktrees from origin/<default> of the MAIN repo,
+/// completely bypassing workspace isolation. Requires no permission so
+/// --permission-mode alone cannot stop it. --disallowedTools is the only fix.
+const DISALLOWED_WORKTREE_TOOLS: &str = "EnterWorktree,ExitWorktree";
+
 // ── Agent event types (sent to frontend via Channel) ─────────────────
 
 #[derive(Clone, serde::Serialize)]
@@ -347,12 +353,14 @@ pub fn send_message(
     let mut cmd = std::process::Command::new(claude_bin);
     cmd.arg("-p").arg(&prompt);
     cmd.args(["--output-format", "stream-json", "--verbose"]);
-    // Permission mode: plan mode uses --permission-mode plan, otherwise bypass all
+    // Permission mode: plan = read-only, otherwise bypassPermissions for non-interactive pipe mode.
+    // --dangerously-skip-permissions ignores --disallowedTools, so we use --permission-mode instead.
     if plan_mode {
         cmd.args(["--permission-mode", "plan"]);
         cmd.args(["--allowedTools", "mcp__korlap__rename_branch,WebSearch,WebFetch"]);
     } else {
-        cmd.arg("--dangerously-skip-permissions");
+        cmd.args(["--permission-mode", "bypassPermissions"]);
+        cmd.args(["--disallowedTools", DISALLOWED_WORKTREE_TOOLS]);
     }
 
     // Grant agent access to the images directory so it can read pasted images
@@ -370,17 +378,27 @@ pub fn send_message(
         // Inject system prompt only on first message (resume inherits it)
         let base_branch = detect_default_branch(&repo_path)
             .unwrap_or_else(|_| "main".to_string());
+        let wt_display = worktree_path.to_string_lossy();
+        let repo_display = repo_path.to_string_lossy();
         let mut system_prompt = format!(
             "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
              Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
-             Target branch: {}\n\
-             Base branch: {}\n\
+             Target branch: {ws_branch}\n\
+             Base branch: {base_branch}\n\
+             \n\
+             CRITICAL — workspace isolation:\n\
+             • Your workspace is a git worktree at: {wt_display}\n\
+             • The main repository lives at: {repo_display} — NEVER read, write, or cd into it.\n\
+             • ALL file operations (Read, Edit, Write, Bash) MUST use paths under {wt_display}.\n\
+             • The .git file in the worktree references the main repo — that is normal for worktrees. Do NOT follow it.\n\
+             • EnterWorktree and ExitWorktree are DISABLED — you are already in the correct worktree.\n\
+             • Do NOT use the Agent tool with isolation: \"worktree\" — it will create a worktree from the wrong repo.\n\
+             • If you discover paths outside {wt_display}, ignore them. You have no business there.\n\
+             \n\
              You have access to Korlap tools via MCP. Use the rename_branch tool to give your branch a meaningful name based on the task. Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
              IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. Parse the user's request, pick a name, and rename immediately.\n\
              If the task scope changes mid-conversation, rename the branch again to reflect the new direction.\n\
              Keep all changes on the target branch. Do not modify other branches.",
-            ws_branch,
-            base_branch,
         );
         // Inject warm context from knowledge base (if built)
         if context_dir.exists() {
@@ -710,6 +728,7 @@ pub async fn generate_commit_message(
         let mut cmd = std::process::Command::new(claude_bin);
         cmd.arg("-p").arg(&prompt);
         cmd.args(["--output-format", "text"]);
+        cmd.args(["--disallowedTools", DISALLOWED_WORKTREE_TOOLS]);
         cmd.current_dir(&worktree_path);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::null());
