@@ -27,6 +27,7 @@
     initialThinkingMode?: boolean;
     submitLabel?: string;
     onSubmit: (data: TaskData) => void;
+    onSubmitAndStart?: (data: TaskData) => void;
     onCancel: () => void;
   }
 
@@ -40,6 +41,7 @@
     initialThinkingMode = false,
     submitLabel = "Add",
     onSubmit,
+    onSubmitAndStart,
     onCancel,
   }: Props = $props();
 
@@ -83,8 +85,8 @@
     mentions.length > 0
   );
 
-  function submit() {
-    if (!canSubmit) return;
+  function buildTaskData(): TaskData | null {
+    if (!canSubmit) return null;
     // Serialize description + inline mentions from MentionInput
     const descValue = mentionInputApi?.getValue() ?? { text: "", mentions: [] };
     // Merge inline mentions with separately-tracked mentions (from SearchModal, etc.)
@@ -94,7 +96,7 @@
         allMentions.push(m);
       }
     }
-    onSubmit({
+    return {
       title: title.trim(),
       description: descValue.text.trim(),
       newImages: [...newImages],
@@ -102,7 +104,18 @@
       mentions: allMentions,
       planMode,
       thinkingMode,
-    });
+    };
+  }
+
+  function submit() {
+    const data = buildTaskData();
+    if (data) onSubmit(data);
+  }
+
+  function submitAndStart() {
+    if (!onSubmitAndStart) return;
+    const data = buildTaskData();
+    if (data) onSubmitAndStart(data);
   }
 
   function handleOverlayKeydown(e: KeyboardEvent) {
@@ -116,7 +129,10 @@
         onCancel();
       }
     }
-    if (e.key === "Enter" && e.metaKey) {
+    if (e.key === "Enter" && e.metaKey && e.shiftKey) {
+      e.preventDefault();
+      submitAndStart();
+    } else if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
       submit();
     }
@@ -131,7 +147,11 @@
       e.preventDefault();
       onCancel();
     }
-    if (e.key === "Enter" && e.metaKey) {
+    if (e.key === "Enter" && e.metaKey && e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      submitAndStart();
+    } else if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
       e.stopPropagation();
       submit();
@@ -244,8 +264,14 @@
       return;
     }
 
+    // Cmd+Shift+Enter to submit and start
+    if (e.key === "Enter" && e.metaKey && e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      submitAndStart();
+    }
     // Cmd+Enter to submit
-    if (e.key === "Enter" && e.metaKey) {
+    else if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
       e.stopPropagation();
       submit();
@@ -367,10 +393,13 @@
           </button>
         {/if}
         <button class="cancel-btn" onclick={onCancel}>Cancel</button>
+        {#if onSubmitAndStart}
+          <button class="add-start-btn" onclick={submitAndStart} disabled={!canSubmit}>{submitLabel} & Start</button>
+        {/if}
         <button class="submit-btn" onclick={submit} disabled={!canSubmit}>{submitLabel}</button>
       </div>
       </div>
-      <span class="footer-hint">⌘Enter to {submitLabel.toLowerCase()} · {repoId ? "@mention files · " : ""}Paste images</span>
+      <span class="footer-hint">⌘Enter to {submitLabel.toLowerCase()}{onSubmitAndStart ? " · ⌘⇧Enter to start" : ""} · {repoId ? "@mention files · " : ""}Paste images</span>
     </div>
   </div>
 
@@ -649,6 +678,29 @@
   .cancel-btn:hover {
     background: var(--btn-subtle-hover);
     color: var(--text-primary);
+  }
+
+  .add-start-btn {
+    padding: 0.35rem 0.7rem;
+    background: transparent;
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .add-start-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .add-start-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
   }
 
   .submit-btn {
