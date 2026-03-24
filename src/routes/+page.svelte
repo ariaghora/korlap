@@ -1623,8 +1623,13 @@
         gitOpInProgress.set(wsId, true);
         addActionMessage(wsId, crypto.randomUUID(), `Committing & pushing to PR #${pr.number}`);
         try {
-          const msg = await generateCommitMessage(wsId);
-          await gitCommit(wsId, msg);
+          try {
+            const msg = await generateCommitMessage(wsId);
+            await gitCommit(wsId, msg);
+          } catch (commitErr) {
+            // If everything is already committed, proceed to push
+            if (!String(commitErr).includes("Nothing to commit")) throw commitErr;
+          }
           await gitPush(wsId);
           addToast("Pushed successfully", "success");
           refreshChangeCounts(wsId);
@@ -1694,8 +1699,13 @@
     try {
       if (files.length > 0) {
         addActionMessage(wsId, crypto.randomUUID(), "Committing & pushing changes");
-        const msg = await generateCommitMessage(wsId);
-        await gitCommit(wsId, msg);
+        try {
+          const msg = await generateCommitMessage(wsId);
+          await gitCommit(wsId, msg);
+        } catch (commitErr) {
+          // If everything is already committed, proceed to push
+          if (!String(commitErr).includes("Nothing to commit")) throw commitErr;
+        }
         await gitPush(wsId);
       } else {
         addActionMessage(wsId, crypto.randomUUID(), "Pushing to origin");
