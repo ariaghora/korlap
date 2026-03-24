@@ -2,7 +2,7 @@
 > This is an alpha-quality software, where major parts of the code was written by Claude. It is usable at least for the maintainer's use cases and workflows.
 > By using this you acknowledge that this tool will undergo tons of changes anytime as the maintainer wishes and deems appropriate.
 >
-> The author will agressively reject most PRs, since he's too tired and doesn't want to maintain codes produced by **other than** himself (and Claude under his control).
+> The author will agressively reject most PRs, since he's too tired and doesn't want to maintain codes produced by **other than** himself (and Claude under his control). He doubts that anyone would contribute, anyway.
 
 # Korlap
 
@@ -56,29 +56,6 @@ bun tauri dev
 
 That's it. The app opens, you add a repo via the folder picker, and create your first workspace.
 
-## Project structure
-
-```
-src-tauri/src/
-  main.rs            Tauri setup, managed state registration
-  workspace.rs       Worktree lifecycle (create, archive, restore)
-  agent.rs           Claude CLI spawn, PTY management, output streaming
-  git.rs             Diff and branch ops
-  commands.rs        All #[tauri::command] handlers
-
-src/
-  lib/
-    stores/          Svelte 5 rune stores (repos, workspaces, messages)
-    ipc.ts           Typed invoke() wrappers + Channel setup
-  components/
-    TitleBar.svelte
-    Sidebar.svelte
-    ChatPanel.svelte
-    DiffViewer.svelte
-    Terminal.svelte
-    ScriptRunner.svelte
-```
-
 ## Tech stack
 
 | Layer | Choice | Why |
@@ -89,19 +66,9 @@ src/
 | Styling | Tailwind v4 | Zero config |
 | Terminal | xterm.js | Standard terminal emulator for the raw PTY tab |
 
-## Architecture notes
+## Contributing
 
-**Agent output pipeline.** Claude runs as a subprocess with `--output-format stream-json`. A Rust reader thread accumulates bytes and flushes at ~60fps via Tauri's Channel API as raw `ArrayBuffer`, bypassing JSON serialization on the hot path.
-
-**Workspace switching is O(1).** Each workspace's panel stays in the DOM with `display: none`. Switching toggles visibility. Panels persist across switches, preserving scroll position and state.
-
-**State lives in Maps.** Messages use `Map<workspaceId, Map<msgId, Message>>` so updating one message triggers one reactive cell. Only the changed message re-renders.
-
-**All app data** goes into `~/Library/Application Support/net.ghora.korlap/`. Managed repos stay clean.
-
-## Design
-
-See [`DESIGN.md`](./DESIGN.md) for the full spec: color tokens, component mockups, data model, IPC surface, and milestone breakdown.
+Do your best not to get rejected.
 
 ## License
 
