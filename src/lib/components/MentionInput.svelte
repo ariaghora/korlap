@@ -15,6 +15,7 @@
     insertMention: (mention: Mention) => void;
     appendMention: (mention: Mention) => void;
     insertText: (text: string) => void;
+    restoreContent: (text: string, mentions: Mention[]) => void;
     focus: () => void;
     submit: () => void;
     getValue: () => MentionInputValue;
@@ -134,9 +135,79 @@
     if (lastNode) placeCursorAfter(lastNode);
   }
 
+  function restoreContent(text: string, mentions: Mention[]) {
+    if (!editorEl) return;
+    editorEl.innerHTML = "";
+
+    // Build segments by finding @displayName tokens in the text and replacing with chips
+    interface Segment {
+      kind: "text" | "mention";
+      value: string;
+      mention?: Mention;
+    }
+
+    const segments: Segment[] = [];
+    let remaining = text;
+
+    // Create a lookup: displayName -> mention (for matching @displayName tokens)
+    // A mention may appear multiple times, so use an array and consume matches
+    const mentionPool = [...mentions];
+
+    while (remaining.length > 0) {
+      let earliestIndex = -1;
+      let earliestMention: Mention | null = null;
+      let matchLength = 0;
+
+      for (const m of mentionPool) {
+        const token = `@${m.displayName}`;
+        const idx = remaining.indexOf(token);
+        if (idx >= 0 && (earliestIndex === -1 || idx < earliestIndex)) {
+          earliestIndex = idx;
+          earliestMention = m;
+          matchLength = token.length;
+        }
+      }
+
+      if (earliestIndex === -1 || !earliestMention) {
+        segments.push({ kind: "text", value: remaining });
+        break;
+      }
+
+      if (earliestIndex > 0) {
+        segments.push({ kind: "text", value: remaining.substring(0, earliestIndex) });
+      }
+
+      segments.push({ kind: "mention", value: "", mention: earliestMention });
+
+      // Remove this match from the pool so each saved mention maps to one chip
+      const poolIdx = mentionPool.indexOf(earliestMention);
+      if (poolIdx >= 0) mentionPool.splice(poolIdx, 1);
+
+      remaining = remaining.substring(earliestIndex + matchLength);
+    }
+
+    // Build the DOM from segments
+    for (const seg of segments) {
+      if (seg.kind === "text") {
+        const parts = seg.value.split("\n");
+        for (let i = 0; i < parts.length; i++) {
+          if (i > 0) {
+            editorEl.appendChild(document.createElement("br"));
+          }
+          if (parts[i]) {
+            editorEl.appendChild(document.createTextNode(parts[i]));
+          }
+        }
+      } else if (seg.mention) {
+        const chip = createMentionChip(seg.mention);
+        editorEl.appendChild(chip);
+      }
+    }
+  }
+
   // Expose API via bindable ref
   $effect(() => {
-    ref = { insertMention, appendMention, insertText, focus, submit: handleSubmit, getValue: serialize };
+    ref = { insertMention, appendMention, insertText, restoreContent, focus, submit: handleSubmit, getValue: serialize };
   });
 
   function serialize(): MentionInputValue {
