@@ -11,7 +11,7 @@ pub fn now_unix() -> u64 {
 // ── Git helpers ──────────────────────────────────────────────────────
 
 pub fn detect_default_branch(repo_path: &Path) -> Result<String, String> {
-    // Try origin HEAD first
+    // Tier 1: origin HEAD symref (most reliable)
     let output = std::process::Command::new("git")
         .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
         .current_dir(repo_path)
@@ -25,10 +25,12 @@ pub fn detect_default_branch(repo_path: &Path) -> Result<String, String> {
         }
     }
 
-    // Fall back: check which of main/master exists
+    // Tier 2: check which of origin/main, origin/master exists as REMOTE tracking refs.
+    // Never fall back to local branches — workspaces must always branch from origin.
     for candidate in ["main", "master"] {
+        let ref_name = format!("refs/remotes/origin/{}", candidate);
         let output = std::process::Command::new("git")
-            .args(["rev-parse", "--verify", candidate])
+            .args(["rev-parse", "--verify", &ref_name])
             .current_dir(repo_path)
             .output()
             .map_err(|e| format!("Failed to run git: {}", e))?;
@@ -37,23 +39,13 @@ pub fn detect_default_branch(repo_path: &Path) -> Result<String, String> {
         }
     }
 
-    // Last resort: current branch
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo_path)
-        .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
-
-    if output.status.success() {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        // Empty repos or detached HEAD return empty string or "HEAD"
-        if !branch.is_empty() && branch != "HEAD" {
-            return Ok(branch);
-        }
-    }
-
-    // Final fallback for empty repos (no commits yet)
-    Ok("main".to_string())
+    // No silent fallback — error out with actionable message.
+    Err(
+        "Could not detect default branch from remote. \
+         No origin/HEAD, origin/main, or origin/master found. \
+         Run `git remote set-head origin --auto` or check your remote configuration."
+            .to_string(),
+    )
 }
 
 pub fn repo_display_name(repo_path: &Path) -> String {
