@@ -20,9 +20,10 @@
   // Classify the result: "clean" (no issues), "failed", or "issues"
   let resultKind = $derived.by(() => {
     if (state.status !== "complete") return null;
-    const text = state.resultMarkdown.trim().toLowerCase();
-    if (text.startsWith("**review failed:**")) return "failed" as const;
-    if (text === "no issues found." || text === "no issues found") return "clean" as const;
+    const t = state.resultMarkdown.trim();
+    const tl = t.toLowerCase();
+    if (tl.startsWith("**review failed:**")) return "failed" as const;
+    if (t.startsWith("[CLEAN]") || tl.includes("no issues found")) return "clean" as const;
     return "issues" as const;
   });
 
