@@ -1,19 +1,17 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import type { RepoDetail, WorkspaceInfo } from "$lib/ipc";
+  import type { RepoDetail } from "$lib/ipc";
   import { syncMain, getRepoHead, checkoutDefaultBranch, checkMainBehind } from "$lib/ipc";
-  import { Settings, Check, Plus, RefreshCw, AlertTriangle, ChevronLeft, Zap, Network } from "lucide-svelte";
+  import { Settings, Check, Plus, RefreshCw, AlertTriangle, ChevronLeft, Zap, Network, LayoutGrid } from "lucide-svelte";
   import Dropdown from "./Dropdown.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
-
-  type AppMode = "work" | "plan";
 
   interface Props {
     repos: RepoDetail[];
     activeRepo: RepoDetail;
-    selectedWs: WorkspaceInfo | undefined;
-    appMode: AppMode;
-    onModeChange: (mode: AppMode) => void;
+    inWorkspace: boolean;
+    workspaceTitle: string | null;
+    onGoToPlan: () => void;
     onSelectRepo: (repo: RepoDetail) => void;
     onSettings: () => void;
     onGoHome: () => void;
@@ -25,7 +23,7 @@
     onShowDepGraph?: () => void;
   }
 
-  let { repos, activeRepo, selectedWs, appMode, onModeChange, onSelectRepo, onSettings, onGoHome, highlightedRepoIndex, onDropdownClose, autopilotEnabled = false, onAutopilotToggle, autopilotStatus, onShowDepGraph }: Props =
+  let { repos, activeRepo, inWorkspace, workspaceTitle, onGoToPlan, onSelectRepo, onSettings, onGoHome, highlightedRepoIndex, onDropdownClose, autopilotEnabled = false, onAutopilotToggle, autopilotStatus, onShowDepGraph }: Props =
     $props();
 
   let dropdownRef: Dropdown | undefined = $state();
@@ -43,8 +41,8 @@
   // Check HEAD branch + behind count when entering plan mode or switching repos
   $effect(() => {
     const repoId = activeRepo.id;
-    const mode = appMode;
-    if (mode === "plan") {
+    const viewing = inWorkspace;
+    if (!viewing) {
       checking = true;
       getRepoHead(repoId)
         .then((b) => {
@@ -166,13 +164,21 @@
         <Settings size={14} />
       </button>
     </div>
-    <div class="mode-switcher">
-      <button class="mode-btn" class:active={appMode === "plan"} onclick={() => onModeChange("plan")}>
-        Plan <kbd class="mode-hint">⌘1</kbd>
+    <div class="breadcrumb">
+      <button
+        class="breadcrumb-segment"
+        class:current={!inWorkspace}
+        onclick={onGoToPlan}
+        disabled={!inWorkspace}
+      >
+        <LayoutGrid size={13} />
+        {#if inWorkspace}
+          <kbd class="mode-hint">⌘1</kbd>
+        {/if}
       </button>
-      <button class="mode-btn" class:active={appMode === "work"} onclick={() => onModeChange("work")}>
-        Work <kbd class="mode-hint">⌘2</kbd>
-      </button>
+      {#if inWorkspace && workspaceTitle}
+        <span class="breadcrumb-segment current task-title">{workspaceTitle}</span>
+      {/if}
     </div>
   </div>
 
@@ -182,7 +188,7 @@
     {#if autopilotEnabled && autopilotStatus}
       <span class="autopilot-status">{autopilotStatus}</span>
     {/if}
-    {#if appMode === "plan"}
+    {#if !inWorkspace}
       {#if !onDefaultBranch}
         <div class="branch-warning">
           <AlertTriangle size={13} />
@@ -291,7 +297,7 @@
     pointer-events: none;
   }
 
-  .mode-switcher {
+  .breadcrumb {
     display: flex;
     align-items: stretch;
     background: var(--bg-card);
@@ -300,10 +306,11 @@
     overflow: hidden;
   }
 
-  .mode-btn {
+  .breadcrumb-segment {
     padding: 0.4rem 0.55rem;
     background: transparent;
     border: none;
+    border-radius: 0;
     color: var(--text-dim);
     font-family: inherit;
     font-size: 0.8rem;
@@ -313,20 +320,28 @@
     align-items: center;
     gap: 0.3rem;
     transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
   }
 
-  .mode-btn:hover:not(.active) {
+  .breadcrumb-segment:hover:not(.current):not(:disabled) {
     color: var(--text-secondary);
     background: var(--bg-hover);
   }
 
-  .mode-btn.active {
+  .breadcrumb-segment.current {
     background: var(--bg-active);
     color: var(--accent);
+    cursor: default;
   }
 
-  .mode-btn + .mode-btn {
-    border-left: 1px solid var(--border);
+  .breadcrumb-segment:disabled:not(.current) {
+    cursor: default;
+  }
+
+  .breadcrumb-segment.task-title {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .mode-hint {

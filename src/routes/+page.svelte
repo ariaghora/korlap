@@ -624,10 +624,6 @@
           e.preventDefault();
           appMode = "plan";
           break;
-        case "2":
-          e.preventDefault();
-          appMode = "work";
-          break;
         case "3":
           e.preventDefault();
           autopilotEnabled = !autopilotEnabled;
@@ -1623,11 +1619,11 @@
         gitOpInProgress.set(wsId, true);
         addActionMessage(wsId, crypto.randomUUID(), `Committing & pushing to PR #${pr.number}`);
         try {
+          const msg = await generateCommitMessage(wsId);
           try {
-            const msg = await generateCommitMessage(wsId);
             await gitCommit(wsId, msg);
           } catch (commitErr) {
-            // If everything is already committed, proceed to push
+            // Agent may have already committed — nothing to commit is not fatal
             if (!String(commitErr).includes("Nothing to commit")) throw commitErr;
           }
           await gitPush(wsId);
@@ -1699,11 +1695,10 @@
     try {
       if (files.length > 0) {
         addActionMessage(wsId, crypto.randomUUID(), "Committing & pushing changes");
+        const msg = await generateCommitMessage(wsId);
         try {
-          const msg = await generateCommitMessage(wsId);
           await gitCommit(wsId, msg);
         } catch (commitErr) {
-          // If everything is already committed, proceed to push
           if (!String(commitErr).includes("Nothing to commit")) throw commitErr;
         }
         await gitPush(wsId);
@@ -2136,9 +2131,9 @@
       {activeRepo}
       highlightedRepoIndex={repoDropdownIndex}
       onDropdownClose={() => (repoDropdownIndex = -1)}
-      {selectedWs}
-      {appMode}
-      onModeChange={(m) => { appMode = m; }}
+      inWorkspace={appMode === "work"}
+      workspaceTitle={selectedWs?.task_title ?? selectedWs?.name ?? null}
+      onGoToPlan={() => { appMode = "plan"; }}
       onSelectRepo={selectRepo}
       onSettings={() => (showSettings = true)}
       onGoHome={() => { if (activeRepo) saveAutopilotForRepo(activeRepo.id); activeRepo = null; }}
