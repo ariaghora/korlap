@@ -114,11 +114,12 @@
   let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
 
   // ── ANSI → HTML converter ───────────────────────────────────────
+  // Maps ANSI SGR color codes to CSS custom properties (set by theme system)
   const ANSI_COLORS: Record<number, string> = {
-    30: "#666", 31: "#e06c75", 32: "#98c379", 33: "#e5c07b",
-    34: "#61afef", 35: "#c678dd", 36: "#56b6c2", 37: "#abb2bf",
-    90: "#5c6370", 91: "#e06c75", 92: "#98c379", 93: "#e5c07b",
-    94: "#61afef", 95: "#c678dd", 96: "#56b6c2", 97: "#c8ccd4",
+    30: "var(--ansi-black)",   31: "var(--ansi-red)",     32: "var(--ansi-green)",   33: "var(--ansi-yellow)",
+    34: "var(--ansi-blue)",    35: "var(--ansi-magenta)", 36: "var(--ansi-cyan)",    37: "var(--ansi-white)",
+    90: "var(--ansi-bright-black)",  91: "var(--ansi-bright-red)",     92: "var(--ansi-bright-green)",  93: "var(--ansi-bright-yellow)",
+    94: "var(--ansi-bright-blue)",   95: "var(--ansi-bright-magenta)", 96: "var(--ansi-bright-cyan)",   97: "var(--ansi-bright-white)",
   };
 
   function ansiToHtml(text: string): string {

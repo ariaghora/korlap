@@ -80,13 +80,29 @@ function isDark(): boolean {
   return typeof window === "undefined" || window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
+// Map TerminalColors camelCase keys to CSS custom property names
+const ANSI_KEY_MAP: Record<string, string> = {
+  black: "ansi-black", red: "ansi-red", green: "ansi-green", yellow: "ansi-yellow",
+  blue: "ansi-blue", magenta: "ansi-magenta", cyan: "ansi-cyan", white: "ansi-white",
+  brightBlack: "ansi-bright-black", brightRed: "ansi-bright-red",
+  brightGreen: "ansi-bright-green", brightYellow: "ansi-bright-yellow",
+  brightBlue: "ansi-bright-blue", brightMagenta: "ansi-bright-magenta",
+  brightCyan: "ansi-bright-cyan", brightWhite: "ansi-bright-white",
+};
+
 function applyCssVars(): void {
   if (typeof document === "undefined") return;
   const t = themes[activeId];
-  const vars = isDark() ? t.css.dark : t.css.light;
+  const dark = isDark();
+  const vars = dark ? t.css.dark : t.css.light;
   const root = document.documentElement;
   for (const [key, value] of Object.entries(vars)) {
     root.style.setProperty(`--${key}`, value);
+  }
+  // Expose terminal ANSI colors as CSS custom properties
+  const term = dark ? t.terminal.dark : t.terminal.light;
+  for (const [key, cssName] of Object.entries(ANSI_KEY_MAP)) {
+    root.style.setProperty(`--${cssName}`, term[key as keyof TerminalColors]);
   }
 }
 
