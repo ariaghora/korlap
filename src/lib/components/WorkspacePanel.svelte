@@ -5,7 +5,7 @@
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, Loader, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, Timer, RefreshCcw, Plus } from "lucide-svelte";
+  import { ExternalLink, Check, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, Timer, RefreshCcw, Plus } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
@@ -265,7 +265,7 @@
           title={currentScriptStatus === "running" ? "Script running…" : `Run: ${repoSettings?.run_script}`}
         >
           {#if currentScriptStatus === "running"}
-            <Loader size={12} class="status-icon spinning" />
+            <span class="btn-spinner"></span>
           {:else if currentScriptStatus === "success"}
             <Check size={12} />
           {:else if currentScriptStatus === "error"}
@@ -285,7 +285,7 @@
             disabled={isBusy || updatingBranch}
             title="Merge {baseBehindBy} new commit{baseBehindBy === 1 ? '' : 's'} from base branch"
           >
-            {#if updatingBranch}<Loader size={11} class="status-icon spinning" />{:else}<ArrowDown size={11} />{/if}
+            {#if updatingBranch}<span class="btn-spinner"></span>{:else}<ArrowDown size={11} />{/if}
             Update{#if !updatingBranch}&nbsp;<span class="update-count">{baseBehindBy}</span>{/if}
           </button>
         {/if}
@@ -302,13 +302,13 @@
             {:else if prStatus.checks === "failing"}
               <button class="action-badge checks-fail" onclick={onPrAction} disabled={isBusy}><Wrench size={11} /> Fix issues</button>
             {:else if prStatus.checks === "pending"}
-              <span class="status-label checks-pending"><Loader size={10} class="status-icon spinning" /> Checks pending</span>
+              <span class="status-label checks-pending"><span class="btn-spinner btn-spinner-sm"></span> Checks pending</span>
             {:else if (prStatus.ahead_by ?? 0) > 0}
-              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Push</button>
+              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<ArrowUp size={11} />{/if} Push</button>
             {:else if wsChanges && (wsChanges.additions !== prStatus.additions || wsChanges.deletions !== prStatus.deletions)}
-              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<ArrowUp size={11} />{/if} Commit & push</button>
+              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<ArrowUp size={11} />{/if} Commit & push</button>
             {:else}
-              <button class="action-badge mergeable" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitMerge size={11} />{/if} Merge</button>
+              <button class="action-badge mergeable" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<GitMerge size={11} />{/if} Merge</button>
             {/if}
           </div>
         {:else if prStatus?.state === "merged"}
@@ -318,7 +318,7 @@
             <button class="action-badge review" onclick={onReview} disabled={isBusy}>
               <Eye size={11} /> Review
             </button>
-            <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<Loader size={11} class="status-icon spinning" />{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
+            <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
           </div>
         {/if}
       </div>
@@ -513,7 +513,7 @@
               style={chatDragOffset.x || chatDragOffset.y ? `transform: translate(${chatDragOffset.x}px, ${chatDragOffset.y}px)` : ""}
             >
               {#if isAgentRunning}
-                <Loader size={13} class="status-icon spinning" />
+                <span class="btn-spinner btn-spinner-pill"></span>
               {:else}
                 <MessageSquare size={13} strokeWidth={2} />
               {/if}
@@ -704,8 +704,24 @@
     background: color-mix(in srgb, var(--diff-del) 12%, transparent);
   }
 
-  .run-script-btn :global(.status-icon.spinning) {
-    animation: spin 1.5s linear infinite;
+  .btn-spinner {
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .btn-spinner-sm {
+    width: 9px;
+    height: 9px;
+  }
+
+  .btn-spinner-pill {
+    width: 12px;
+    height: 12px;
   }
 
   /* ── Tab actions (right side of tab bar) ────────── */
@@ -863,10 +879,6 @@
 
   .status-label :global(.status-icon) {
     flex-shrink: 0;
-  }
-
-  .status-label :global(.status-icon.spinning) {
-    animation: spin 1.5s linear infinite;
   }
 
   @keyframes spin {
@@ -1138,14 +1150,9 @@
     color: #fff;
   }
 
-  .chat-pill-active :global(.status-icon.spinning) {
-    animation: spin 1.5s linear infinite;
-    color: #fff;
-  }
-
-  .chat-pill :global(.status-icon.spinning) {
-    animation: spin 1.5s linear infinite;
-    color: var(--accent);
+  .chat-pill-active .btn-spinner {
+    border-color: color-mix(in srgb, #fff 25%, transparent);
+    border-top-color: #fff;
   }
 
   .chat-pill-label {
