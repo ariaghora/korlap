@@ -105,12 +105,6 @@ pub fn check_gh_cli() -> Result<GhCliStatus, String> {
     })
 }
 
-#[derive(Clone, serde::Serialize)]
-pub struct GhAuthResult {
-    pub code: String,
-    pub url: String,
-}
-
 #[tauri::command]
 pub async fn gh_auth_login(app_handle: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {

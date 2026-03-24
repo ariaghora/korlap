@@ -2,7 +2,7 @@ use crate::state::AppState;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
-use super::helpers::{detect_default_branch, git_cmd_with_auth, resolve_gh_token};
+use super::helpers::{git_cmd_with_auth, resolve_gh_token};
 
 // ── Repo branch commands ────────────────────────────────────────────
 

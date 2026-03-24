@@ -1,6 +1,7 @@
 // macOS traffic light positioning.
 // Adapted from db-atelier's approach: moves the button group superview
 // as a unit, preserving native inter-button spacing.
+#![allow(deprecated, missing_abi)]
 
 use cocoa::appkit::{NSView, NSWindow, NSWindowButton};
 use cocoa::base::id;

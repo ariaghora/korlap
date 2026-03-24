@@ -36,6 +36,11 @@ grep-matcher = "0.1"
 regex = "1"
 sysinfo = "0.33"
 
+[lints.rust]
+# The `objc` 0.2 crate's sel_impl! macro uses cfg(feature = "cargo-clippy"),
+# which triggers check-cfg warnings. Declare it as expected.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"

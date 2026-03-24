@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 use uuid::Uuid;
 
-use super::helpers::{detect_default_branch, inject_shell_env, repo_display_name};
+use super::helpers::{detect_default_branch, repo_display_name};
 
 #[derive(Clone, serde::Serialize)]
 pub struct RepoDetail {
