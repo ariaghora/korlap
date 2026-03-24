@@ -5,7 +5,7 @@
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, Timer, RefreshCcw, Plus } from "lucide-svelte";
+  import { ExternalLink, Check, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, ChevronDown, Timer, RefreshCcw, Plus, X } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
@@ -113,14 +113,77 @@
 
   let isBusy = $derived(selectedWs?.status === "running" || reviewRunning || operationInProgress);
 
+  // ── ANSI → HTML converter ───────────────────────────────────────
+  // Maps ANSI SGR color codes to CSS custom properties (set by theme system)
+  const ANSI_COLORS: Record<number, string> = {
+    30: "var(--ansi-black)",   31: "var(--ansi-red)",     32: "var(--ansi-green)",   33: "var(--ansi-yellow)",
+    34: "var(--ansi-blue)",    35: "var(--ansi-magenta)", 36: "var(--ansi-cyan)",    37: "var(--ansi-white)",
+    90: "var(--ansi-bright-black)",  91: "var(--ansi-bright-red)",     92: "var(--ansi-bright-green)",  93: "var(--ansi-bright-yellow)",
+    94: "var(--ansi-bright-blue)",   95: "var(--ansi-bright-magenta)", 96: "var(--ansi-bright-cyan)",   97: "var(--ansi-bright-white)",
+  };
+
+  function ansiToHtml(text: string): string {
+    // Escape HTML entities first
+    let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    let result = "";
+    let open = false;
+
+    // Split on ANSI escape sequences, keeping the delimiters
+    const parts = html.split(/(\x1b\[[0-9;]*m)/);
+    for (const part of parts) {
+      const m = part.match(/^\x1b\[([0-9;]*)m$/);
+      if (m) {
+        const codes = m[1].split(";").map(Number);
+        if (open) { result += "</span>"; open = false; }
+        const styles: string[] = [];
+        for (const c of codes) {
+          if (c === 0) continue; // reset — span already closed
+          if (c === 1) styles.push("font-weight:bold");
+          else if (c === 2) styles.push("opacity:0.6");
+          else if (c === 3) styles.push("font-style:italic");
+          else if (c === 4) styles.push("text-decoration:underline");
+          else if (ANSI_COLORS[c]) styles.push(`color:${ANSI_COLORS[c]}`);
+        }
+        if (styles.length) {
+          result += `<span style="${styles.join(";")}">`;
+          open = true;
+        }
+      } else {
+        result += part;
+      }
+    }
+    if (open) result += "</span>";
+    return result;
+  }
+
   // ── Script runner state ──────────────────────────────────────────
   type ScriptStatus = "idle" | "running" | "success" | "error";
   let scriptStatusMap = new SvelteMap<string, ScriptStatus>();
+  let scriptOutputMap = new SvelteMap<string, string[]>();
+  let scriptExitCodeMap = new SvelteMap<string, number | null>();
+  let scriptPopoverOpen = new SvelteMap<string, boolean>();
 
   let currentScriptStatus = $derived(
     selectedWsId ? scriptStatusMap.get(selectedWsId) ?? "idle" : "idle"
   );
+  let currentScriptOutput = $derived(
+    selectedWsId ? scriptOutputMap.get(selectedWsId) ?? [] : []
+  );
+  let currentScriptExitCode = $derived(
+    selectedWsId ? scriptExitCodeMap.get(selectedWsId) ?? null : null
+  );
+  let isPopoverOpen = $derived(
+    selectedWsId ? scriptPopoverOpen.get(selectedWsId) ?? false : false
+  );
   let hasRunScript = $derived(!!repoSettings?.run_script?.trim());
+
+  let outputEl = $state<HTMLPreElement | null>(null);
+
+  function scrollOutputToBottom() {
+    if (outputEl) {
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+  }
 
   // ── Floating panel focus & drag offsets ─────────────────────────
   let focusedPanel = $state<"review" | "chat">("chat");
@@ -223,10 +286,20 @@
     if (!selectedWs || !repoSettings?.run_script?.trim()) return;
     const wsId = selectedWs.id;
     scriptStatusMap.set(wsId, "running");
+    scriptOutputMap.set(wsId, []);
+    scriptExitCodeMap.delete(wsId);
+    scriptPopoverOpen.set(wsId, true);
 
     runScript(wsId, repoSettings.run_script, (event: ScriptEvent) => {
-      if (event.type === "exit") {
+      if (event.type === "output") {
+        const prev = scriptOutputMap.get(wsId) ?? [];
+        // Cap at 500 lines to avoid unbounded memory growth
+        const lines = prev.length >= 500 ? [...prev.slice(1), event.data] : [...prev, event.data];
+        scriptOutputMap.set(wsId, lines);
+        requestAnimationFrame(scrollOutputToBottom);
+      } else if (event.type === "exit") {
         const ok = event.code === 0;
+        scriptExitCodeMap.set(wsId, event.code);
         scriptStatusMap.set(wsId, ok ? "success" : "error");
         setTimeout(() => {
           if (scriptStatusMap.get(wsId) === (ok ? "success" : "error")) {
@@ -235,6 +308,7 @@
         }, 2000);
       }
     }).catch(() => {
+      scriptExitCodeMap.set(wsId, -1);
       scriptStatusMap.set(wsId, "error");
       setTimeout(() => {
         if (scriptStatusMap.get(wsId) === "error") {
@@ -243,7 +317,27 @@
       }, 2000);
     });
   }
+
+  function togglePopover() {
+    if (!selectedWsId) return;
+    const open = scriptPopoverOpen.get(selectedWsId) ?? false;
+    scriptPopoverOpen.set(selectedWsId, !open);
+  }
+
+  function closePopover() {
+    if (!selectedWsId) return;
+    scriptPopoverOpen.set(selectedWsId, false);
+  }
+
+  function handlePopoverClickOutside(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (!target.closest(".run-script-wrapper")) {
+      closePopover();
+    }
+  }
 </script>
+
+<svelte:window onclick={handlePopoverClickOutside} />
 
 <main class="panel">
   {#if selectedWs}
@@ -255,26 +349,68 @@
         <span class="breadcrumb-base">{defaultBranch}</span>
       </span>
       {#if hasRunScript}
-        <button
-          class="run-script-btn"
-          class:running={currentScriptStatus === "running"}
-          class:success={currentScriptStatus === "success"}
-          class:error={currentScriptStatus === "error"}
-          onclick={handleRunScript}
-          disabled={currentScriptStatus === "running"}
-          title={currentScriptStatus === "running" ? "Script running…" : `Run: ${repoSettings?.run_script}`}
-        >
-          {#if currentScriptStatus === "running"}
-            <span class="btn-spinner"></span>
-          {:else if currentScriptStatus === "success"}
-            <Check size={12} />
-          {:else if currentScriptStatus === "error"}
-            <CircleX size={12} />
-          {:else}
-            <Play size={12} />
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="run-script-wrapper" onclick={(e) => e.stopPropagation()}>
+          <div class="run-script-group">
+            <button
+              class="run-script-btn"
+              class:running={currentScriptStatus === "running"}
+              class:success={currentScriptStatus === "success"}
+              class:error={currentScriptStatus === "error"}
+              onclick={handleRunScript}
+              disabled={currentScriptStatus === "running"}
+              title={currentScriptStatus === "running" ? "Script running…" : `Run: ${repoSettings?.run_script}`}
+            >
+              {#if currentScriptStatus === "running"}
+                <span class="btn-spinner"></span>
+              {:else if currentScriptStatus === "success"}
+                <Check size={12} />
+              {:else if currentScriptStatus === "error"}
+                <CircleX size={12} />
+              {:else}
+                <Play size={12} />
+              {/if}
+              Run
+            </button>
+            {#if currentScriptOutput.length > 0 || currentScriptStatus === "running"}
+              <button
+                class="run-script-toggle"
+                class:running={currentScriptStatus === "running"}
+                class:success={currentScriptStatus === "success"}
+                class:error={currentScriptStatus === "error"}
+                onclick={togglePopover}
+                title={isPopoverOpen ? "Hide output" : "Show output"}
+              >
+                {#if isPopoverOpen}
+                  <ChevronUp size={10} />
+                {:else}
+                  <ChevronDown size={10} />
+                {/if}
+              </button>
+            {/if}
+          </div>
+          {#if isPopoverOpen}
+            <div class="script-popover">
+              <div class="script-popover-header">
+                <span class="script-popover-title">
+                  {#if currentScriptStatus === "running"}
+                    <span class="btn-spinner btn-spinner-sm"></span>
+                  {/if}
+                  {repoSettings?.run_script}
+                </span>
+                <button class="script-popover-close" onclick={closePopover}>
+                  <X size={12} />
+                </button>
+              </div>
+              <pre class="script-popover-output" bind:this={outputEl}>{#each currentScriptOutput as line}{@html ansiToHtml(line)}{/each}</pre>
+              {#if currentScriptExitCode !== null}
+                <div class="script-popover-exit" class:ok={currentScriptExitCode === 0} class:fail={currentScriptExitCode !== 0}>
+                  {currentScriptExitCode === 0 ? "✓ Exited successfully" : `✗ Exit code ${currentScriptExitCode}`}
+                </div>
+              {/if}
+            </div>
           {/if}
-          Run
-        </button>
+        </div>
       {/if}
 
       <div class="tab-actions">
@@ -700,6 +836,154 @@
     color: var(--diff-del);
     border-color: color-mix(in srgb, var(--diff-del) 30%, transparent);
     background: color-mix(in srgb, var(--diff-del) 12%, transparent);
+  }
+
+  /* ── Run script wrapper + popover ────────────────── */
+
+  .run-script-wrapper {
+    position: relative;
+  }
+
+  .run-script-group {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .run-script-group .run-script-btn:not(:last-child) {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: none;
+  }
+
+  .run-script-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    padding: 0;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-left: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    border-radius: 0 6px 6px 0;
+    color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  .run-script-toggle:hover {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  .run-script-toggle.success {
+    color: var(--status-ok);
+    border-color: color-mix(in srgb, var(--status-ok) 30%, transparent);
+    border-left-color: color-mix(in srgb, var(--status-ok) 20%, transparent);
+    background: color-mix(in srgb, var(--status-ok) 12%, transparent);
+  }
+
+  .run-script-toggle.error {
+    color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 30%, transparent);
+    border-left-color: color-mix(in srgb, var(--diff-del) 20%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 12%, transparent);
+  }
+
+  .run-script-toggle.running {
+    cursor: default;
+  }
+
+  .script-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 420px;
+    max-height: 300px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    z-index: 50;
+    overflow: hidden;
+  }
+
+  .script-popover-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .script-popover-title {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.68rem;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .script-popover-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .script-popover-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .script-popover-output {
+    flex: 1;
+    margin: 0;
+    padding: 0.4rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    overflow-y: auto;
+    overflow-x: hidden;
+    white-space: pre-wrap;
+    word-break: break-all;
+    min-height: 40px;
+    max-height: 230px;
+  }
+
+  .script-popover-exit {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .script-popover-exit.ok {
+    color: var(--status-ok);
+    background: color-mix(in srgb, var(--status-ok) 5%, transparent);
+  }
+
+  .script-popover-exit.fail {
+    color: var(--diff-del);
+    background: color-mix(in srgb, var(--diff-del) 5%, transparent);
   }
 
   .btn-spinner {
