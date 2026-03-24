@@ -489,6 +489,7 @@
   </nav>
 
   <main class="settings-main">
+    <div class="settings-content">
     {#if activeSection === "scripts"}
       <div class="section-header">
         <h1>Scripts</h1>
@@ -1096,6 +1097,7 @@
         </div>
       </div>
     {/if}
+    </div>
   </main>
 
 </div>
@@ -1192,7 +1194,13 @@
     flex: 1;
     padding: 2rem 2.5rem;
     overflow-y: auto;
-    max-width: 580px;
+    display: flex;
+    justify-content: center;
+  }
+
+  .settings-content {
+    width: 100%;
+    max-width: 640px;
   }
 
   .section-header {
