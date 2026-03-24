@@ -357,18 +357,16 @@
           {/each}
         </div>
         <div class="content-left-body">
-          {#if activeTab === "diff" && selectedWs}
-            <div class="ws-tab-container active-layer">
+          {#if selectedWs}
+            <div class="ws-tab-container active-layer" style:display={activeTab === "diff" ? undefined : "none"}>
               <DiffViewer
                 workspaceId={selectedWs.id}
                 refreshTrigger={diffRefreshTrigger}
                 onQuote={onDiffQuote}
+                onOpenFile={(path) => { fileNavigatePath = path; activeTab = "files"; }}
               />
             </div>
-          {/if}
-
-          {#if activeTab === "files" && selectedWs}
-            <div class="ws-tab-container active-layer">
+            <div class="ws-tab-container active-layer" style:display={activeTab === "files" ? undefined : "none"}>
               <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} navigateToLine={fileNavigateLine} />
             </div>
           {/if}

@@ -1,15 +1,16 @@
 <script lang="ts">
   import { getChangedFiles, getDiff, type ChangedFile } from "$lib/ipc";
-  import { MessageSquare } from "lucide-svelte";
+  import { MessageSquare, FileCode } from "lucide-svelte";
   import ResizeHandle from "./ResizeHandle.svelte";
 
   interface Props {
     workspaceId: string;
     refreshTrigger?: number;
     onQuote?: (text: string) => void;
+    onOpenFile?: (path: string) => void;
   }
 
-  let { workspaceId, refreshTrigger = 0, onQuote }: Props = $props();
+  let { workspaceId, refreshTrigger = 0, onQuote, onOpenFile }: Props = $props();
 
   let files = $state<ChangedFile[]>([]);
   let selectedFile = $state<string | null>(null);
@@ -258,7 +259,9 @@
         </div>
         <div class="file-list">
           {#each files as file}
-            <button
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
               class="file-item"
               class:active={file.path === selectedFile}
               onclick={() => selectFile(file.path)}
@@ -273,7 +276,16 @@
                 <span class="stat-add">+{file.additions}</span>
                 <span class="stat-del">−{file.deletions}</span>
               </span>
-            </button>
+              {#if onOpenFile}
+                <button
+                  class="open-file-btn"
+                  title="Open in Files tab"
+                  onclick={(e: MouseEvent) => { e.stopPropagation(); onOpenFile(file.path); }}
+                >
+                  <FileCode size={13} />
+                </button>
+              {/if}
+            </div>
           {/each}
         </div>
       </div>
@@ -400,7 +412,6 @@
   }
 
   .file-item {
-    width: 100%;
     display: flex;
     align-items: center;
     gap: 0.35rem;
@@ -445,6 +456,7 @@
 
   .file-path {
     flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -461,6 +473,31 @@
     gap: 0.2rem;
     flex-shrink: 0;
     opacity: 0.7;
+  }
+
+  .open-file-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  .file-item:hover .file-stat-inline {
+    display: none;
+  }
+
+  .file-item:hover .open-file-btn {
+    display: flex;
+  }
+
+  .open-file-btn:hover {
+    color: var(--accent);
   }
 
   .refresh-btn {
