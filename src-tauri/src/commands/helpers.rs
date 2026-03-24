@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -118,7 +119,66 @@ pub fn get_shell_env() -> &'static ShellEnv {
             tracing::warn!("Could not resolve `claude` binary path — agent spawn will likely fail");
         }
 
-        ShellEnv { ssh_auth_sock, home, path, claude_path }
+        // Capture full environment from interactive login shell so spawned
+        // processes get all user env vars (CARGO_TARGET_DIR, GOPATH, etc.)
+        // that a Tauri app launched from Finder/Dock would otherwise miss.
+        let all_vars: HashMap<String, String> = std::process::Command::new("zsh")
+            .args([
+                "-lic",
+                &format!("echo {delimiter}; /usr/bin/env; echo {delimiter}"),
+            ])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .and_then(|o| {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let mut parts = stdout.split(delimiter);
+                let _before = parts.next();
+                let env_section = parts.next()?;
+                let mut vars = HashMap::new();
+                let mut current_key = String::new();
+                let mut current_val = String::new();
+                for line in env_section.lines() {
+                    if let Some(eq_pos) = line.find('=') {
+                        let key = &line[..eq_pos];
+                        // Valid env var names: alphanumeric + underscore, non-empty
+                        if !key.is_empty()
+                            && key
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                        {
+                            // Flush previous entry
+                            if !current_key.is_empty() {
+                                vars.insert(
+                                    std::mem::take(&mut current_key),
+                                    std::mem::take(&mut current_val),
+                                );
+                            }
+                            current_key = key.to_string();
+                            current_val = line[eq_pos + 1..].to_string();
+                            continue;
+                        }
+                    }
+                    // Continuation of a multi-line value
+                    if !current_key.is_empty() {
+                        current_val.push('\n');
+                        current_val.push_str(line);
+                    }
+                }
+                // Flush last entry
+                if !current_key.is_empty() {
+                    vars.insert(current_key, current_val);
+                }
+                Some(vars)
+            })
+            .unwrap_or_default();
+
+        tracing::info!(
+            "Captured {} env vars from login shell",
+            all_vars.len()
+        );
+
+        ShellEnv { ssh_auth_sock, home, path, claude_path, all_vars }
     })
 }
 
@@ -127,6 +187,10 @@ pub struct ShellEnv {
     pub home: Option<String>,
     pub path: Option<String>,
     pub claude_path: Option<String>,
+    /// Full environment captured from an interactive login shell.
+    /// Contains all user env vars (CARGO_TARGET_DIR, GOPATH, etc.)
+    /// that a Tauri app launched from Finder/Dock would otherwise miss.
+    pub all_vars: HashMap<String, String>,
 }
 
 /// Strip ANSI escape sequences from a string.
@@ -148,18 +212,21 @@ pub fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Inject essential shell environment vars that Tauri apps launched from
-/// Finder/Dock don't inherit (SSH agent, PATH, HOME, etc.)
+/// Inject the full user shell environment into a Command so that processes
+/// spawned from a Finder/Dock-launched Tauri app behave like they were
+/// started from a terminal (includes CARGO_TARGET_DIR, GOPATH, etc.).
 pub fn inject_shell_env(cmd: &mut std::process::Command) {
     let env = get_shell_env();
-    if let Some(ref sock) = env.ssh_auth_sock {
-        cmd.env("SSH_AUTH_SOCK", sock);
-    }
-    if let Some(ref home) = env.home {
-        cmd.env("HOME", home);
-    }
-    if let Some(ref path) = env.path {
-        cmd.env("PATH", path);
+
+    // Apply all env vars captured from the interactive login shell.
+    cmd.envs(&env.all_vars);
+
+    // Fallback: SSH_AUTH_SOCK from launchctl if not present in shell env
+    // (some setups only expose it via launchd, not the shell profile).
+    if !env.all_vars.contains_key("SSH_AUTH_SOCK") {
+        if let Some(ref sock) = env.ssh_auth_sock {
+            cmd.env("SSH_AUTH_SOCK", sock);
+        }
     }
 }
 
