@@ -1771,8 +1771,18 @@
 
     if (sendingByWorkspace.get(wsId) || reviewByWorkspace.has(wsId)) return;
 
+    // Show immediate UI feedback before any async work
+    addActionMessage(wsId, crypto.randomUUID(), "Reviewing code");
+
+    const hasContext = contextBuildStatus === "built";
+    reviewByWorkspace.set(wsId, {
+      status: "running",
+      currentTask: hasContext ? "Checking invariants..." : "Starting review...",
+      resultMarkdown: "",
+    });
+
     // Invariant pre-check: run before review if knowledge base is built
-    if (contextBuildStatus === "built") {
+    if (hasContext) {
       try {
         const result = await checkInvariants(wsId);
         if (!result.passed && result.violations.length > 0) {
@@ -1781,6 +1791,7 @@
             .join("\n");
           // In autopilot: send to agent to fix
           if (autopilotEnabled) {
+            reviewByWorkspace.delete(wsId);
             addActionMessage(wsId, crypto.randomUUID(), "Fixing invariant violations");
             sendPrompt(wsId, `These invariant violations were found in your changes:\n\n${violationText}\n\nFix all of them before proceeding.`, "Fixing invariant violations");
             return;
@@ -1790,6 +1801,12 @@
         }
       } catch {
         // Fail-open: if check fails, proceed with review
+      }
+      // Update task now that invariants are done
+      const review = reviewByWorkspace.get(wsId);
+      if (review) {
+        review.currentTask = "Starting review...";
+        reviewByWorkspace.set(wsId, { ...review });
       }
     }
 
@@ -1807,14 +1824,6 @@
       .replace(/\{\{base_branch\}\}/g, baseBranch)
       .replace(/\{\{pr_number\}\}/g, pr?.state === "open" ? String(pr.number) : "N/A")
       .replace(/\{\{pr_title\}\}/g, pr?.state === "open" ? (pr.title ?? "") : "N/A");
-
-    addActionMessage(wsId, crypto.randomUUID(), "Reviewing code");
-
-    reviewByWorkspace.set(wsId, {
-      status: "running",
-      currentTask: "Starting review...",
-      resultMarkdown: "",
-    });
 
     try {
       await sendMessage(wsId, reviewPrompt, (event: AgentEvent) => {
