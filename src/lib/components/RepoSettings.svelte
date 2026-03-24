@@ -6,9 +6,9 @@
     type ContextMeta, type ContextBuildStatus, type AgentEvent,
   } from "$lib/ipc";
   import { onMount } from "svelte";
-  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown } from "lucide-svelte";
+  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown, Sun, Moon, Monitor } from "lucide-svelte";
   import { themeList, getPreviewColors, type ThemeId } from "$lib/themes";
-  import { getThemeId, setTheme } from "$lib/stores/theme.svelte";
+  import { getThemeId, setTheme, getColorMode, setColorMode, type ColorMode } from "$lib/stores/theme.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   interface Props {
@@ -23,6 +23,7 @@
   type Section = "scripts" | "agent" | "knowledge" | "appearance";
   let activeSection = $state<Section>("scripts");
   let currentThemeId = $state<ThemeId>(getThemeId());
+  let currentColorMode = $state<ColorMode>(getColorMode());
   let settings = $state<RepoSettings>({
     setup_script: "",
     run_script: "",
@@ -1068,6 +1069,32 @@
           {/each}
         </div>
       </div>
+
+      <div class="setting-block">
+        <div class="setting-meta">
+          <span class="setting-name">Color mode</span>
+          <span class="setting-desc">Override system dark/light preference</span>
+        </div>
+        <div class="color-mode-picker">
+          {#each ([
+            { mode: "light" as ColorMode, icon: Sun, label: "Light" },
+            { mode: "dark" as ColorMode, icon: Moon, label: "Dark" },
+            { mode: "system" as ColorMode, icon: Monitor, label: "System" },
+          ]) as opt}
+            <button
+              class="color-mode-btn"
+              class:active={currentColorMode === opt.mode}
+              onclick={() => {
+                currentColorMode = opt.mode;
+                setColorMode(opt.mode);
+              }}
+            >
+              <svelte:component this={opt.icon} size={14} />
+              <span>{opt.label}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
     {/if}
   </main>
 
@@ -1459,6 +1486,47 @@
 
   .theme-card.selected .theme-name {
     color: var(--accent);
+  }
+
+  /* ── Color mode picker ─────────── */
+
+  .color-mode-picker {
+    display: flex;
+    gap: 0;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    width: fit-content;
+  }
+
+  .color-mode-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.45rem 0.85rem;
+    background: none;
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .color-mode-btn:last-child {
+    border-right: none;
+  }
+
+  .color-mode-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .color-mode-btn.active {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-sidebar));
   }
 
   /* ── Knowledge base ──────────────── */
