@@ -250,8 +250,9 @@
     runScript(wsId, repoSettings.run_script, (event: ScriptEvent) => {
       if (event.type === "output") {
         const prev = scriptOutputMap.get(wsId) ?? [];
-        // Cap at 500 lines to avoid unbounded memory growth
-        const lines = prev.length >= 500 ? [...prev.slice(1), event.data] : [...prev, event.data];
+        // Strip ANSI escape codes and cap at 500 lines
+        const clean = event.data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+        const lines = prev.length >= 500 ? [...prev.slice(1), clean] : [...prev, clean];
         scriptOutputMap.set(wsId, lines);
         requestAnimationFrame(scrollOutputToBottom);
       } else if (event.type === "exit") {
