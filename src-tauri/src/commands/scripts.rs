@@ -33,6 +33,7 @@ pub fn run_script(
     let mut cmd = std::process::Command::new("zsh");
     cmd.args(["-c", &command]);
     cmd.current_dir(&worktree_path);
+    cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     inject_shell_env(&mut cmd);
@@ -44,10 +45,28 @@ pub fn run_script(
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
+    // Read stdout and stderr concurrently to avoid pipe buffer deadlock.
+    // If the child fills the stderr pipe buffer (~64KB) while we're blocked
+    // reading stdout, both sides deadlock. This is common with cargo/rustc
+    // which write all output to stderr.
     std::thread::spawn(move || {
         use std::io::BufRead;
 
-        // Read stdout
+        let stderr_channel = on_event.clone();
+        let stderr_handle = std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(stderr);
+            for line in reader.lines() {
+                match line {
+                    Ok(line) => {
+                        let _ = stderr_channel.send(ScriptEvent::Output {
+                            data: line + "\n",
+                        });
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
         let stdout_reader = std::io::BufReader::new(stdout);
         for line in stdout_reader.lines() {
             match line {
@@ -60,14 +79,7 @@ pub fn run_script(
             }
         }
 
-        // Read remaining stderr
-        let mut stderr_buf = String::new();
-        let mut stderr_reader = std::io::BufReader::new(stderr);
-        let _ = std::io::Read::read_to_string(&mut stderr_reader, &mut stderr_buf);
-        if !stderr_buf.is_empty() {
-            let _ = on_event.send(ScriptEvent::Output { data: stderr_buf });
-        }
-
+        let _ = stderr_handle.join();
         let code = child.wait().ok().and_then(|s| s.code());
         let _ = on_event.send(ScriptEvent::Exit { code });
     });
