@@ -624,10 +624,6 @@
           e.preventDefault();
           appMode = "plan";
           break;
-        case "2":
-          e.preventDefault();
-          appMode = "work";
-          break;
         case "3":
           e.preventDefault();
           autopilotEnabled = !autopilotEnabled;
@@ -2126,9 +2122,9 @@
       {activeRepo}
       highlightedRepoIndex={repoDropdownIndex}
       onDropdownClose={() => (repoDropdownIndex = -1)}
-      {selectedWs}
-      {appMode}
-      onModeChange={(m) => { appMode = m; }}
+      inWorkspace={appMode === "work"}
+      workspaceTitle={selectedWs?.task_title ?? selectedWs?.name ?? null}
+      onGoToPlan={() => { appMode = "plan"; }}
       onSelectRepo={selectRepo}
       onSettings={() => (showSettings = true)}
       onGoHome={() => { if (activeRepo) saveAutopilotForRepo(activeRepo.id); activeRepo = null; }}
