@@ -621,3 +621,128 @@ export async function interpretAutopilotCommand(
 ): Promise<AutopilotAction> {
   return invoke<AutopilotAction>("interpret_autopilot_command", { command, contextJson });
 }
+
+// ── Knowledge Base (Warm Context) ────────────────────────────────────
+
+export type ContextBuildStatus = "not_built" | "building" | "built" | "failed";
+
+export interface ContextMeta {
+  include_globs: string[];
+  exclude_globs: string[];
+  build_status: ContextBuildStatus;
+  last_built_at: number | null;
+  invariant_count: number;
+  fact_count: number;
+  context_entry_count: number;
+  contradiction_count: number;
+  precheck_model: string;
+  built_at_commit: string | null;
+}
+
+export interface InvariantViolation {
+  invariant_id: string;
+  file: string;
+  line: number;
+  description: string;
+}
+
+export interface InvariantCheckResult {
+  passed: boolean;
+  violations: InvariantViolation[];
+}
+
+export async function regenerateHot(repoId: string): Promise<void> {
+  return invoke("regenerate_hot", { repoId });
+}
+
+export async function getContextMeta(repoId: string): Promise<ContextMeta> {
+  return invoke<ContextMeta>("get_context_meta", { repoId });
+}
+
+export async function saveContextScope(
+  repoId: string,
+  includeGlobs: string[],
+  excludeGlobs: string[],
+  precheckModel: string,
+): Promise<void> {
+  return invoke("save_context_scope", { repoId, includeGlobs, excludeGlobs, precheckModel });
+}
+
+export async function buildKnowledgeBase(
+  repoId: string,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  const channel = new Channel<AgentEvent>();
+  channel.onmessage = onEvent;
+  return invoke("build_knowledge_base", { repoId, onEvent: channel });
+}
+
+export async function stopContextBuild(repoId: string): Promise<void> {
+  return invoke("stop_context_build", { repoId });
+}
+
+export async function checkInvariants(workspaceId: string): Promise<InvariantCheckResult> {
+  return invoke<InvariantCheckResult>("check_invariants", { workspaceId });
+}
+
+export async function updateContextAfterMerge(
+  repoId: string,
+  workspaceId: string,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  const channel = new Channel<AgentEvent>();
+  channel.onmessage = onEvent;
+  return invoke("update_context_after_merge", { repoId, workspaceId, onEvent: channel });
+}
+
+export async function updateKnowledgeBaseIncremental(
+  repoId: string,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  const channel = new Channel<AgentEvent>();
+  channel.onmessage = onEvent;
+  return invoke("update_knowledge_base_incremental", { repoId, onEvent: channel });
+}
+
+export async function readContextFile(
+  repoId: string,
+  filename: string,
+): Promise<string> {
+  return invoke<string>("read_context_file", { repoId, filename });
+}
+
+export async function writeContextFile(
+  repoId: string,
+  filename: string,
+  content: string,
+): Promise<void> {
+  return invoke("write_context_file", { repoId, filename, content });
+}
+
+export async function draftContradictionResolution(
+  repoId: string,
+  contradictionId: string,
+  resolution: "exception" | "update_invariant" | "tech_debt",
+  userNote: string,
+): Promise<string> {
+  return invoke<string>("draft_contradiction_resolution", {
+    repoId,
+    contradictionId,
+    resolution,
+    userNote,
+  });
+}
+
+export async function resolveContradiction(
+  repoId: string,
+  contradictionId: string,
+  resolution: "exception" | "update_invariant" | "tech_debt",
+  invariantText?: string,
+): Promise<void> {
+  return invoke("resolve_contradiction", {
+    repoId,
+    contradictionId,
+    resolution,
+    invariantText: invariantText ?? null,
+  });
+}

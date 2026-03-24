@@ -32,6 +32,7 @@
     planMode?: boolean;
     thinkingMode?: boolean;
     queue?: QueueDisplayItem[];
+    contextWarning?: boolean;
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
     onSendImmediate?: (prompt: string) => void;
     onStop: () => void;
@@ -43,7 +44,7 @@
     onReady?: (api: ChatPanelApi) => void;
   }
 
-  let { workspaceId, creating = false, planMode = false, thinkingMode = false, queue = [], onSend, onSendImmediate, onStop, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
+  let { workspaceId, creating = false, planMode = false, thinkingMode = false, queue = [], contextWarning = false, onSend, onSendImmediate, onStop, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
 
   let messagesMap = $derived(messagesByWorkspace.get(workspaceId));
   let messages = $derived(messagesMap ? [...messagesMap.values()] : []);
@@ -196,8 +197,9 @@
       if (msg.role === "user") break;
       if (msg.role === "assistant") {
         for (let j = msg.chunks.length - 1; j >= 0; j--) {
-          if (msg.chunks[j].type === "text") {
-            lastText = msg.chunks[j].content.trim();
+          const chunk = msg.chunks[j];
+          if (chunk.type === "text") {
+            lastText = chunk.content.trim();
             break;
           }
         }
@@ -600,6 +602,12 @@
           </div>
         {/each}
       </div>
+    </div>
+  {/if}
+
+  {#if contextWarning && messages.length === 0}
+    <div class="context-warning">
+      Knowledge base not built — agent will start without repo context
     </div>
   {/if}
 
@@ -1552,5 +1560,16 @@
 
   .stop-btn:hover {
     filter: brightness(1.2);
+  }
+
+  .context-warning {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    background: color-mix(in srgb, var(--accent) 5%, var(--bg-base));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 0 0.5rem 0.35rem;
+    text-align: center;
   }
 </style>

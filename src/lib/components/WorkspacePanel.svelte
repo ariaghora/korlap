@@ -59,6 +59,7 @@
     isStaging?: boolean;
     stagingMergedCount?: number;
     stagingConflictingCount?: number;
+    contextWarning?: boolean;
   }
 
   let {
@@ -103,6 +104,7 @@
     isStaging = false,
     stagingMergedCount = 0,
     stagingConflictingCount = 0,
+    contextWarning = false,
   }: Props = $props();
 
   let availableTabs = $derived(
@@ -389,6 +391,7 @@
                   planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
                   thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
                   queue={getQueueItems(ws.id)}
+                  {contextWarning}
                   onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
                   onSendImmediate={(prompt) => onSendImmediate(prompt)}
                   {onStop}
@@ -429,6 +432,7 @@
               planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
               thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
               queue={getQueueItems(ws.id)}
+              {contextWarning}
               onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
               onSendImmediate={(prompt) => onSendImmediate(prompt)}
               {onStop}
