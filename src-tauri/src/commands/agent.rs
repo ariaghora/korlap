@@ -40,6 +40,7 @@ pub enum AgentEvent {
     #[serde(rename = "done")]
     Done,
     #[serde(rename = "error")]
+    #[allow(dead_code)]
     Error { message: String },
 }
 
@@ -249,7 +250,7 @@ pub fn send_message(
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
     let thinking_mode = thinking_mode.unwrap_or(false);
-    let (worktree_path, gh_profile, repo_id, ws_branch, repo_path, user_system_prompt, context_dir) = {
+    let (worktree_path, gh_profile, _repo_id, ws_branch, repo_path, user_system_prompt, context_dir) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
             return Err("Agent is already processing a message".into());
@@ -447,7 +448,7 @@ pub fn send_message(
                         if !relevant.is_empty() && injected + relevant.len() < max_context_chars {
                             system_prompt.push_str("\n\n## Relevant Context\n\n");
                             system_prompt.push_str(&relevant);
-                            injected += relevant.len();
+                            let _ = relevant.len(); // already last context block
                         }
                     }
                 }
