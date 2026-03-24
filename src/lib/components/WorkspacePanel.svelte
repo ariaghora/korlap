@@ -855,7 +855,8 @@
   .script-popover {
     position: absolute;
     top: calc(100% + 6px);
-    left: 0;
+    left: 50%;
+    transform: translateX(-50%);
     width: 420px;
     max-height: 300px;
     background: var(--bg-base);
