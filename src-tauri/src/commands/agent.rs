@@ -243,7 +243,7 @@ pub fn send_message(
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
     let thinking_mode = thinking_mode.unwrap_or(false);
-    let (worktree_path, gh_profile, repo_id, ws_branch, repo_path, user_system_prompt) = {
+    let (worktree_path, gh_profile, repo_id, ws_branch, repo_path, user_system_prompt, context_dir) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
             return Err("Agent is already processing a message".into());
@@ -257,6 +257,7 @@ pub fn send_message(
             .get(&ws.repo_id)
             .map(|s| s.system_prompt.clone())
             .unwrap_or_default();
+        let ctx_dir = st.context_dir(&ws.repo_id);
         (
             ws.worktree_path.clone(),
             repo.gh_profile.clone(),
@@ -264,6 +265,7 @@ pub fn send_message(
             ws.branch.clone(),
             repo.path.clone(),
             user_sp,
+            ctx_dir,
         )
     };
 
@@ -380,6 +382,60 @@ pub fn send_message(
             ws_branch,
             base_branch,
         );
+        // Inject warm context from knowledge base (if built)
+        if context_dir.exists() {
+            let max_context_chars: usize = 20_000;
+            let mut injected = 0usize;
+
+            // 1. Invariants — always inject in full (highest priority)
+            if let Ok(inv) = std::fs::read_to_string(context_dir.join("invariants.md")) {
+                let inv = inv.trim();
+                if !inv.is_empty() && injected + inv.len() < max_context_chars {
+                    system_prompt.push_str("\n\n## Repository Invariants (MUST follow)\n\n");
+                    system_prompt.push_str(inv);
+                    injected += inv.len();
+                }
+            }
+
+            // 2. Hot context — live state (second priority)
+            if let Ok(hot) = std::fs::read_to_string(context_dir.join("hot.md")) {
+                let hot = hot.trim();
+                if !hot.is_empty() && injected + hot.len() < max_context_chars {
+                    system_prompt.push_str("\n\n");
+                    system_prompt.push_str(hot);
+                    injected += hot.len();
+                }
+            }
+
+            // 3. Facts — abbreviated (third priority)
+            if let Ok(facts) = std::fs::read_to_string(context_dir.join("facts.md")) {
+                let facts = facts.trim();
+                if !facts.is_empty() {
+                    let abbreviated: String = facts.lines().take(80).collect::<Vec<_>>().join("\n");
+                    if injected + abbreviated.len() < max_context_chars {
+                        system_prompt.push_str("\n\n## Repository Facts\n\n");
+                        system_prompt.push_str(&abbreviated);
+                        injected += abbreviated.len();
+                    }
+                }
+            }
+
+            // 4. Context entries matching files mentioned in the prompt (lowest priority)
+            if let Ok(index) = std::fs::read_to_string(context_dir.join("index.md")) {
+                if let Ok(context_md) = std::fs::read_to_string(context_dir.join("context.md")) {
+                    let relevant_ids = find_relevant_context_ids(&index, &prompt);
+                    if !relevant_ids.is_empty() {
+                        let relevant = super::context::extract_entries_by_id(&context_md, &relevant_ids);
+                        if !relevant.is_empty() && injected + relevant.len() < max_context_chars {
+                            system_prompt.push_str("\n\n## Relevant Context\n\n");
+                            system_prompt.push_str(&relevant);
+                            injected += relevant.len();
+                        }
+                    }
+                }
+            }
+        }
+
         if !user_system_prompt.is_empty() {
             system_prompt.push_str("\n\nUser preferences:\n");
             system_prompt.push_str(&user_system_prompt);
@@ -540,6 +596,38 @@ pub fn stop_agent(
 
     tracing::info!("Stopped agent for workspace {}", workspace_id);
     Ok(())
+}
+
+// ── Warm context helpers ─────────────────────────────────────────────
+
+/// Parse the file affinity section of index.md and find context entry IDs
+/// relevant to file paths mentioned in the prompt.
+fn find_relevant_context_ids(index_content: &str, prompt: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut in_affinity = false;
+
+    for line in index_content.lines() {
+        if line.contains("## File affinity") {
+            in_affinity = true;
+            continue;
+        }
+        if in_affinity {
+            if line.starts_with("## ") {
+                break;
+            }
+            // Format: "src/auth/*       → auth-a3f8c2"
+            if let Some((glob_part, entry_id)) = line.split_once('→') {
+                let glob_base = glob_part.trim().trim_end_matches('*').trim_end_matches('/');
+                let entry_id = entry_id.trim().to_string();
+                // Check if any path fragment from the affinity appears in the prompt
+                if !glob_base.is_empty() && prompt.contains(glob_base) && !ids.contains(&entry_id)
+                {
+                    ids.push(entry_id);
+                }
+            }
+        }
+    }
+    ids
 }
 
 // ── AI-powered utilities ─────────────────────────────────────────────

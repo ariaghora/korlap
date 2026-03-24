@@ -1,9 +1,12 @@
 <script lang="ts">
   import {
     getRepoSettings, saveRepoSettings, type RepoSettings,
+    getContextMeta, saveContextScope, buildKnowledgeBase, stopContextBuild,
+    readContextFile, writeContextFile, draftContradictionResolution, resolveContradiction, updateKnowledgeBaseIncremental,
+    type ContextMeta, type ContextBuildStatus, type AgentEvent,
   } from "$lib/ipc";
   import { onMount } from "svelte";
-  import { ArrowLeft, Terminal, Bot, Palette } from "lucide-svelte";
+  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown } from "lucide-svelte";
   import { themeList, getPreviewColors, type ThemeId } from "$lib/themes";
   import { getThemeId, setTheme } from "$lib/stores/theme.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -17,7 +20,7 @@
 
   let { repoId, repoName, repoPath, onClose }: Props = $props();
 
-  type Section = "scripts" | "agent" | "appearance";
+  type Section = "scripts" | "agent" | "knowledge" | "appearance";
   let activeSection = $state<Section>("scripts");
   let currentThemeId = $state<ThemeId>(getThemeId());
   let settings = $state<RepoSettings>({
@@ -33,8 +36,48 @@
   let saveStatus = $state<"idle" | "saving" | "saved">("idle");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
 
+  // ── Knowledge base state ──────────────────────────────────────────
+  let contextMeta = $state<ContextMeta>({
+    include_globs: [],
+    exclude_globs: [],
+    build_status: "not_built",
+    last_built_at: null,
+    invariant_count: 0,
+    fact_count: 0,
+    context_entry_count: 0,
+    contradiction_count: 0,
+    precheck_model: "",
+    built_at_commit: null,
+  });
+  let includeGlobsText = $state("");
+  let excludeGlobsText = $state("");
+  let precheckModel = $state("");
+  let buildActivity = $state("");
+  let buildError = $state("");
+  let contradictionsContent = $state("");
+  let scopeSaveTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  // ── Review tab state ───────────────────────────────────────────────
+  type ReviewTab = "invariants" | "facts" | "context" | "contradictions";
+  let reviewTab = $state<ReviewTab>("invariants");
+  let invariantsRaw = $state("");
+  let factsRaw = $state("");
+  let contextRaw = $state("");
+  let showConfig = $state(false);
+
+  let editingEntry = $state<{ file: string; idx: number } | null>(null);
+  let editBuffer = $state("");
+
+  let resolvingId = $state<string | null>(null);
+  let resolveText = $state("");
+  let resolveDirection = $state<"exception" | "update_invariant" | "tech_debt">("update_invariant");
+  let draftResult = $state<string | null>(null);
+  let draftLoading = $state(false);
+  let draftError = $state("");
+
   onMount(() => {
     getRepoSettings(repoId).then((s) => { settings = s; }).catch(() => {});
+    loadContextMeta();
 
     // ⌘, to close (standard macOS settings shortcut)
     function handleKey(e: KeyboardEvent) {
@@ -46,6 +89,29 @@
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   });
+
+  async function loadContextMeta() {
+    try {
+      contextMeta = await getContextMeta(repoId);
+      includeGlobsText = contextMeta.include_globs.join("\n");
+      excludeGlobsText = contextMeta.exclude_globs.join("\n");
+      precheckModel = contextMeta.precheck_model || "claude-haiku-4-5-20251001";
+      if (contextMeta.build_status === "built") {
+        await loadContextFiles();
+      }
+    } catch { /* first load, defaults are fine */ }
+  }
+
+  async function loadContextFiles() {
+    try {
+      [invariantsRaw, factsRaw, contextRaw, contradictionsContent] = await Promise.all([
+        readContextFile(repoId, "invariants.md"),
+        readContextFile(repoId, "facts.md"),
+        readContextFile(repoId, "context.md"),
+        readContextFile(repoId, "contradictions.md"),
+      ]);
+    } catch { /* partial loads are fine */ }
+  }
 
   // Auto-save with debounce
   function scheduleAutosave() {
@@ -62,9 +128,314 @@
     }, 600);
   }
 
+  function scheduleScopeSave() {
+    clearTimeout(scopeSaveTimeout);
+    scopeSaveTimeout = setTimeout(async () => {
+      const includes = includeGlobsText.split("\n").map(s => s.trim()).filter(Boolean);
+      const excludes = excludeGlobsText.split("\n").map(s => s.trim()).filter(Boolean);
+      try {
+        await saveContextScope(repoId, includes, excludes, precheckModel);
+      } catch { /* silent */ }
+    }, 600);
+  }
+
+  async function handleBuild() {
+    buildActivity = "Starting build agent...";
+    buildError = "";
+    contextMeta.build_status = "building";
+
+    try {
+      await buildKnowledgeBase(repoId, (event: AgentEvent) => {
+        if (event.type === "assistant_message") {
+          if (event.tool_uses.length > 0) {
+            const last = event.tool_uses[event.tool_uses.length - 1];
+            const verb: Record<string, string> = {
+              Read: "Reading", Glob: "Scanning", Grep: "Searching",
+              Bash: "Running", Write: "Writing", Agent: "Dispatching subagent",
+              Edit: "Editing", TodoWrite: "Planning", ListDirectory: "Listing",
+            };
+            const action = verb[last.name] ?? last.name;
+            buildActivity = last.input_preview
+              ? `${action}: ${last.input_preview}`
+              : `${action}...`;
+          } else if (event.text) {
+            const preview = event.text.slice(0, 80).replace(/\n/g, " ");
+            buildActivity = `Thinking: ${preview}${event.text.length > 80 ? "…" : ""}`;
+          }
+        } else if (event.type === "done") {
+          loadContextMeta();
+        } else if (event.type === "error") {
+          buildError = event.message;
+          contextMeta.build_status = "failed";
+        }
+      });
+    } catch (e) {
+      buildError = String(e);
+      contextMeta.build_status = "failed";
+    }
+  }
+
+  async function handleStopBuild() {
+    try {
+      await stopContextBuild(repoId);
+      await loadContextMeta();
+    } catch { /* silent */ }
+  }
+
+  async function handleUpdate() {
+    buildActivity = "Checking for changes...";
+    buildError = "";
+    contextMeta.build_status = "building";
+
+    try {
+      await updateKnowledgeBaseIncremental(repoId, (event: AgentEvent) => {
+        if (event.type === "assistant_message") {
+          if (event.tool_uses.length > 0) {
+            const last = event.tool_uses[event.tool_uses.length - 1];
+            const verb: Record<string, string> = {
+              Read: "Reading", Glob: "Scanning", Grep: "Searching",
+              Bash: "Running", Write: "Writing", Agent: "Dispatching subagent",
+              Edit: "Editing", TodoWrite: "Planning", ListDirectory: "Listing",
+            };
+            const action = verb[last.name] ?? last.name;
+            buildActivity = last.input_preview
+              ? `${action}: ${last.input_preview}`
+              : `${action}...`;
+          } else if (event.text) {
+            const preview = event.text.slice(0, 80).replace(/\n/g, " ");
+            buildActivity = `Thinking: ${preview}${event.text.length > 80 ? "…" : ""}`;
+          }
+        } else if (event.type === "done") {
+          loadContextMeta();
+        } else if (event.type === "error") {
+          buildError = event.message;
+          contextMeta.build_status = "built"; // revert — existing KB still valid
+        }
+      });
+    } catch (e) {
+      buildError = String(e);
+      contextMeta.build_status = "built"; // revert — existing KB still valid
+    }
+  }
+
+  function formatTimestamp(unix: number): string {
+    return new Date(unix * 1000).toLocaleDateString(undefined, {
+      month: "short", day: "numeric", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  // ── Parsers ─────────────────────────────────────────────────────────
+
+  interface KBEntry {
+    id: string;
+    title: string;
+    content: string;
+    fullText: string;
+  }
+
+  interface ContraEntry {
+    id: string;
+    title: string;
+    content: string;
+    resolved: boolean;
+  }
+
+  function parseInvariants(md: string): KBEntry[] {
+    return md.split("\n")
+      .filter(l => l.startsWith("- INV-"))
+      .map(line => {
+        const match = line.match(/^- (INV-\d+):\s*(.*)/);
+        return {
+          id: match?.[1] ?? "",
+          title: match?.[2] ?? line.replace(/^- /, ""),
+          content: "",
+          fullText: line,
+        };
+      });
+  }
+
+  function parseFactSections(md: string): KBEntry[] {
+    const entries: KBEntry[] = [];
+    let current: KBEntry | null = null;
+    for (const line of md.split("\n")) {
+      if (line.startsWith("## ")) {
+        if (current) { current.content = current.content.trimEnd(); current.fullText = current.fullText.trimEnd(); entries.push(current); }
+        const title = line.replace("## ", "").trim();
+        current = { id: title, title, content: "", fullText: line + "\n" };
+      } else if (line.startsWith("# ")) {
+        // skip top-level heading
+      } else if (current) {
+        current.content += line + "\n";
+        current.fullText += line + "\n";
+      }
+    }
+    if (current) { current.content = current.content.trimEnd(); current.fullText = current.fullText.trimEnd(); entries.push(current); }
+    return entries;
+  }
+
+  function parseContextEntries(md: string): KBEntry[] {
+    const entries: KBEntry[] = [];
+    let current: KBEntry | null = null;
+    for (const line of md.split("\n")) {
+      if (line.startsWith("## ")) {
+        if (current) { current.content = current.content.trimEnd(); current.fullText = current.fullText.trimEnd(); entries.push(current); }
+        const title = line.replace("## ", "").trim();
+        current = { id: title, title, content: "", fullText: line + "\n" };
+      } else if (line.startsWith("# ")) {
+        // skip
+      } else if (current) {
+        current.content += line + "\n";
+        current.fullText += line + "\n";
+      }
+    }
+    if (current) { current.content = current.content.trimEnd(); current.fullText = current.fullText.trimEnd(); entries.push(current); }
+    return entries;
+  }
+
+  function parseContradictions(md: string): ContraEntry[] {
+    const entries: ContraEntry[] = [];
+    let current: ContraEntry | null = null;
+    for (const line of md.split("\n")) {
+      if (line.startsWith("## CONTRA-")) {
+        if (current) entries.push(current);
+        const rawId = line.replace("## ", "").replace(/\s*<!--.*-->/, "").trim();
+        const titleMatch = rawId.match(/^(CONTRA-\d+):\s*(.*)/);
+        current = {
+          id: titleMatch?.[1] ?? rawId,
+          title: titleMatch?.[2] ?? rawId,
+          content: "",
+          resolved: line.includes("<!-- RESOLVED") || line.includes("<!-- TECH_DEBT"),
+        };
+      } else if (current) {
+        current.content += line + "\n";
+      }
+    }
+    if (current) entries.push(current);
+    return entries;
+  }
+
+  // ── Entry editing ──────────────────────────────────────────────────
+
+  function startEdit(file: string, idx: number, fullText: string) {
+    editingEntry = { file, idx };
+    editBuffer = fullText;
+  }
+
+  function cancelEdit() {
+    editingEntry = null;
+    editBuffer = "";
+  }
+
+  async function saveEdit() {
+    if (!editingEntry) return;
+    const { file, idx } = editingEntry;
+    const trimmed = editBuffer.trim();
+
+    try {
+      if (file === "invariants.md") {
+        const entries = parseInvariants(invariantsRaw);
+        entries[idx] = { ...entries[idx], fullText: trimmed };
+        const rebuilt = "# Invariants\n\n" + entries.map(e => e.fullText).join("\n") + "\n";
+        await writeContextFile(repoId, file, rebuilt);
+        invariantsRaw = rebuilt;
+      } else if (file === "facts.md") {
+        const entries = parseFactSections(factsRaw);
+        entries[idx] = { ...entries[idx], fullText: trimmed };
+        const rebuilt = "# Facts\n\n" + entries.map(e => e.fullText).join("\n\n") + "\n";
+        await writeContextFile(repoId, file, rebuilt);
+        factsRaw = rebuilt;
+      } else if (file === "context.md") {
+        const entries = parseContextEntries(contextRaw);
+        entries[idx] = { ...entries[idx], fullText: trimmed };
+        const rebuilt = "# Context\n\n" + entries.map(e => e.fullText).join("\n\n") + "\n";
+        await writeContextFile(repoId, file, rebuilt);
+        contextRaw = rebuilt;
+      }
+    } catch { /* silent */ }
+
+    editingEntry = null;
+    editBuffer = "";
+    await loadContextMeta();
+  }
+
+  async function removeEntry(file: string, idx: number) {
+    try {
+      if (file === "invariants.md") {
+        const entries = parseInvariants(invariantsRaw);
+        entries.splice(idx, 1);
+        const rebuilt = "# Invariants\n\n" + entries.map(e => e.fullText).join("\n") + "\n";
+        await writeContextFile(repoId, file, rebuilt);
+        invariantsRaw = rebuilt;
+      } else if (file === "facts.md") {
+        const entries = parseFactSections(factsRaw);
+        entries.splice(idx, 1);
+        const rebuilt = "# Facts\n\n" + entries.map(e => e.fullText).join("\n\n") + "\n";
+        await writeContextFile(repoId, file, rebuilt);
+        factsRaw = rebuilt;
+      } else if (file === "context.md") {
+        const entries = parseContextEntries(contextRaw);
+        entries.splice(idx, 1);
+        const rebuilt = "# Context\n\n" + entries.map(e => e.fullText).join("\n\n") + "\n";
+        await writeContextFile(repoId, file, rebuilt);
+        contextRaw = rebuilt;
+      }
+    } catch { /* silent */ }
+    await loadContextMeta();
+  }
+
+  // ── Contradiction resolution ───────────────────────────────────────
+
+  function startResolve(id: string) {
+    resolvingId = id;
+    resolveText = "";
+    resolveDirection = "update_invariant";
+    draftResult = null;
+    draftLoading = false;
+    draftError = "";
+  }
+
+  function cancelResolve() {
+    resolvingId = null;
+    resolveText = "";
+    draftResult = null;
+    draftLoading = false;
+    draftError = "";
+  }
+
+  async function handleDraft(direction: "exception" | "update_invariant" | "tech_debt") {
+    if (!resolvingId) return;
+    resolveDirection = direction;
+    draftLoading = true;
+    draftError = "";
+    draftResult = null;
+    try {
+      draftResult = await draftContradictionResolution(repoId, resolvingId, direction, resolveText.trim());
+    } catch (e) {
+      draftError = String(e);
+    } finally {
+      draftLoading = false;
+    }
+  }
+
+  async function handleApplyDraft() {
+    if (!resolvingId || !draftResult) return;
+    try {
+      await resolveContradiction(repoId, resolvingId, resolveDirection, draftResult);
+      resolvingId = null;
+      resolveText = "";
+      draftResult = null;
+      await loadContextMeta();
+      await loadContextFiles();
+    } catch (e) {
+      draftError = String(e);
+    }
+  }
+
   const repoSections: { id: Section; label: string; icon: typeof Terminal }[] = [
     { id: "scripts", label: "Scripts", icon: Terminal },
     { id: "agent", label: "Agent", icon: Bot },
+    { id: "knowledge", label: "Knowledge", icon: BookOpen },
   ];
 
   const globalSections: { id: Section; label: string; icon: typeof Terminal }[] = [
@@ -294,6 +665,378 @@
           <code>{"{{pr_title}}"}</code>
         </div>
       </div>
+
+    {:else if activeSection === "knowledge"}
+      <div class="section-header">
+        <h1>Knowledge base</h1>
+        {#if contextMeta.build_status === "built"}
+          <span class="kb-status kb-built">Built</span>
+        {:else if contextMeta.build_status === "building"}
+          <span class="kb-status kb-building"><Loader2 size={12} class="spin" /> Building</span>
+        {:else if contextMeta.build_status === "failed"}
+          <span class="kb-status kb-failed">Failed</span>
+        {:else}
+          <span class="kb-status kb-not-built">Not built</span>
+        {/if}
+      </div>
+
+      <!-- Building progress -->
+      {#if contextMeta.build_status === "building"}
+        <div class="kb-building-activity">
+          <div class="kb-activity-row">
+            <Loader2 size={14} class="spin" />
+            <span class="kb-activity-text">{buildActivity}</span>
+          </div>
+          <button class="kb-action-btn kb-cancel-btn" onclick={handleStopBuild}>Cancel</button>
+        </div>
+      {:else if contextMeta.build_status === "failed" && buildError}
+        <div class="kb-error">
+          <span>{buildError}</span>
+        </div>
+      {/if}
+
+      <!-- Summary + actions when built -->
+      {#if contextMeta.build_status === "built" && contextMeta.last_built_at}
+        <div class="kb-summary-bar">
+          <div class="kb-summary-left">
+            <span class="kb-summary-counts">
+              {contextMeta.invariant_count} invariants &middot;
+              {contextMeta.fact_count} facts &middot;
+              {contextMeta.context_entry_count} context entries
+              {#if contextMeta.contradiction_count > 0}
+                &middot; <span class="kb-contradictions-badge">{contextMeta.contradiction_count} contradictions</span>
+              {/if}
+            </span>
+            <span class="kb-summary-date">
+              {#if contextMeta.built_at_commit}
+                Built at <code class="kb-commit-hash">{contextMeta.built_at_commit.slice(0, 7)}</code> on
+              {:else}
+                Last built
+              {/if}
+              {formatTimestamp(contextMeta.last_built_at)}
+            </span>
+          </div>
+          <div class="kb-summary-actions">
+            <button
+              class="kb-action-btn kb-update-btn"
+              onclick={handleUpdate}
+              disabled={!contextMeta.built_at_commit}
+              title={contextMeta.built_at_commit ? "Incrementally update from changes since last build" : "No baseline commit — run a full build first"}
+            >Update</button>
+            <button class="kb-action-btn" onclick={handleBuild}>Rebuild</button>
+          </div>
+        </div>
+
+        <!-- Review tabs -->
+        <div class="kb-tabs">
+          {#each (["invariants", "facts", "context", "contradictions"] as ReviewTab[]) as tab}
+            <button
+              class="kb-tab"
+              class:active={reviewTab === tab}
+              onclick={() => { reviewTab = tab; cancelEdit(); }}
+            >
+              {tab === "invariants" ? `Invariants (${contextMeta.invariant_count})`
+                : tab === "facts" ? `Facts (${contextMeta.fact_count})`
+                : tab === "context" ? `Context (${contextMeta.context_entry_count})`
+                : `Contradictions${contextMeta.contradiction_count > 0 ? ` (${contextMeta.contradiction_count})` : ""}`}
+            </button>
+          {/each}
+        </div>
+
+        <!-- Invariants tab -->
+        {#if reviewTab === "invariants"}
+          <div class="kb-entries">
+            {#each parseInvariants(invariantsRaw) as entry, idx}
+              <div class="kb-entry-card">
+                {#if editingEntry?.file === "invariants.md" && editingEntry.idx === idx}
+                  <textarea class="kb-entry-edit" bind:value={editBuffer} rows="2" spellcheck="false"></textarea>
+                  <div class="kb-entry-edit-actions">
+                    <button class="kb-resolve-btn" onclick={saveEdit}>Save</button>
+                    <button class="kb-resolve-btn kb-resolve-debt" onclick={cancelEdit}>Cancel</button>
+                  </div>
+                {:else}
+                  <div class="kb-entry-row">
+                    <span class="kb-entry-id">{entry.id}</span>
+                    <span class="kb-entry-title">{entry.title}</span>
+                    <div class="kb-entry-actions">
+                      <button class="kb-icon-btn" title="Edit" onclick={() => startEdit("invariants.md", idx, entry.fullText)}>
+                        <Pencil size={12} />
+                      </button>
+                      <button class="kb-icon-btn kb-icon-danger" title="Remove" onclick={() => removeEntry("invariants.md", idx)}>
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+            {#if parseInvariants(invariantsRaw).length === 0}
+              <div class="kb-empty">No invariants found.</div>
+            {/if}
+          </div>
+
+        <!-- Facts tab -->
+        {:else if reviewTab === "facts"}
+          <div class="kb-entries">
+            {#each parseFactSections(factsRaw) as entry, idx}
+              <div class="kb-entry-card">
+                {#if editingEntry?.file === "facts.md" && editingEntry.idx === idx}
+                  <textarea class="kb-entry-edit" bind:value={editBuffer} rows="8" spellcheck="false"></textarea>
+                  <div class="kb-entry-edit-actions">
+                    <button class="kb-resolve-btn" onclick={saveEdit}>Save</button>
+                    <button class="kb-resolve-btn kb-resolve-debt" onclick={cancelEdit}>Cancel</button>
+                  </div>
+                {:else}
+                  <div class="kb-entry-header">
+                    <span class="kb-entry-section-title">{entry.title}</span>
+                    <div class="kb-entry-actions">
+                      <button class="kb-icon-btn" title="Edit" onclick={() => startEdit("facts.md", idx, entry.fullText)}>
+                        <Pencil size={12} />
+                      </button>
+                      <button class="kb-icon-btn kb-icon-danger" title="Remove" onclick={() => removeEntry("facts.md", idx)}>
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                  <pre class="kb-entry-content">{entry.content.trim()}</pre>
+                {/if}
+              </div>
+            {/each}
+            {#if parseFactSections(factsRaw).length === 0}
+              <div class="kb-empty">No facts found.</div>
+            {/if}
+          </div>
+
+        <!-- Context tab -->
+        {:else if reviewTab === "context"}
+          <div class="kb-entries">
+            {#each parseContextEntries(contextRaw) as entry, idx}
+              <div class="kb-entry-card">
+                {#if editingEntry?.file === "context.md" && editingEntry.idx === idx}
+                  <textarea class="kb-entry-edit" bind:value={editBuffer} rows="8" spellcheck="false"></textarea>
+                  <div class="kb-entry-edit-actions">
+                    <button class="kb-resolve-btn" onclick={saveEdit}>Save</button>
+                    <button class="kb-resolve-btn kb-resolve-debt" onclick={cancelEdit}>Cancel</button>
+                  </div>
+                {:else}
+                  <div class="kb-entry-header">
+                    <span class="kb-entry-section-title">{entry.title}</span>
+                    <div class="kb-entry-actions">
+                      <button class="kb-icon-btn" title="Edit" onclick={() => startEdit("context.md", idx, entry.fullText)}>
+                        <Pencil size={12} />
+                      </button>
+                      <button class="kb-icon-btn kb-icon-danger" title="Remove" onclick={() => removeEntry("context.md", idx)}>
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                  <pre class="kb-entry-content">{entry.content.trim()}</pre>
+                {/if}
+              </div>
+            {/each}
+            {#if parseContextEntries(contextRaw).length === 0}
+              <div class="kb-empty">No context entries found.</div>
+            {/if}
+          </div>
+
+        <!-- Contradictions tab -->
+        {:else if reviewTab === "contradictions"}
+          <div class="kb-entries">
+            {#each parseContradictions(contradictionsContent) as contra}
+              {#if !contra.resolved}
+                <div class="kb-entry-card kb-contra-card">
+                  <div class="kb-contra-header">
+                    <span class="kb-entry-id">{contra.id}</span>
+                    <span class="kb-contra-title">{contra.title}</span>
+                  </div>
+                  <pre class="kb-entry-content">{contra.content.trim()}</pre>
+
+                  {#if resolvingId === contra.id}
+                    <div class="kb-resolve-form">
+                      {#if draftResult !== null}
+                        <!-- Step 3: Review the LLM draft -->
+                        <div class="kb-draft-header">
+                          <span class="kb-draft-label">Drafted invariants update</span>
+                          <span class="kb-draft-hint">Review and edit before applying</span>
+                        </div>
+                        <textarea
+                          class="kb-entry-edit kb-draft-edit"
+                          bind:value={draftResult}
+                          rows="12"
+                          spellcheck="false"
+                        ></textarea>
+                        {#if draftError}
+                          <div class="kb-draft-error">{draftError}</div>
+                        {/if}
+                        <div class="kb-resolve-actions">
+                          <button class="kb-resolve-btn kb-primary-resolve" onclick={handleApplyDraft}>
+                            Apply changes
+                          </button>
+                          <button class="kb-resolve-btn" onclick={() => { draftResult = null; draftError = ""; }}>
+                            Back
+                          </button>
+                          <button class="kb-resolve-btn kb-resolve-debt" onclick={cancelResolve}>
+                            Cancel
+                          </button>
+                        </div>
+                      {:else if draftLoading}
+                        <!-- Step 2: LLM is drafting -->
+                        <div class="kb-draft-loading">
+                          <Loader2 size={14} class="spin" />
+                          <span>Drafting resolution...</span>
+                        </div>
+                        <button class="kb-resolve-btn kb-resolve-debt" onclick={cancelResolve}>
+                          Cancel
+                        </button>
+                      {:else}
+                        <!-- Step 1: User describes intent + picks direction -->
+                        <textarea
+                          class="kb-entry-edit"
+                          bind:value={resolveText}
+                          rows="3"
+                          spellcheck="false"
+                          placeholder="Describe how this should be resolved (optional for tech debt)"
+                        ></textarea>
+                        {#if draftError}
+                          <div class="kb-draft-error">{draftError}</div>
+                        {/if}
+                        <div class="kb-resolve-actions">
+                          <button class="kb-resolve-btn" onclick={() => handleDraft("exception")}>
+                            Both valid — add exception
+                          </button>
+                          <button class="kb-resolve-btn" onclick={() => handleDraft("update_invariant")}>
+                            Update invariant
+                          </button>
+                          <button class="kb-resolve-btn kb-resolve-debt" onclick={() => handleDraft("tech_debt")}>
+                            Tech debt
+                          </button>
+                          <button class="kb-resolve-btn kb-resolve-debt" onclick={cancelResolve}>
+                            Cancel
+                          </button>
+                        </div>
+                      {/if}
+                    </div>
+                  {:else}
+                    <div class="kb-contradiction-actions">
+                      <button class="kb-resolve-btn kb-primary-resolve" onclick={() => startResolve(contra.id)}>
+                        Resolve
+                      </button>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            {/each}
+            {#if parseContradictions(contradictionsContent).filter(c => !c.resolved).length === 0}
+              <div class="kb-empty">No unresolved contradictions.</div>
+            {/if}
+          </div>
+        {/if}
+      {/if}
+
+      <!-- Config (collapsible when built, always shown when not built) -->
+      {#if contextMeta.build_status !== "built"}
+        <div class="setting-block">
+          <div class="setting-meta">
+            <span class="setting-name">Scope</span>
+            <span class="setting-desc">Glob patterns to include or exclude from analysis. One pattern per line.</span>
+          </div>
+          <div class="kb-scope-fields">
+            <div class="kb-scope-field">
+              <label class="kb-scope-label">Include</label>
+              <textarea
+                bind:value={includeGlobsText}
+                oninput={scheduleScopeSave}
+                placeholder="src/**&#10;lib/**"
+                rows="3"
+                spellcheck="false"
+                class="system-prompt-field"
+              ></textarea>
+            </div>
+            <div class="kb-scope-field">
+              <label class="kb-scope-label">Exclude</label>
+              <textarea
+                bind:value={excludeGlobsText}
+                oninput={scheduleScopeSave}
+                placeholder="dist&#10;generated&#10;vendor&#10;node_modules&#10;*.test.*"
+                rows="3"
+                spellcheck="false"
+                class="system-prompt-field"
+              ></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-block">
+          <div class="setting-meta">
+            <span class="setting-name">Pre-check model</span>
+            <span class="setting-desc">Model used for invariant pre-checks before review. Use a fast, cheap model.</span>
+          </div>
+          <textarea
+            class="system-prompt-field"
+            bind:value={precheckModel}
+            oninput={scheduleScopeSave}
+            placeholder="claude-haiku-4-5-20251001"
+            rows="1"
+            spellcheck="false"
+          ></textarea>
+        </div>
+
+        <div class="kb-actions">
+          {#if contextMeta.build_status === "building"}
+            <!-- actions hidden while building -->
+          {:else}
+            <button class="kb-action-btn kb-primary-btn" onclick={handleBuild}>Build knowledge base</button>
+          {/if}
+        </div>
+      {:else}
+        <!-- Collapsible config when built -->
+        <button class="kb-config-toggle" onclick={() => showConfig = !showConfig}>
+          <ChevronDown size={14} class={showConfig ? "chevron-open" : "chevron-closed"} />
+          <span>Build settings</span>
+        </button>
+        {#if showConfig}
+          <div class="kb-config-panel">
+            <div class="kb-scope-fields">
+              <div class="kb-scope-field">
+                <label class="kb-scope-label">Include</label>
+                <textarea
+                  bind:value={includeGlobsText}
+                  oninput={scheduleScopeSave}
+                  placeholder="src/**&#10;lib/**"
+                  rows="3"
+                  spellcheck="false"
+                  class="system-prompt-field"
+                ></textarea>
+              </div>
+              <div class="kb-scope-field">
+                <label class="kb-scope-label">Exclude</label>
+                <textarea
+                  bind:value={excludeGlobsText}
+                  oninput={scheduleScopeSave}
+                  placeholder="dist&#10;generated&#10;vendor&#10;node_modules&#10;*.test.*"
+                  rows="3"
+                  spellcheck="false"
+                  class="system-prompt-field"
+                ></textarea>
+              </div>
+            </div>
+            <div class="setting-block" style="margin-top: 0.75rem">
+              <div class="setting-meta">
+                <span class="setting-name">Pre-check model</span>
+                <span class="setting-desc">Model used for invariant pre-checks before review.</span>
+              </div>
+              <textarea
+                class="system-prompt-field"
+                bind:value={precheckModel}
+                oninput={scheduleScopeSave}
+                placeholder="claude-haiku-4-5-20251001"
+                rows="1"
+                spellcheck="false"
+              ></textarea>
+            </div>
+          </div>
+        {/if}
+      {/if}
 
     {:else if activeSection === "appearance"}
       <div class="section-header">
@@ -716,6 +1459,511 @@
 
   .theme-card.selected .theme-name {
     color: var(--accent);
+  }
+
+  /* ── Knowledge base ──────────────── */
+
+  .kb-status {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .kb-not-built {
+    color: var(--text-muted);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+  }
+
+  .kb-building {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+    border: 1px solid var(--accent);
+  }
+
+  .kb-built {
+    color: var(--status-ok);
+    background: color-mix(in srgb, var(--status-ok) 10%, var(--bg-card));
+    border: 1px solid var(--status-ok);
+  }
+
+  .kb-failed {
+    color: var(--status-error);
+    background: color-mix(in srgb, var(--status-error) 10%, var(--bg-card));
+    border: 1px solid var(--status-error);
+  }
+
+  /* Summary bar */
+
+  .kb-summary-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.25rem;
+  }
+
+  .kb-summary-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .kb-summary-counts {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+  }
+
+  .kb-contradictions-badge {
+    color: var(--status-warning, var(--accent));
+    font-weight: 600;
+  }
+
+  .kb-summary-date {
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+
+  .kb-commit-hash {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+  }
+
+  .kb-summary-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+  }
+
+  .kb-update-btn {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .kb-update-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 15%, var(--bg-sidebar));
+  }
+
+  .kb-update-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Building activity */
+
+  .kb-building-activity {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 1.75rem;
+  }
+
+  .kb-activity-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--accent);
+    min-width: 0;
+    flex: 1;
+  }
+
+  .kb-activity-text {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .kb-error {
+    padding: 0.6rem 0.75rem;
+    background: color-mix(in srgb, var(--status-error) 8%, var(--bg-sidebar));
+    border: 1px solid var(--status-error);
+    border-radius: 6px;
+    margin-bottom: 1.75rem;
+    font-size: 0.78rem;
+    color: var(--status-error);
+  }
+
+  /* Review tabs */
+
+  .kb-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+  }
+
+  .kb-tab {
+    padding: 0.45rem 0.75rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+
+  .kb-tab:hover {
+    color: var(--text-primary);
+  }
+
+  .kb-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Entry cards */
+
+  .kb-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .kb-entry-card {
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .kb-entry-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .kb-entry-id {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--accent);
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+  }
+
+  .kb-entry-title {
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+  }
+
+  .kb-entry-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.35rem;
+  }
+
+  .kb-entry-section-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .kb-entry-content {
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    color: var(--text-secondary);
+    margin: 0;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .kb-entry-actions {
+    display: flex;
+    gap: 0.25rem;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .kb-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+
+  .kb-icon-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--border);
+    background: var(--bg-card);
+  }
+
+  .kb-icon-danger:hover {
+    color: var(--status-error);
+    border-color: var(--status-error);
+    background: color-mix(in srgb, var(--status-error) 8%, var(--bg-card));
+  }
+
+  /* Edit mode */
+
+  .kb-entry-edit {
+    width: 100%;
+    background: var(--bg-base);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    padding: 0.5rem 0.6rem;
+    resize: vertical;
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .kb-entry-edit::placeholder {
+    color: var(--text-muted);
+  }
+
+  .kb-entry-edit-actions {
+    display: flex;
+    gap: 0.35rem;
+    margin-top: 0.4rem;
+  }
+
+  .kb-empty {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    padding: 1.5rem;
+    text-align: center;
+  }
+
+  /* Contradiction cards */
+
+  .kb-contra-card {
+    border-left: 3px solid var(--status-warning, var(--accent));
+  }
+
+  .kb-contra-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .kb-contra-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .kb-contradiction-actions {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+  }
+
+  .kb-resolve-form {
+    margin-top: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .kb-resolve-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+
+  .kb-resolve-btn {
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .kb-resolve-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+  }
+
+  .kb-primary-resolve {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .kb-resolve-debt {
+    color: var(--text-dim);
+  }
+
+  /* Draft review */
+
+  .kb-draft-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .kb-draft-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .kb-draft-hint {
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+
+  .kb-draft-edit {
+    min-height: 180px;
+    max-height: 400px;
+  }
+
+  .kb-draft-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0;
+    color: var(--accent);
+    font-size: 0.78rem;
+  }
+
+  .kb-draft-error {
+    font-size: 0.73rem;
+    color: var(--status-error);
+    padding: 0.3rem 0;
+  }
+
+  /* Config section */
+
+  .kb-scope-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .kb-scope-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .kb-scope-label {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .kb-actions {
+    margin-top: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  .kb-action-btn {
+    padding: 0.4rem 0.85rem;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+
+  .kb-action-btn:hover {
+    border-color: var(--border-light);
+    background: var(--bg-hover);
+  }
+
+  .kb-primary-btn {
+    background: color-mix(in srgb, var(--accent) 15%, var(--bg-sidebar));
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .kb-primary-btn:hover {
+    background: color-mix(in srgb, var(--accent) 25%, var(--bg-sidebar));
+  }
+
+  .kb-cancel-btn {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.6rem;
+    color: var(--text-secondary);
+  }
+
+  .kb-config-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0.5rem 0;
+    margin-top: 1rem;
+    border-top: 1px solid var(--border);
+    width: 100%;
+  }
+
+  .kb-config-toggle:hover {
+    color: var(--text-secondary);
+  }
+
+  :global(.chevron-closed) {
+    transform: rotate(-90deg);
+    transition: transform 0.15s;
+  }
+
+  :global(.chevron-open) {
+    transform: rotate(0deg);
+    transition: transform 0.15s;
+  }
+
+  .kb-config-panel {
+    padding-top: 0.75rem;
+  }
+
+  :global(.spin) {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 
 </style>

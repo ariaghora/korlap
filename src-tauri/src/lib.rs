@@ -40,6 +40,8 @@ pub fn run() {
                 data_dir,
                 mcp_api_port: 0,
                 terminals: HashMap::new(),
+                context_meta: HashMap::new(),
+                context_agents: HashMap::new(),
             };
 
             if let Err(e) = app_state.load() {
@@ -136,6 +138,19 @@ pub fn run() {
             // staging
             commands::staging::create_staging_workspace,
             commands::staging::remove_staging_workspace,
+            // context (warm knowledge base)
+            commands::context::regenerate_hot,
+            commands::context::get_context_meta,
+            commands::context::save_context_scope,
+            commands::context::build_knowledge_base,
+            commands::context::stop_context_build,
+            commands::context::check_invariants,
+            commands::context::update_context_after_merge,
+            commands::context::update_knowledge_base_incremental,
+            commands::context::read_context_file,
+            commands::context::write_context_file,
+            commands::context::draft_contradiction_resolution,
+            commands::context::resolve_contradiction,
             // system
             commands::system::get_system_resources,
         ])

@@ -66,6 +66,42 @@ pub struct TerminalHandle {
     pub master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
+// ── Knowledge base (warm context) ────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextBuildStatus {
+    #[default]
+    NotBuilt,
+    Building,
+    Built,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextMeta {
+    #[serde(default)]
+    pub include_globs: Vec<String>,
+    #[serde(default)]
+    pub exclude_globs: Vec<String>,
+    #[serde(default)]
+    pub build_status: ContextBuildStatus,
+    #[serde(default)]
+    pub last_built_at: Option<u64>,
+    #[serde(default)]
+    pub invariant_count: u32,
+    #[serde(default)]
+    pub fact_count: u32,
+    #[serde(default)]
+    pub context_entry_count: u32,
+    #[serde(default)]
+    pub contradiction_count: u32,
+    #[serde(default)]
+    pub precheck_model: String,
+    #[serde(default)]
+    pub built_at_commit: Option<String>,
+}
+
 /// All persistent state lives under Tauri's app data dir.
 /// Zero files are written to the user's managed repos.
 ///
@@ -85,6 +121,8 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub mcp_api_port: u16,
     pub terminals: HashMap<String, TerminalHandle>,
+    pub context_meta: HashMap<String, ContextMeta>,
+    pub context_agents: HashMap<String, AgentHandle>,
 }
 
 impl AppState {
@@ -168,6 +206,24 @@ impl AppState {
             }
         }
 
+        // Load context meta
+        let context_meta_path = self.data_dir.join("context_meta.json");
+        if context_meta_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&context_meta_path) {
+                if let Ok(mut meta) =
+                    serde_json::from_str::<HashMap<String, ContextMeta>>(&data)
+                {
+                    // Reset any stale "building" status on restart
+                    for m in meta.values_mut() {
+                        if m.build_status == ContextBuildStatus::Building {
+                            m.build_status = ContextBuildStatus::Failed;
+                        }
+                    }
+                    self.context_meta.extend(meta);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -216,6 +272,19 @@ impl AppState {
     /// Path where todos are stored (per-repo)
     pub fn todos_dir(&self) -> PathBuf {
         self.data_dir.join("todos")
+    }
+
+    /// Path where knowledge base context files are stored (per-repo)
+    pub fn context_dir(&self, repo_id: &str) -> PathBuf {
+        self.data_dir.join("context").join(repo_id)
+    }
+
+    pub fn save_context_meta(&self) -> Result<(), String> {
+        let data =
+            serde_json::to_string_pretty(&self.context_meta).map_err(|e| e.to_string())?;
+        std::fs::write(self.data_dir.join("context_meta.json"), data)
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// Delete all persisted data for a workspace (messages file, session entry, images).

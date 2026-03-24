@@ -49,6 +49,11 @@
     type GhRepoEntry,
     type AutopilotAction,
     suggestReplies,
+    regenerateHot,
+    getContextMeta,
+    checkInvariants,
+    updateContextAfterMerge,
+    type ContextBuildStatus,
   } from "$lib/ipc";
   import {
     addUserMessage,
@@ -96,6 +101,7 @@
   let showSettings = $state(false);
   let creatingWsId = $state<string | null>(null);
   let repoSettings = $state<RepoSettings | null>(null);
+  let contextBuildStatus = $state<ContextBuildStatus>("not_built");
   let prStatusMap = new SvelteMap<string, PrStatus>();
   let changeCounts = new SvelteMap<string, { additions: number; deletions: number }>();
   let planModeByWorkspace = new SvelteMap<string, boolean>();
@@ -687,6 +693,12 @@
     }).catch((e) => { addToast(String(e)); });
 
     getRepoSettings(repo.id).then((s) => { repoSettings = s; }).catch(() => {});
+
+    // Regenerate hot context (non-blocking, non-fatal)
+    regenerateHot(repo.id).catch(() => {});
+
+    // Load knowledge base status
+    getContextMeta(repo.id).then((m) => { contextBuildStatus = m.build_status; }).catch(() => {});
 
     loadTodos(repo.id).then((raw) => {
       todos = (raw as TodoItem[]) ?? [];
@@ -1651,6 +1663,19 @@
         await ghPrMerge(wsId, pr.number);
         addToast(`PR #${pr.number} merged`, "success");
         refreshPrStatus(wsId);
+
+        // Post-merge: refresh hot context + trigger knowledge base update
+        if (activeRepo) {
+          regenerateHot(activeRepo.id).catch(() => {});
+          if (contextBuildStatus === "built") {
+            updateContextAfterMerge(activeRepo.id, wsId, (event) => {
+              if (event.type === "done") {
+                addToast("Knowledge base updated after merge", "info");
+                getContextMeta(activeRepo!.id).then((m) => { contextBuildStatus = m.build_status; }).catch(() => {});
+              }
+            }).catch(() => {});
+          }
+        }
       } catch (e) {
         addToast(String(e));
         sendPrompt(wsId, `This git operation failed:\n\n\`\`\`\n${e}\n\`\`\`\n\nDiagnose the issue and fix it.`, "Fixing git error");
@@ -1745,6 +1770,29 @@
     if (!ws) return;
 
     if (sendingByWorkspace.get(wsId) || reviewByWorkspace.has(wsId)) return;
+
+    // Invariant pre-check: run before review if knowledge base is built
+    if (contextBuildStatus === "built") {
+      try {
+        const result = await checkInvariants(wsId);
+        if (!result.passed && result.violations.length > 0) {
+          const violationText = result.violations
+            .map(v => `- ${v.invariant_id}: ${v.description} (${v.file}:${v.line})`)
+            .join("\n");
+          // In autopilot: send to agent to fix
+          if (autopilotEnabled) {
+            addActionMessage(wsId, crypto.randomUUID(), "Fixing invariant violations");
+            sendPrompt(wsId, `These invariant violations were found in your changes:\n\n${violationText}\n\nFix all of them before proceeding.`, "Fixing invariant violations");
+            return;
+          }
+          // Manual: show violations as a warning toast, proceed anyway
+          addToast(`Invariant violations found:\n${violationText}`, "error");
+        }
+      } catch {
+        // Fail-open: if check fails, proceed with review
+      }
+    }
+
     const pr = prStatusMap.get(wsId);
 
     const baseBranch = activeRepo.default_branch;
@@ -2136,6 +2184,7 @@
             isStaging={selectedWsId === stagingWsId}
             stagingMergedCount={stagingMergedBranches.length}
             stagingConflictingCount={stagingConflictingBranches.length}
+            contextWarning={contextBuildStatus !== "built"}
             onPrAction={handlePrAction}
             onUpdateBranch={handleUpdateBranch}
             onReview={handleReview}
