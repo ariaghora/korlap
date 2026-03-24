@@ -780,15 +780,16 @@
     return Promise.all(newImages.map((img) => saveImage(namespace, img.base64, img.extension)));
   }
 
-  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }) {
-    if (!activeRepo) return;
-    if (!data.title.trim() && data.newImages.length === 0 && data.existingPaths.length === 0) return;
+  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }): Promise<string | null> {
+    if (!activeRepo) return null;
+    if (!data.title.trim() && data.newImages.length === 0 && data.existingPaths.length === 0) return null;
     try {
       const savedPaths = await saveTodoImages(data.newImages);
       const allPaths = [...data.existingPaths, ...savedPaths];
       const mentionPaths = data.mentions?.map((m) => m.path) ?? [];
+      const todoId = crypto.randomUUID();
       todos.push({
-        id: crypto.randomUUID(),
+        id: todoId,
         repo_id: activeRepo.id,
         title: data.title.trim(),
         description: data.description.trim(),
@@ -800,9 +801,16 @@
       });
       persistTodos();
       if (autopilotEnabled) { await updateDependencies(); reprioritizeTodos(); }
+      return todoId;
     } catch (e) {
       addToast(`Failed to save images: ${e}`);
+      return null;
     }
+  }
+
+  async function handleNewTodoAndStart(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }) {
+    const todoId = await handleNewTodo(data);
+    if (todoId) await handleSpawnFromTodo(todoId);
   }
 
   async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }) {
@@ -2257,6 +2265,7 @@
           onCardClick={handleKanbanCardClick}
           onSpawnAgent={handleSpawnFromTodo}
           onNewTodo={handleNewTodo}
+          onAddAndStart={handleNewTodoAndStart}
           onEditTodo={handleEditTodo}
           onRemoveTodo={handleRemoveTodo}
           onToggleReady={handleToggleReady}

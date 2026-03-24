@@ -37,6 +37,7 @@
     onCardClick: (wsId: string) => void;
     onSpawnAgent: (todoId: string) => void;
     onNewTodo: (data: TaskData) => void;
+    onAddAndStart: (data: TaskData) => void;
     onEditTodo: (todoId: string, data: TaskData) => void;
     onRemoveTodo: (todoId: string) => void;
     onToggleReady: (todoId: string) => void;
@@ -67,6 +68,7 @@
     onCardClick,
     onSpawnAgent,
     onNewTodo,
+    onAddAndStart,
     onEditTodo,
     onRemoveTodo,
     onToggleReady,
@@ -100,6 +102,11 @@
 
   function handleAddSubmit(data: TaskData) {
     onNewTodo(data);
+    showAddDialog = false;
+  }
+
+  function handleAddAndStartSubmit(data: TaskData) {
+    onAddAndStart(data);
     showAddDialog = false;
   }
 
@@ -223,6 +230,7 @@
     initialThinkingMode={defaultThinkingMode}
     submitLabel="Add"
     onSubmit={handleAddSubmit}
+    onSubmitAndStart={handleAddAndStartSubmit}
     onCancel={() => { showAddDialog = false; }}
   />
 {/if}
