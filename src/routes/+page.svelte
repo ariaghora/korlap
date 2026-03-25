@@ -122,6 +122,7 @@
   let baseBehindMap = new SvelteMap<string, number>();
   let updatingBranchMap = new SvelteMap<string, boolean>();
   let titleBarRef: TitleBar | undefined = $state();
+  let wsPanelRef: WorkspacePanel | undefined = $state();
   let kanbanRef: KanbanBoard | undefined = $state();
   let repoDropdownIndex = $state(-1);
 
@@ -707,7 +708,14 @@
           if (autopilotEnabled) onAutopilotActivated();
           break;
         case "r":
-          if (!inInput && selectedWsId && appMode === "work") {
+          if (e.shiftKey && !inInput) {
+            e.preventDefault();
+            if (appMode === "work") {
+              wsPanelRef?.triggerRun();
+            } else {
+              titleBarRef?.triggerRun();
+            }
+          } else if (!inInput && selectedWsId && appMode === "work") {
             e.preventDefault();
             handleReview();
           }
@@ -2298,6 +2306,7 @@
           />
 
           <WorkspacePanel
+            bind:this={wsPanelRef}
             bind:activeTab
             bind:fileNavigatePath
             bind:fileNavigateLine
