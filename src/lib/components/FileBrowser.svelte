@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
-  import { Folder, FolderOpen, File as FileIcon } from "lucide-svelte";
-  import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, type FileEntry } from "$lib/ipc";
+  import { Folder, FolderOpen, File as FileIcon, Search } from "lucide-svelte";
+  import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, searchWorkspaceFiles, searchRepoFiles, type FileEntry, type FileSearchResult } from "$lib/ipc";
   import ResizeHandle from "./ResizeHandle.svelte";
   import CodeEditor from "./CodeEditor.svelte";
 
@@ -59,6 +59,125 @@
   function doWriteFile(relativePath: string, content: string): Promise<void> {
     if (scope.type === "workspace") return writeFile(scope.workspaceId, relativePath, content);
     return writeRepoFile(scope.repoId, relativePath, content);
+  }
+
+  function doSearchFiles(query: string): Promise<FileSearchResult[]> {
+    if (scope.type === "workspace") return searchWorkspaceFiles(scope.workspaceId, query);
+    return searchRepoFiles(scope.repoId, query);
+  }
+
+  // ── Fuzzy file search state ─────────────────────────────
+  let showSearch = $state(false);
+  let searchQuery = $state("");
+  let searchResults = $state<FileSearchResult[]>([]);
+  let searchSelectedIndex = $state(0);
+  let searchLoading = $state(false);
+  let searchInputEl: HTMLInputElement | undefined = $state();
+  let browserEl: HTMLDivElement | undefined = $state();
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function openSearch() {
+    showSearch = true;
+    searchQuery = "";
+    searchResults = [];
+    searchSelectedIndex = 0;
+    searchLoading = false;
+    // Focus input after it mounts
+    queueMicrotask(() => searchInputEl?.focus());
+  }
+
+  function closeSearch() {
+    showSearch = false;
+    searchQuery = "";
+    searchResults = [];
+    clearTimeout(searchDebounceTimer);
+  }
+
+  // Debounced fuzzy search
+  $effect(() => {
+    const q = searchQuery;
+    clearTimeout(searchDebounceTimer);
+
+    if (!q.trim()) {
+      searchResults = [];
+      searchSelectedIndex = 0;
+      searchLoading = false;
+      return;
+    }
+
+    searchLoading = true;
+    searchDebounceTimer = setTimeout(async () => {
+      try {
+        const results = await doSearchFiles(q);
+        searchResults = results.filter((r) => r.kind === "file");
+        searchSelectedIndex = 0;
+      } catch {
+        searchResults = [];
+      } finally {
+        searchLoading = false;
+      }
+    }, 150);
+  });
+
+  function handleSearchKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearch();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (searchResults.length > 0) {
+        searchSelectedIndex = (searchSelectedIndex + 1) % searchResults.length;
+        scrollSearchItemIntoView();
+      }
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (searchResults.length > 0) {
+        searchSelectedIndex = (searchSelectedIndex - 1 + searchResults.length) % searchResults.length;
+        scrollSearchItemIntoView();
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const result = searchResults[searchSelectedIndex];
+      if (result) {
+        closeSearch();
+        navigateToPath(result.path, null);
+      }
+      return;
+    }
+  }
+
+  function scrollSearchItemIntoView() {
+    queueMicrotask(() => {
+      const el = browserEl?.querySelector(".search-results .search-item.active");
+      el?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function selectSearchResult(result: FileSearchResult) {
+    closeSearch();
+    navigateToPath(result.path, null);
+  }
+
+  // Cmd+F handler — only when this file browser is visible
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    if (e.key === "f" && e.metaKey && !e.shiftKey) {
+      // Check if this component is visible (not display:none)
+      if (browserEl && browserEl.offsetParent !== null) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (showSearch) {
+          searchInputEl?.focus();
+        } else {
+          openSearch();
+        }
+      }
+    }
   }
 
   // ── Tree state ────────────────────────────────────────
@@ -358,7 +477,10 @@
   });
 </script>
 
-<div class="file-browser">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<svelte:window onkeydown={handleGlobalKeydown} />
+
+<div class="file-browser" bind:this={browserEl}>
   {#if rootLoading && rootEntries.length === 0}
     <div class="browser-empty">Loading...</div>
   {:else if rootError}
@@ -369,8 +491,59 @@
       <div class="tree-sidebar" style="width: {treeWidth}px">
         <div class="tree-header">
           <span class="tree-title">Files</span>
-          <button class="refresh-btn" onclick={refreshTree} title="Refresh">↻</button>
+          <div class="tree-header-actions">
+            <button class="header-icon-btn" onclick={openSearch} title="Search files (⌘F)">
+              <Search size={13} />
+            </button>
+            <button class="refresh-btn" onclick={refreshTree} title="Refresh">↻</button>
+          </div>
         </div>
+
+        {#if showSearch}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="search-bar" onkeydown={handleSearchKeydown}>
+            <div class="search-input-row">
+              <Search size={12} class="search-icon" />
+              <input
+                bind:this={searchInputEl}
+                bind:value={searchQuery}
+                type="text"
+                class="search-input"
+                placeholder="Search files..."
+                spellcheck="false"
+                autocomplete="off"
+              />
+              {#if searchLoading}
+                <span class="search-spinner"></span>
+              {/if}
+            </div>
+            {#if searchResults.length > 0}
+              <div class="search-results">
+                {#each searchResults as result, i}
+                  <button
+                    class="search-item"
+                    class:active={i === searchSelectedIndex}
+                    onclick={() => selectSearchResult(result)}
+                    onmouseenter={() => { searchSelectedIndex = i; }}
+                  >
+                    <span class="search-item-icon">
+                      {#if fileIconUrl(result.name)}
+                        <img src={fileIconUrl(result.name)} alt="" class="devicon" />
+                      {:else}
+                        <FileIcon size={13} />
+                      {/if}
+                    </span>
+                    <span class="search-item-name">{result.name}</span>
+                    <span class="search-item-path">{result.path}</span>
+                  </button>
+                {/each}
+              </div>
+            {:else if searchQuery.trim() && !searchLoading}
+              <div class="search-empty">No files found</div>
+            {/if}
+          </div>
+        {/if}
+
         <div class="tree-list">
           {#each rootEntries as node}
             {@render treeItem(node, 0)}
@@ -528,6 +701,28 @@
     font-weight: 600;
   }
 
+  .tree-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+  }
+
+  .header-icon-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 0.1rem 0.2rem;
+    display: flex;
+    align-items: center;
+    border-radius: 3px;
+  }
+
+  .header-icon-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
   .refresh-btn {
     background: none;
     border: none;
@@ -539,6 +734,113 @@
 
   .refresh-btn:hover {
     color: var(--text-primary);
+  }
+
+  /* ── File search overlay ─────────────────── */
+
+  .search-bar {
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+  }
+
+  .search-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.5rem;
+  }
+
+  .search-input-row :global(.search-icon) {
+    flex-shrink: 0;
+    color: var(--text-dim);
+  }
+
+  .search-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    min-width: 0;
+  }
+
+  .search-input::placeholder {
+    color: var(--text-dim);
+  }
+
+  .search-spinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid var(--text-dim);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .search-results {
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 0.15rem 0;
+  }
+
+  .search-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.5rem;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.73rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .search-item:hover,
+  .search-item.active {
+    background: var(--bg-hover);
+  }
+
+  .search-item-icon {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+  }
+
+  .search-item-name {
+    flex-shrink: 0;
+    font-weight: 500;
+  }
+
+  .search-item-path {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-dim);
+    font-size: 0.65rem;
+    direction: rtl;
+    text-align: left;
+  }
+
+  .search-empty {
+    padding: 0.5rem;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.72rem;
   }
 
   .tree-list {
