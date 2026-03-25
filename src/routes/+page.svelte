@@ -103,6 +103,7 @@
   let selectedWsId = $state<string | null>(null);
   let activeTab = $state<PanelTab>("diff");
   let chatExpanded = $state(true);
+  let terminalPaneVisible = $state(false);
   let diffRefreshTrigger = $state(0);
   let showSettings = $state(false);
   let creatingWsId = $state<string | null>(null);
@@ -722,6 +723,12 @@
           if (!inInput && selectedWsId && appMode === "work") {
             e.preventDefault();
             handleUpdateBranch();
+          }
+          break;
+        case "`":
+          if (appMode === "work") {
+            e.preventDefault();
+            terminalPaneVisible = !terminalPaneVisible;
           }
           break;
       }
@@ -2301,6 +2308,7 @@
             bind:activeTab
             bind:fileNavigatePath
             bind:fileNavigateLine
+            bind:terminalPaneVisible
             {chatExpanded}
             onChatExpandedChange={(v) => { chatExpanded = v; }}
             defaultBranch={activeRepo?.default_branch ?? "main"}

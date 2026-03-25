@@ -490,7 +490,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 0.75rem;
+    padding: 0 0.5rem;
     height: 40px;
     border-bottom: 1px solid var(--border);
     background: var(--bg-titlebar);

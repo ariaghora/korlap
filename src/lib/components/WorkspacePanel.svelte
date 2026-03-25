@@ -60,12 +60,14 @@
     stagingMergedCount?: number;
     stagingConflictingCount?: number;
     contextWarning?: boolean;
+    terminalPaneVisible?: boolean;
   }
 
   let {
     activeTab = $bindable("diff"),
     fileNavigatePath = $bindable(null),
     fileNavigateLine = $bindable(null),
+    terminalPaneVisible = $bindable(false),
     selectedWs,
     selectedWsId,
     activeWorkspaces,
@@ -213,7 +215,6 @@
     chatDragOffset = { x: resizeStartDrag.x + posDelta.dx, y: resizeStartDrag.y + posDelta.dy };
   }
 
-  let terminalPaneVisible = $state(false);
   let terminalPaneWidth = $state(400);
   const TERMINAL_PANE_MIN = 200;
   const TERMINAL_PANE_MAX = 800;
@@ -554,7 +555,7 @@
             class="terminal-toggle-btn"
             class:active={terminalPaneVisible}
             onclick={() => { terminalPaneVisible = !terminalPaneVisible; }}
-            use:tooltip={{ text: terminalPaneVisible ? "Hide terminal" : "Show terminal" }}
+            use:tooltip={{ text: "Toggle terminal", shortcut: "⌘`" }}
           >
             <Terminal size={13} />
           </button>
@@ -782,7 +783,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    padding: 0 1rem;
+    padding: 0 0.5rem;
     height: 38px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
@@ -875,29 +876,31 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     padding: 0;
     background: transparent;
-    border: none;
+    border: 1px solid var(--border-light);
     border-radius: 4px;
     color: var(--text-dim);
     cursor: pointer;
     flex-shrink: 0;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
 
-  .terminal-toggle-btn:hover {
+  .terminal-toggle-btn:hover:not(.active) {
     color: var(--text-primary);
     background: var(--bg-hover);
   }
 
   .terminal-toggle-btn.active {
     color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
   .terminal-toggle-btn.active:hover {
-    color: var(--accent);
-    background: var(--bg-hover);
+    filter: brightness(1.15);
   }
 
   /* ── Run script button ──────────────────────────── */
