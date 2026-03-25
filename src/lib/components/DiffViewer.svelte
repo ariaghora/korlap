@@ -319,14 +319,15 @@
                 </button>
               {/if}
             </div>
+            {#if visIdx === selMax && onQuote}
+              <div class="quote-btn-row">
+                <button class="quote-btn" onclick={handleQuote}>
+                  <MessageSquare size={12} />
+                  Quote in Chat
+                </button>
+              </div>
+            {/if}
           {/each}
-
-          {#if selMin !== null && onQuote}
-            <button class="quote-btn" onclick={handleQuote}>
-              <MessageSquare size={12} />
-              Quote in Chat
-            </button>
-          {/if}
         {:else}
           <div class="diff-empty">Select a file</div>
         {/if}
@@ -615,25 +616,26 @@
 
   /* ── Quote button ──────────────────────── */
 
+  .quote-btn-row {
+    display: flex;
+    justify-content: flex-start;
+    padding: 0.25rem 0.75rem 0.25rem calc(4ch + 4ch + 1.5ch + 0.9ch + 0.75rem);
+  }
+
   .quote-btn {
-    position: sticky;
-    bottom: 8px;
-    left: 50%;
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    margin: 0.5rem auto 0;
-    padding: 0.35rem 0.7rem;
+    padding: 0.2rem 0.55rem;
     background: var(--bg-card);
     border: 1px solid var(--border-light);
-    border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    border-radius: 5px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
     color: var(--accent);
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     font-weight: 600;
     cursor: pointer;
-    z-index: 5;
   }
 
   .quote-btn:hover {
