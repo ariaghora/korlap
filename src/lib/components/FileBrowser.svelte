@@ -1,10 +1,11 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
-  import { Folder, FolderOpen, File as FileIcon, Search } from "lucide-svelte";
+  import { Folder, FolderOpen, File as FileIcon, Search, FileSearch } from "lucide-svelte";
   import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, searchWorkspaceFiles, searchRepoFiles, type FileEntry, type FileSearchResult } from "$lib/ipc";
   import { tooltip } from "$lib/actions";
   import ResizeHandle from "./ResizeHandle.svelte";
   import CodeEditor from "./CodeEditor.svelte";
+  import SearchModal from "./SearchModal.svelte";
 
   // ── Devicon imports (Vite resolves as URL strings) ──
   import iconRust from "devicon/icons/rust/rust-original.svg";
@@ -79,6 +80,7 @@
 
   function openSearch() {
     showSearch = true;
+    showGrep = false; // close grep if open
     searchQuery = "";
     searchResults = [];
     searchSelectedIndex = 0;
@@ -165,17 +167,37 @@
     navigateToPath(result.path, null);
   }
 
-  // Cmd+F handler — only when this file browser is visible
+  // ── Grep (content search) ──────────────────────────────
+  let showGrep = $state(false);
+
+  function openGrep() {
+    showGrep = true;
+    showSearch = false;
+  }
+
+  function closeGrep() {
+    showGrep = false;
+  }
+
+  // Cmd+F / Cmd+Shift+F handler — only when this file browser is visible
   function handleGlobalKeydown(e: KeyboardEvent) {
-    if (e.key === "f" && e.metaKey && !e.shiftKey) {
+    if (e.key === "f" && e.metaKey) {
       // Check if this component is visible (not display:none)
       if (browserEl && browserEl.offsetParent !== null) {
         e.preventDefault();
         e.stopPropagation();
-        if (showSearch) {
-          searchInputEl?.focus();
+        if (e.shiftKey) {
+          // Cmd+Shift+F → grep (content search)
+          if (!showGrep) {
+            openGrep();
+          }
         } else {
-          openSearch();
+          // Cmd+F → file search
+          if (showSearch) {
+            searchInputEl?.focus();
+          } else {
+            openSearch();
+          }
         }
       }
     }
@@ -493,8 +515,11 @@
         <div class="tree-header">
           <span class="tree-title">Files</span>
           <div class="tree-header-actions">
-            <button class="header-icon-btn" onclick={openSearch} use:tooltip={{ text: "Search files (⌘F)" }}>
+            <button class="header-icon-btn" onclick={openSearch} use:tooltip={{ text: "Find file", shortcut: "⌘F" }}>
               <Search size={13} />
+            </button>
+            <button class="header-icon-btn" onclick={openGrep} use:tooltip={{ text: "Search in files", shortcut: "⇧⌘F" }}>
+              <FileSearch size={13} />
             </button>
             <button class="refresh-btn" onclick={refreshTree} use:tooltip={{ text: "Refresh" }}>↻</button>
           </div>
@@ -597,6 +622,19 @@
           </div>
         {/if}
       </div>
+
+      {#if showGrep}
+        <SearchModal
+          workspaceId={scope.type === "workspace" ? scope.workspaceId : undefined}
+          repoId={scope.type === "repo" ? scope.repoId : undefined}
+          onClose={closeGrep}
+          enterLabel="open file"
+          onAddToContext={(path, _name, line) => {
+            closeGrep();
+            navigateToPath(path, line);
+          }}
+        />
+      {/if}
     </div>
   {/if}
 </div>
@@ -1028,4 +1066,5 @@
     flex: 1;
     min-height: 0;
   }
+
 </style>

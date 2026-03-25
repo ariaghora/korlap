@@ -9,9 +9,10 @@
     onClose: () => void;
     onAddToContext: (path: string, displayName: string, lineNumber: number) => void;
     onOpenInFiles?: (path: string, lineNumber: number) => void;
+    enterLabel?: string;
   }
 
-  let { workspaceId, repoId, onClose, onAddToContext, onOpenInFiles }: Props = $props();
+  let { workspaceId, repoId, onClose, onAddToContext, onOpenInFiles, enterLabel = "add to context" }: Props = $props();
 
   function doGrep(q: string, regex: boolean, matchCase: boolean) {
     if (workspaceId) return grepWorkspace(workspaceId, q, regex, matchCase);
@@ -252,7 +253,7 @@
 
     <div class="footer">
       <span class="hint"><kbd>↑↓</kbd> navigate</span>
-      <span class="hint"><kbd>⏎</kbd> add to context</span>
+      <span class="hint"><kbd>⏎</kbd> {enterLabel}</span>
       {#if onOpenInFiles}
         <span class="hint"><kbd>⌘⏎</kbd> open in files</span>
       {/if}
