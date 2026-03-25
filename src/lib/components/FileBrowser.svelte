@@ -2,6 +2,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { Folder, FolderOpen, File as FileIcon, Search } from "lucide-svelte";
   import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, searchWorkspaceFiles, searchRepoFiles, type FileEntry, type FileSearchResult } from "$lib/ipc";
+  import { tooltip } from "$lib/actions";
   import ResizeHandle from "./ResizeHandle.svelte";
   import CodeEditor from "./CodeEditor.svelte";
 
@@ -492,10 +493,10 @@
         <div class="tree-header">
           <span class="tree-title">Files</span>
           <div class="tree-header-actions">
-            <button class="header-icon-btn" onclick={openSearch} title="Search files (⌘F)">
+            <button class="header-icon-btn" onclick={openSearch} use:tooltip={{ text: "Search files (⌘F)" }}>
               <Search size={13} />
             </button>
-            <button class="refresh-btn" onclick={refreshTree} title="Refresh">↻</button>
+            <button class="refresh-btn" onclick={refreshTree} use:tooltip={{ text: "Refresh" }}>↻</button>
           </div>
         </div>
 

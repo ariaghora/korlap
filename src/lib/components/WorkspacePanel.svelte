@@ -13,7 +13,7 @@
   import TerminalView from "$lib/components/Terminal.svelte";
   import ReviewPill from "$lib/components/ReviewPill.svelte";
   import ResizeHandle from "$lib/components/ResizeHandle.svelte";
-  import { draggable, resizable, type DragOffset } from "$lib/actions";
+  import { draggable, resizable, tooltip, type DragOffset } from "$lib/actions";
 
   export type PanelTab = "diff" | "files";
 
@@ -384,7 +384,7 @@
               <button
                 class="run-script-btn stop"
                 onclick={handleStopScript}
-                title="Stop script"
+                use:tooltip={{ text: "Stop script" }}
               >
                 <Square size={10} />
                 Stop {#if selectedWs}<span class="run-branch">{selectedWs.branch}</span>{/if}
@@ -395,7 +395,7 @@
                 class:success={currentScriptStatus === "success"}
                 class:error={currentScriptStatus === "error"}
                 onclick={handleRunDefault}
-                title={`Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}`}
+                use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}` }}
               >
                 {#if currentScriptStatus === "success"}
                   <Check size={12} />
@@ -413,7 +413,7 @@
               class:success={currentScriptStatus === "success"}
               class:error={currentScriptStatus === "error"}
               onclick={toggleDropdown}
-              title="Select script"
+              use:tooltip={{ text: "Select script" }}
             >
               <ChevronDown size={10} />
             </button>
@@ -476,7 +476,7 @@
             class="action-badge update-branch"
             onclick={onUpdateBranch}
             disabled={isBusy || updatingBranch}
-            title="Merge {baseBehindBy} new commit{baseBehindBy === 1 ? '' : 's'} from base branch"
+            use:tooltip={{ text: `Merge ${baseBehindBy} new commit${baseBehindBy === 1 ? '' : 's'} from base branch` }}
           >
             {#if updatingBranch}<span class="btn-spinner"></span>{:else}<ArrowDown size={11} />{/if}
             Update{#if !updatingBranch}&nbsp;<span class="update-count">{baseBehindBy}</span>{/if}
@@ -484,7 +484,7 @@
         {/if}
         {#if prStatus?.state === "open"}
           <div class="action-group">
-            <button class="pr-link-btn" onclick={() => openUrl(prStatus!.url)} title="Open PR #{prStatus.number} in browser">
+            <button class="pr-link-btn" onclick={() => openUrl(prStatus!.url)} use:tooltip={{ text: `Open PR #${prStatus.number} in browser` }}>
               <ExternalLink size={12} />
             </button>
             <button class="action-badge review" onclick={onReview} disabled={isBusy}>
@@ -592,7 +592,7 @@
           {/each}
           <button
             class="term-add-btn"
-            title="New terminal"
+            use:tooltip={{ text: "New terminal" }}
             onclick={() => selectedWsId && addTerminalTab(selectedWsId)}
           >
             <Plus size={12} />
@@ -660,7 +660,7 @@
                     <button
                       class="chat-overlay-btn"
                       onclick={() => { chatDragOffset = { x: 0, y: 0 }; chatSize = null; }}
-                      title="Reset position and size"
+                      use:tooltip={{ text: "Reset position and size" }}
                     >
                       <RefreshCcw size={12} />
                     </button>
@@ -668,7 +668,7 @@
                   <button
                     class="chat-overlay-btn"
                     onclick={() => onChatExpandedChange(false)}
-                    title="Collapse chat"
+                    use:tooltip={{ text: "Collapse chat" }}
                   >
                     <Minus size={14} />
                   </button>
@@ -701,7 +701,7 @@
               class="chat-pill"
               class:chat-pill-active={isAgentRunning}
               onclick={() => { focusedPanel = "chat"; onChatExpandedChange(true); }}
-              title="Open chat"
+              use:tooltip={{ text: "Open chat" }}
               style={chatDragOffset.x || chatDragOffset.y ? `transform: translate(${chatDragOffset.x}px, ${chatDragOffset.y}px)` : ""}
             >
               {#if isAgentRunning}

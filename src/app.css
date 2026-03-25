@@ -124,3 +124,55 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
 }
+
+/* ── Tooltip ── */
+.korlap-tooltip {
+  position: fixed;
+  z-index: 99999;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg-card);
+  border: 0.5px solid var(--border-light);
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.25),
+    0 4px 12px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  white-space: nowrap;
+  animation: tooltip-in 0.12s ease-out;
+}
+
+.korlap-tooltip-text {
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.korlap-tooltip-kbd {
+  font-family: var(--font-sans);
+  font-size: 0.6rem;
+  font-weight: 600;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  background: var(--border);
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+@keyframes tooltip-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.korlap-tooltip[data-placement="bottom"] {
+  animation-name: tooltip-in-bottom;
+}
+
+@keyframes tooltip-in-bottom {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { renderMarkdown } from "$lib/markdown";
-  import { externalLinks } from "$lib/actions";
+  import { externalLinks, tooltip } from "$lib/actions";
   import { CircleCheck, CircleX, Loader2, X } from "lucide-svelte";
 
   export interface ReviewState {
@@ -51,7 +51,7 @@
     <div class="pill-running">
       <Loader2 size={13} class="spinner" />
       <span class="task-text">{state.currentTask}</span>
-      <button class="pill-btn cancel" onclick={onCancel} title="Cancel review">
+      <button class="pill-btn cancel" onclick={onCancel} use:tooltip={{ text: "Cancel review" }}>
         <X size={12} />
       </button>
     </div>
@@ -60,7 +60,7 @@
     <div class="pill-clean">
       <CircleCheck size={14} class="check-icon" />
       <span class="clean-text">No issues found</span>
-      <button class="pill-btn dismiss" onclick={onCancel} title="Dismiss">
+      <button class="pill-btn dismiss" onclick={onCancel} use:tooltip={{ text: "Dismiss" }}>
         <X size={12} />
       </button>
     </div>
@@ -69,7 +69,7 @@
     <div class="pill-failed">
       <CircleX size={14} class="error-icon" />
       <span class="failed-text">{failedMessage}</span>
-      <button class="pill-btn dismiss" onclick={onCancel} title="Dismiss">
+      <button class="pill-btn dismiss" onclick={onCancel} use:tooltip={{ text: "Dismiss" }}>
         <X size={12} />
       </button>
     </div>
@@ -77,7 +77,7 @@
     <!-- Issues found: full card -->
     <div class="pill-header">
       <span class="pill-title">Review</span>
-      <button class="pill-btn dismiss" onclick={onCancel} title="Dismiss">
+      <button class="pill-btn dismiss" onclick={onCancel} use:tooltip={{ text: "Dismiss" }}>
         <X size={12} />
       </button>
     </div>

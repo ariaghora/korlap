@@ -67,7 +67,7 @@
     sendingByWorkspace,
     getMessages,
   } from "$lib/stores/messages.svelte";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import WorkspacePanel, { type PanelTab } from "$lib/components/WorkspacePanel.svelte";
@@ -122,6 +122,7 @@
   let baseBehindMap = new SvelteMap<string, number>();
   let updatingBranchMap = new SvelteMap<string, boolean>();
   let titleBarRef: TitleBar | undefined = $state();
+  let kanbanRef: KanbanBoard | undefined = $state();
   let repoDropdownIndex = $state(-1);
 
   // ── Autopilot state (per-repo) ──────────────────────────
@@ -665,7 +666,11 @@
           break;
         case "n":
           e.preventDefault();
-          handleNewWorkspace();
+          if (appMode === "plan" && planView === "kanban") {
+            kanbanRef?.openNewTask();
+          } else {
+            handleNewWorkspace();
+          }
           break;
         case "w":
           e.preventDefault();
@@ -691,6 +696,10 @@
           e.preventDefault();
           appMode = "plan";
           planView = "terminal";
+          tick().then(() => {
+            const textarea = document.querySelector(".plan-terminal-layer.visible .xterm-helper-textarea") as HTMLTextAreaElement;
+            textarea?.focus();
+          });
           break;
         case "4":
           e.preventDefault();
@@ -2342,6 +2351,7 @@
         <!-- Kanban sub-view -->
         <div class="plan-sub-layer" class:plan-visible={planView === "kanban"}>
           <KanbanBoard
+            bind:this={kanbanRef}
             todos={todoItems}
             inProgress={inProgressWs}
             review={reviewWs}

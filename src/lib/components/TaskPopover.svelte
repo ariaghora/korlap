@@ -2,6 +2,7 @@
   import { type PastedImage } from "$lib/chat-utils";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { X, TextSearch, Lightbulb, BookOpen } from "lucide-svelte";
+  import { tooltip } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi, type FileSearchResult } from "./MentionAutocomplete.svelte";
   import SearchModal from "./SearchModal.svelte";
@@ -366,7 +367,7 @@
           class="mode-pill"
           class:active={thinkingMode}
           onclick={() => { thinkingMode = !thinkingMode; }}
-          title="Extended thinking: deeper reasoning before responding"
+          use:tooltip={{ text: "Extended thinking" }}
         >
           <Lightbulb size={13} strokeWidth={2} />
           Thinking
@@ -376,7 +377,7 @@
           class="mode-pill"
           class:active={planMode}
           onclick={() => { planMode = !planMode; }}
-          title="Plan mode: analyze and plan without making changes"
+          use:tooltip={{ text: "Plan mode" }}
         >
           <BookOpen size={13} strokeWidth={2} />
           Plan
@@ -386,7 +387,7 @@
         {#if repoId}
           <button
             class="search-btn"
-            title="Search file contents (grep)"
+            use:tooltip={{ text: "Search file contents", shortcut: "⌘⇧F" }}
             onclick={() => { showSearchModal = true; }}
           >
             <TextSearch size={14} />
