@@ -475,7 +475,7 @@
   }
 
   .dialog {
-    width: 480px;
+    width: 540px;
     max-width: 90vw;
     max-height: 80vh;
     display: flex;
