@@ -267,7 +267,10 @@
 
   .dialog-body {
     padding: 0.6rem 0.85rem 0.75rem;
-    overflow-y: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   .ws-title {
@@ -285,6 +288,8 @@
     line-height: 1.45;
     margin: 0.4rem 0 0;
     word-break: break-word;
+    overflow-y: auto;
+    min-height: 0;
   }
 
   /* ── Markdown body (task description) ─── */
