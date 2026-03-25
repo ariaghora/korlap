@@ -94,6 +94,10 @@
   let doneMenuPos = $state({ top: 0, left: 0 });
   let detailWs = $state<WorkspaceInfo | null>(null);
 
+  export function openNewTask() {
+    showAddDialog = true;
+  }
+
   // Keyboard navigation
   let focusedCol = $state(-1); // -1 = no focus
   let focusedRow = $state(0);

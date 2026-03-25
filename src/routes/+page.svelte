@@ -122,6 +122,7 @@
   let baseBehindMap = new SvelteMap<string, number>();
   let updatingBranchMap = new SvelteMap<string, boolean>();
   let titleBarRef: TitleBar | undefined = $state();
+  let kanbanRef: KanbanBoard | undefined = $state();
   let repoDropdownIndex = $state(-1);
 
   // ── Autopilot state (per-repo) ──────────────────────────
@@ -665,7 +666,11 @@
           break;
         case "n":
           e.preventDefault();
-          handleNewWorkspace();
+          if (appMode === "plan" && planView === "kanban") {
+            kanbanRef?.openNewTask();
+          } else {
+            handleNewWorkspace();
+          }
           break;
         case "w":
           e.preventDefault();
@@ -2342,6 +2347,7 @@
         <!-- Kanban sub-view -->
         <div class="plan-sub-layer" class:plan-visible={planView === "kanban"}>
           <KanbanBoard
+            bind:this={kanbanRef}
             todos={todoItems}
             inProgress={inProgressWs}
             review={reviewWs}
