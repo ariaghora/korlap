@@ -395,7 +395,7 @@
                 class:success={currentScriptStatus === "success"}
                 class:error={currentScriptStatus === "error"}
                 onclick={handleRunDefault}
-                use:tooltip={{ text: repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Run script" }}
+                use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}` }}
               >
                 {#if currentScriptStatus === "success"}
                   <Check size={12} />
