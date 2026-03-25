@@ -291,6 +291,21 @@ export async function readRepoFile(
   return invoke<string>("read_repo_file", { repoId, relativePath });
 }
 
+export async function listRepoDirectory(
+  repoId: string,
+  relativePath: string = "",
+): Promise<FileEntry[]> {
+  return invoke<FileEntry[]>("list_repo_directory", { repoId, relativePath });
+}
+
+export async function writeRepoFile(
+  repoId: string,
+  relativePath: string,
+  content: string,
+): Promise<void> {
+  return invoke("write_repo_file", { repoId, relativePath, content });
+}
+
 // ── Agent ────────────────────────────────────────────────────────────
 
 export async function sendMessage(
@@ -461,6 +476,43 @@ export async function closeTerminal(
 ): Promise<void> {
   return invoke("close_terminal", { workspaceId, terminalId });
 }
+
+// ── Repo-level Terminal ─────────────────────────────────────────────
+
+export async function openRepoTerminal(
+  repoId: string,
+  terminalId: string,
+  onData: (data: number[]) => void,
+): Promise<void> {
+  const channel = new Channel<number[]>();
+  channel.onmessage = onData;
+  return invoke("open_repo_terminal", { repoId, terminalId, onData: channel });
+}
+
+export async function writeRepoTerminal(
+  repoId: string,
+  terminalId: string,
+  data: number[],
+): Promise<void> {
+  return invoke("write_repo_terminal", { repoId, terminalId, data });
+}
+
+export async function resizeRepoTerminal(
+  repoId: string,
+  terminalId: string,
+  rows: number,
+  cols: number,
+): Promise<void> {
+  return invoke("resize_repo_terminal", { repoId, terminalId, rows, cols });
+}
+
+export async function closeRepoTerminal(
+  repoId: string,
+  terminalId: string,
+): Promise<void> {
+  return invoke("close_repo_terminal", { repoId, terminalId });
+}
+
 // ── Messages ────────────────────────────────────────────────────────
 
 export async function saveMessages(
@@ -560,6 +612,20 @@ export async function runScript(
 
 export async function stopScript(workspaceId: string): Promise<void> {
   return invoke("stop_script", { workspaceId });
+}
+
+export async function runRepoScript(
+  repoId: string,
+  command: string,
+  onEvent: (event: ScriptEvent) => void,
+): Promise<void> {
+  const channel = new Channel<ScriptEvent>();
+  channel.onmessage = onEvent;
+  return invoke("run_repo_script", { repoId, command, onEvent: channel });
+}
+
+export async function stopRepoScript(repoId: string): Promise<void> {
+  return invoke("stop_repo_script", { repoId });
 }
 
 // ── Events ───────────────────────────────────────────────────────────

@@ -224,6 +224,128 @@ pub async fn write_file(
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
+// ── Repo-level file browser commands ─────────────────────────────────
+
+#[tauri::command]
+pub async fn list_repo_directory(
+    repo_id: String,
+    relative_path: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<FileEntry>, String> {
+    let repo_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st
+            .repos
+            .get(&repo_id)
+            .ok_or("Repository not found")?;
+        repo.path.clone()
+    };
+
+    let target = if relative_path.is_empty() {
+        repo_path.clone()
+    } else {
+        repo_path.join(&relative_path)
+    };
+
+    // Security: ensure path doesn't escape repo
+    let canonical = target
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+    let repo_canonical = repo_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve repo: {}", e))?;
+    if !canonical.starts_with(&repo_canonical) {
+        return Err("Path escapes repo boundary".to_string());
+    }
+
+    let root = repo_canonical.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut entries = Vec::new();
+        let dir = std::fs::read_dir(&canonical)
+            .map_err(|e| format!("Cannot read directory: {}", e))?;
+
+        for entry in dir {
+            let entry = entry.map_err(|e| format!("Error reading entry: {}", e))?;
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip hidden files/dirs (except common ones like .github)
+            if name.starts_with('.') && name != ".github" && name != ".gitignore" {
+                continue;
+            }
+
+            let metadata = entry
+                .metadata()
+                .map_err(|e| format!("Cannot stat {}: {}", name, e))?;
+
+            let full_path = entry.path();
+            let rel = full_path
+                .strip_prefix(&root)
+                .unwrap_or(&full_path)
+                .to_string_lossy()
+                .to_string();
+
+            entries.push(FileEntry {
+                name,
+                path: rel,
+                is_dir: metadata.is_dir(),
+                size: metadata.len(),
+            });
+        }
+
+        // Sort: directories first, then alphabetical
+        entries.sort_by(|a, b| {
+            b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn write_repo_file(
+    repo_id: String,
+    relative_path: String,
+    content: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let repo_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st
+            .repos
+            .get(&repo_id)
+            .ok_or("Repository not found")?;
+        repo.path.clone()
+    };
+
+    let target = repo_path.join(&relative_path);
+    let canonical_parent = target
+        .parent()
+        .ok_or("Invalid file path")?
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve parent: {}", e))?;
+    let repo_canonical = repo_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve repo: {}", e))?;
+    if !canonical_parent.starts_with(&repo_canonical) {
+        return Err("Path escapes repo boundary".to_string());
+    }
+
+    let write_target = canonical_parent.join(
+        target
+            .file_name()
+            .ok_or("Invalid file name")?,
+    );
+
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&write_target, content)
+            .map_err(|e| format!("Cannot write file: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
 // ── File search commands ─────────────────────────────────────────────
 
 #[derive(Clone, serde::Serialize)]

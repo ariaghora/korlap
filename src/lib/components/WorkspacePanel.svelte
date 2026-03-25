@@ -561,7 +561,7 @@
               />
             </div>
             <div class="ws-tab-container active-layer" style:display={activeTab === "files" ? undefined : "none"}>
-              <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} navigateToLine={fileNavigateLine} />
+              <FileBrowser scope={{ type: "workspace", workspaceId: selectedWs.id }} navigateTo={fileNavigatePath} navigateToLine={fileNavigateLine} />
             </div>
           {/if}
         </div>
@@ -607,7 +607,7 @@
                 class:visible={isVisible}
                 inert={!isVisible}
               >
-                <TerminalView workspaceId={ws.id} terminalId={tab.id} visible={isVisible} />
+                <TerminalView scope={{ type: "workspace", workspaceId: ws.id }} terminalId={tab.id} visible={isVisible} />
               </div>
             {/each}
           {/each}

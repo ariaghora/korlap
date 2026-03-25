@@ -78,6 +78,10 @@
   import RepoSettingsPanel from "$lib/components/RepoSettings.svelte";
   import SearchModal from "$lib/components/SearchModal.svelte";
   import DependencyGraph from "$lib/components/DependencyGraph.svelte";
+  import FileBrowser from "$lib/components/FileBrowser.svelte";
+  import TerminalView from "$lib/components/Terminal.svelte";
+  import { closeRepoTerminal } from "$lib/ipc";
+  import { Plus } from "lucide-svelte";
   import { type ReviewState } from "$lib/components/ReviewPill.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
@@ -445,6 +449,53 @@
   type AppMode = "work" | "plan";
   let appMode = $state<AppMode>("plan");
 
+  // ── Plan sub-views (kanban / files / terminal) ─────────
+  type PlanView = "kanban" | "files" | "terminal";
+  let planView = $state<PlanView>("kanban");
+
+  interface PlanTerminalTab {
+    id: string;
+    label: string;
+  }
+  let planTerminalTabs = $state<PlanTerminalTab[]>([]);
+  let planActiveTerminalTab = $state<string | null>(null);
+  let planTerminalCounter = $state(0);
+
+  function addPlanTerminalTab() {
+    const count = ++planTerminalCounter;
+    const id = crypto.randomUUID();
+    planTerminalTabs = [...planTerminalTabs, { id, label: `Terminal ${count}` }];
+    planActiveTerminalTab = id;
+  }
+
+  function removePlanTerminalTab(tabId: string) {
+    if (planTerminalTabs.length <= 1) return;
+    const idx = planTerminalTabs.findIndex((t) => t.id === tabId);
+    if (idx === -1) return;
+    planTerminalTabs = planTerminalTabs.filter((t) => t.id !== tabId);
+    if (activeRepo) closeRepoTerminal(activeRepo.id, tabId).catch(() => {});
+    if (planActiveTerminalTab === tabId) {
+      const newIdx = Math.min(idx, planTerminalTabs.length - 1);
+      planActiveTerminalTab = planTerminalTabs[newIdx].id;
+    }
+  }
+
+  function cleanupPlanTerminals() {
+    for (const tab of planTerminalTabs) {
+      if (activeRepo) closeRepoTerminal(activeRepo.id, tab.id).catch(() => {});
+    }
+    planTerminalTabs = [];
+    planActiveTerminalTab = null;
+    planTerminalCounter = 0;
+  }
+
+  // Lazy-init first terminal tab when switching to terminal view
+  $effect(() => {
+    if (planView === "terminal" && planTerminalTabs.length === 0) {
+      addPlanTerminalTab();
+    }
+  });
+
   interface TodoItem {
     id: string;
     repo_id: string;
@@ -628,9 +679,20 @@
           break;
         case "1":
           e.preventDefault();
+          if (appMode === "plan") { planView = "kanban"; }
+          else { appMode = "plan"; planView = "kanban"; }
+          break;
+        case "2":
+          e.preventDefault();
           appMode = "plan";
+          planView = "files";
           break;
         case "3":
+          e.preventDefault();
+          appMode = "plan";
+          planView = "terminal";
+          break;
+        case "4":
           e.preventDefault();
           autopilotEnabled = !autopilotEnabled;
           if (autopilotEnabled) onAutopilotActivated();
@@ -671,6 +733,10 @@
 
   function selectRepo(repo: RepoDetail) {
     if (activeRepo?.id === repo.id) return;
+
+    // Clean up plan-mode terminals for the repo we're leaving
+    cleanupPlanTerminals();
+    planView = "kanban";
 
     // Save autopilot state for the repo we're leaving
     if (activeRepo) {
@@ -2162,11 +2228,14 @@
       onGoToPlan={() => { appMode = "plan"; }}
       onSelectRepo={selectRepo}
       onSettings={() => (showSettings = true)}
-      onGoHome={() => { if (activeRepo) saveAutopilotForRepo(activeRepo.id); activeRepo = null; }}
+      onGoHome={() => { cleanupPlanTerminals(); planView = "kanban"; if (activeRepo) saveAutopilotForRepo(activeRepo.id); activeRepo = null; }}
       {autopilotEnabled}
       onAutopilotToggle={() => { autopilotEnabled = !autopilotEnabled; if (autopilotEnabled) onAutopilotActivated(); }}
       autopilotStatus={autopilotEnabled ? `${activeAgentCount}/${maxConcurrentAgents} agents · ${todos.filter(t => t.ready).length} queued` : undefined}
       onShowDepGraph={() => { showDepGraph = !showDepGraph; }}
+      {planView}
+      onPlanViewChange={(v) => { planView = v; }}
+      {repoSettings}
     />
 
     {#if reviewAlertWs}
@@ -2268,37 +2337,83 @@
       </div>
 
       <div class="mode-layer" class:mode-visible={appMode === "plan"} inert={appMode !== "plan"}>
-        <KanbanBoard
-          todos={todoItems}
-          inProgress={inProgressWs}
-          review={reviewWs}
-          done={doneWs}
-          {prStatusMap}
-          {changeCounts}
-          {reviewingWsIds}
-          {creatingWsId}
-          repoId={activeRepo.id}
-          repoName={activeRepo.display_name}
-          defaultThinkingMode={repoSettings?.default_thinking ?? false}
-          active={appMode === "plan"}
-          onCardClick={handleKanbanCardClick}
-          onSpawnAgent={handleSpawnFromTodo}
-          onNewTodo={handleNewTodo}
-          onAddAndStart={handleNewTodoAndStart}
-          onEditTodo={handleEditTodo}
-          onRemoveTodo={handleRemoveTodo}
-          onToggleReady={handleToggleReady}
-          onRemoveWorkspace={handleRemove}
-          onRemoveAllDone={handleRemoveAllDone}
-          {autopilotEnabled}
-          {autopilotEvents}
-          autopilotActiveAgents={activeAgentCount}
-          autopilotMaxAgents={maxConcurrentAgents}
-          autopilotTodoQueue={todos.filter(t => t.ready).length}
-          autopilotPrioritizing={autopilotPrioritizing}
-          autopilotRebuildingStaging={rebuildingStaging}
-          onAutopilotCommand={handleAutopilotCommand}
-        />
+        <!-- Kanban sub-view -->
+        <div class="plan-sub-layer" class:plan-visible={planView === "kanban"}>
+          <KanbanBoard
+            todos={todoItems}
+            inProgress={inProgressWs}
+            review={reviewWs}
+            done={doneWs}
+            {prStatusMap}
+            {changeCounts}
+            {reviewingWsIds}
+            {creatingWsId}
+            repoId={activeRepo.id}
+            repoName={activeRepo.display_name}
+            defaultThinkingMode={repoSettings?.default_thinking ?? false}
+            active={appMode === "plan" && planView === "kanban"}
+            onCardClick={handleKanbanCardClick}
+            onSpawnAgent={handleSpawnFromTodo}
+            onNewTodo={handleNewTodo}
+            onAddAndStart={handleNewTodoAndStart}
+            onEditTodo={handleEditTodo}
+            onRemoveTodo={handleRemoveTodo}
+            onToggleReady={handleToggleReady}
+            onRemoveWorkspace={handleRemove}
+            onRemoveAllDone={handleRemoveAllDone}
+            {autopilotEnabled}
+            {autopilotEvents}
+            autopilotActiveAgents={activeAgentCount}
+            autopilotMaxAgents={maxConcurrentAgents}
+            autopilotTodoQueue={todos.filter(t => t.ready).length}
+            autopilotPrioritizing={autopilotPrioritizing}
+            autopilotRebuildingStaging={rebuildingStaging}
+            onAutopilotCommand={handleAutopilotCommand}
+          />
+        </div>
+
+        <!-- Files sub-view -->
+        <div class="plan-sub-layer" class:plan-visible={planView === "files"}>
+          <FileBrowser scope={{ type: "repo", repoId: activeRepo.id }} />
+        </div>
+
+        <!-- Terminal sub-view -->
+        <div class="plan-sub-layer plan-terminal-layout" class:plan-visible={planView === "terminal"}>
+          <div class="plan-terminal-tabs">
+            {#each planTerminalTabs as tab (tab.id)}
+              <button
+                class="plan-term-tab"
+                class:active={tab.id === planActiveTerminalTab}
+                onclick={() => { planActiveTerminalTab = tab.id; }}
+              >
+                {tab.label}
+                {#if planTerminalTabs.length > 1}
+                  <span
+                    class="tab-close"
+                    role="button"
+                    tabindex="-1"
+                    onclick={(e) => { e.stopPropagation(); removePlanTerminalTab(tab.id); }}
+                  >&times;</span>
+                {/if}
+              </button>
+            {/each}
+            <button class="plan-term-add" onclick={addPlanTerminalTab} title="New terminal">
+              <Plus size={12} />
+            </button>
+          </div>
+          <div class="plan-terminal-body">
+            {#each planTerminalTabs as tab (tab.id)}
+              {@const isVisible = tab.id === planActiveTerminalTab && planView === "terminal" && appMode === "plan"}
+              <div class="plan-terminal-layer" class:visible={isVisible} inert={!isVisible}>
+                <TerminalView
+                  scope={{ type: "repo", repoId: activeRepo.id }}
+                  terminalId={tab.id}
+                  visible={isVisible}
+                />
+              </div>
+            {/each}
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2907,6 +3022,123 @@
   .mode-layer.mode-visible {
     visibility: visible;
     pointer-events: auto;
+    z-index: 1;
+  }
+
+  /* ── Plan sub-views ────────────────────────────────── */
+
+  .plan-sub-layer {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+  }
+
+  .plan-sub-layer.plan-visible {
+    display: flex;
+    z-index: 1;
+  }
+
+  .plan-terminal-layout {
+    flex-direction: column;
+  }
+
+  .plan-terminal-tabs {
+    display: flex;
+    align-items: center;
+    padding: 0 0.5rem;
+    height: 30px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 0.15rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .plan-terminal-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .plan-term-tab {
+    padding: 0.25rem 0.55rem;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .plan-term-tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .plan-term-tab.active {
+    color: var(--text-bright);
+    background: var(--border);
+  }
+
+  .plan-term-tab .tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--text-dim);
+    cursor: pointer;
+    margin-left: 2px;
+    flex-shrink: 0;
+  }
+
+  .plan-term-tab .tab-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .plan-term-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .plan-term-add:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .plan-terminal-body {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+  }
+
+  .plan-terminal-layer {
+    position: absolute;
+    inset: 0;
+    display: none;
+  }
+
+  .plan-terminal-layer.visible {
+    display: flex;
     z-index: 1;
   }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
   import { Folder, FolderOpen, File as FileIcon } from "lucide-svelte";
-  import { listDirectory, readFile, writeFile, type FileEntry } from "$lib/ipc";
+  import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, type FileEntry } from "$lib/ipc";
   import ResizeHandle from "./ResizeHandle.svelte";
   import CodeEditor from "./CodeEditor.svelte";
 
@@ -31,13 +31,35 @@
   import iconLua from "devicon/icons/lua/lua-original.svg";
   import iconGit from "devicon/icons/git/git-original.svg";
 
+  type BrowserScope =
+    | { type: "workspace"; workspaceId: string }
+    | { type: "repo"; repoId: string };
+
   interface Props {
-    workspaceId: string;
+    scope: BrowserScope;
     navigateTo?: string | null;
     navigateToLine?: number | null;
   }
 
-  let { workspaceId, navigateTo = null, navigateToLine = null }: Props = $props();
+  let { scope, navigateTo = null, navigateToLine = null }: Props = $props();
+
+  // ── Scope-aware IPC dispatchers ──────────────────────
+  let scopeKey = $derived(scope.type === "workspace" ? scope.workspaceId : scope.repoId);
+
+  function doListDirectory(relativePath: string): Promise<FileEntry[]> {
+    if (scope.type === "workspace") return listDirectory(scope.workspaceId, relativePath);
+    return listRepoDirectory(scope.repoId, relativePath);
+  }
+
+  function doReadFile(relativePath: string): Promise<string> {
+    if (scope.type === "workspace") return readFile(scope.workspaceId, relativePath);
+    return readRepoFile(scope.repoId, relativePath);
+  }
+
+  function doWriteFile(relativePath: string, content: string): Promise<void> {
+    if (scope.type === "workspace") return writeFile(scope.workspaceId, relativePath, content);
+    return writeRepoFile(scope.repoId, relativePath, content);
+  }
 
   // ── Tree state ────────────────────────────────────────
 
@@ -68,7 +90,7 @@
   // ── Load root on workspace change ─────────────────────
 
   $effect(() => {
-    const wsId = workspaceId;
+    const _key = scopeKey;
     rootLoading = true;
     rootError = "";
     selectedPath = null;
@@ -76,7 +98,7 @@
     isEditing = false;
     expandedPaths.clear();
 
-    listDirectory(wsId, "")
+    doListDirectory("")
       .then((entries) => {
         rootEntries = entries.map(toNode);
       })
@@ -105,7 +127,7 @@
     if (node.children === null) {
       node.loading = true;
       try {
-        const entries = await listDirectory(workspaceId, path);
+        const entries = await doListDirectory(path);
         node.children = entries.map(toNode);
       } catch (e) {
         node.children = [];
@@ -126,7 +148,7 @@
     fileError = "";
 
     try {
-      fileContent = await readFile(workspaceId, path);
+      fileContent = await doReadFile(path);
     } catch (e) {
       fileError = String(e);
       fileContent = "";
@@ -152,7 +174,7 @@
     saveMessage = "";
 
     try {
-      await writeFile(workspaceId, selectedPath, editContent);
+      await doWriteFile(selectedPath, editContent);
       fileContent = editContent;
       isEditing = false;
       saveMessage = "Saved";
@@ -239,7 +261,7 @@
     rootLoading = true;
     rootError = "";
     try {
-      const entries = await listDirectory(workspaceId, "");
+      const entries = await doListDirectory("");
       rootEntries = entries.map(toNode);
       expandedPaths.clear();
     } catch (e) {
@@ -282,7 +304,7 @@
     // Ensure root entries are loaded before navigating
     if (rootEntries.length === 0) {
       try {
-        const entries = await listDirectory(workspaceId, "");
+        const entries = await doListDirectory("");
         rootEntries = entries.map(toNode);
         rootLoading = false;
       } catch {
@@ -299,7 +321,7 @@
       if (node.children === null) {
         node.loading = true;
         try {
-          const entries = await listDirectory(workspaceId, dirPath);
+          const entries = await doListDirectory(dirPath);
           node.children = entries.map(toNode);
         } catch {
           node.children = [];
