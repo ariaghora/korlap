@@ -706,6 +706,24 @@
           autopilotEnabled = !autopilotEnabled;
           if (autopilotEnabled) onAutopilotActivated();
           break;
+        case "r":
+          if (!inInput && selectedWsId && appMode === "work") {
+            e.preventDefault();
+            handleReview();
+          }
+          break;
+        case "m":
+          if (!inInput && selectedWsId && appMode === "work") {
+            e.preventDefault();
+            handlePrAction();
+          }
+          break;
+        case "u":
+          if (!inInput && selectedWsId && appMode === "work") {
+            e.preventDefault();
+            handleUpdateBranch();
+          }
+          break;
       }
     }
 
