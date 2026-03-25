@@ -21,6 +21,7 @@
     isReviewing?: boolean;
     isCreating?: boolean;
     // Common
+    focused?: boolean;
     onClick?: (e: MouseEvent) => void;
     onAction?: () => void;
     onEdit?: () => void;
@@ -43,6 +44,7 @@
     changeCounts,
     isReviewing = false,
     isCreating = false,
+    focused = false,
     onClick,
     onAction,
     onEdit,
@@ -71,7 +73,7 @@
 </script>
 
 {#if type === "todo"}
-  <div class="card todo-card" class:ready>
+  <div class="card todo-card" class:ready class:focused>
     <span class="card-title">{title}</span>
     {#if description}
       <span class="card-desc">{description}</span>
@@ -118,7 +120,7 @@
 {:else if workspace}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="card ws-card" onclick={(e) => onClick?.(e)}>
+  <div class="card ws-card" class:focused onclick={(e) => onClick?.(e)}>
     <div class="card-top" class:has-title={!!workspace.task_title}>
       <span
         class="ws-dot"
@@ -160,6 +162,11 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 6px;
+  }
+
+  .card.focused {
+    border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
   }
 
   .ws-card {

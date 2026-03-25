@@ -51,6 +51,7 @@
     autopilotPrioritizing?: boolean;
     autopilotRebuildingStaging?: boolean;
     onAutopilotCommand?: (command: string) => void;
+    active?: boolean;
   }
 
   let {
@@ -82,6 +83,7 @@
     autopilotPrioritizing = false,
     autopilotRebuildingStaging = false,
     onAutopilotCommand,
+    active = false,
   }: Props = $props();
 
   let showAddDialog = $state(false);
@@ -90,6 +92,120 @@
   let doneMenuBtnEl = $state<HTMLButtonElement | null>(null);
   let doneMenuPos = $state({ top: 0, left: 0 });
   let detailWs = $state<WorkspaceInfo | null>(null);
+
+  // Keyboard navigation
+  let focusedCol = $state(-1); // -1 = no focus
+  let focusedRow = $state(0);
+  let boardEl = $state<HTMLDivElement | null>(null);
+
+  // Column data as indexable array: [todo, inProgress, review, done]
+  const columnItems = $derived([todos, inProgress, review, done] as const);
+
+  function colLen(col: number): number {
+    return columnItems[col]?.length ?? 0;
+  }
+
+  // Clamp focus when data changes (e.g. card removed)
+  function ensureValidFocus() {
+    if (focusedCol < 0) return;
+    const len = colLen(focusedCol);
+    if (len === 0) {
+      focusedCol = -1;
+      focusedRow = 0;
+    } else {
+      focusedRow = Math.min(focusedRow, len - 1);
+    }
+  }
+
+  function findFirstNonEmptyCol(startDir: "forward" | "backward"): number {
+    if (startDir === "forward") {
+      for (let i = 0; i < 4; i++) { if (colLen(i) > 0) return i; }
+    } else {
+      for (let i = 3; i >= 0; i--) { if (colLen(i) > 0) return i; }
+    }
+    return -1;
+  }
+
+  function handleBoardKeydown(e: KeyboardEvent) {
+    if (!active) return;
+    if (e.defaultPrevented) return;
+    if (showAddDialog || editingTodo || detailWs || showDoneMenu) return;
+
+    const target = e.target as HTMLElement;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+    const key = e.key;
+    if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(key)) return;
+
+    e.preventDefault();
+    ensureValidFocus();
+
+    switch (key) {
+      case "ArrowDown":
+      case "ArrowUp": {
+        if (focusedCol === -1) {
+          const col = findFirstNonEmptyCol("forward");
+          if (col >= 0) {
+            focusedCol = col;
+            focusedRow = key === "ArrowDown" ? 0 : colLen(col) - 1;
+          }
+        } else {
+          if (key === "ArrowDown") {
+            focusedRow = Math.min(focusedRow + 1, colLen(focusedCol) - 1);
+          } else {
+            focusedRow = Math.max(focusedRow - 1, 0);
+          }
+        }
+        break;
+      }
+      case "ArrowRight":
+      case "ArrowLeft": {
+        if (focusedCol === -1) {
+          const col = findFirstNonEmptyCol(key === "ArrowRight" ? "forward" : "backward");
+          if (col >= 0) { focusedCol = col; focusedRow = 0; }
+        } else {
+          const dir = key === "ArrowRight" ? 1 : -1;
+          let next = focusedCol + dir;
+          while (next >= 0 && next < 4) {
+            if (colLen(next) > 0) {
+              focusedCol = next;
+              focusedRow = Math.min(focusedRow, colLen(next) - 1);
+              break;
+            }
+            next += dir;
+          }
+        }
+        break;
+      }
+      case "Enter": {
+        if (focusedCol < 0) return;
+        if (focusedCol === 0) {
+          const todo = todos[focusedRow];
+          if (todo) editingTodo = todo;
+        } else {
+          const lists = [null, inProgress, review, done];
+          const ws = lists[focusedCol]?.[focusedRow];
+          if (ws) {
+            if (e.metaKey) onCardClick(ws.id);
+            else detailWs = ws;
+          }
+        }
+        break;
+      }
+      case "Escape": {
+        focusedCol = -1;
+        focusedRow = 0;
+        break;
+      }
+    }
+
+    // Scroll focused card into view
+    if (focusedCol >= 0) {
+      requestAnimationFrame(() => {
+        boardEl?.querySelector(".card.focused")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    }
+  }
 
   function openDoneMenu(e: MouseEvent) {
     e.stopPropagation();
@@ -118,10 +234,12 @@
   }
 </script>
 
+<svelte:window onkeydown={handleBoardKeydown} />
+
 <div class="kanban-wrapper">
-<div class="kanban-board">
+<div class="kanban-board" bind:this={boardEl}>
   <KanbanColumn title="Todo" count={todos.length}>
-    {#each todos as todo (todo.id)}
+    {#each todos as todo, i (todo.id)}
       <KanbanCard
         type="todo"
         todoId={todo.id}
@@ -131,6 +249,7 @@
         planMode={todo.planMode}
         thinkingMode={todo.thinkingMode}
         ready={todo.ready ?? false}
+        focused={focusedCol === 0 && focusedRow === i}
         {repoName}
         onAction={() => onSpawnAgent(todo.id)}
         onEdit={() => { editingTodo = todo; }}
@@ -149,7 +268,7 @@
   </KanbanColumn>
 
   <KanbanColumn title="In Progress" count={inProgress.length}>
-    {#each inProgress as ws (ws.id)}
+    {#each inProgress as ws, i (ws.id)}
       <KanbanCard
         type="workspace"
         workspace={ws}
@@ -157,6 +276,7 @@
         changeCounts={changeCounts.get(ws.id)}
         isReviewing={reviewingWsIds.has(ws.id)}
         isCreating={ws.id === creatingWsId}
+        focused={focusedCol === 1 && focusedRow === i}
         onClick={(e) => { e.metaKey ? onCardClick(ws.id) : detailWs = ws; }}
         onRemove={() => onRemoveWorkspace(ws.id)}
       />
@@ -167,13 +287,14 @@
   </KanbanColumn>
 
   <KanbanColumn title="Review" count={review.length} accent={review.length > 0}>
-    {#each review as ws (ws.id)}
+    {#each review as ws, i (ws.id)}
       <KanbanCard
         type="workspace"
         workspace={ws}
         prStatus={prStatusMap.get(ws.id)}
         changeCounts={changeCounts.get(ws.id)}
         isReviewing={reviewingWsIds.has(ws.id)}
+        focused={focusedCol === 2 && focusedRow === i}
         onClick={(e) => { e.metaKey ? onCardClick(ws.id) : detailWs = ws; }}
         onRemove={() => onRemoveWorkspace(ws.id)}
       />
@@ -184,12 +305,13 @@
   </KanbanColumn>
 
   <KanbanColumn title="Done" count={done.length} dimmed>
-    {#each done as ws (ws.id)}
+    {#each done as ws, i (ws.id)}
       <KanbanCard
         type="workspace"
         workspace={ws}
         prStatus={prStatusMap.get(ws.id)}
         changeCounts={changeCounts.get(ws.id)}
+        focused={focusedCol === 3 && focusedRow === i}
         onClick={(e) => { e.metaKey ? onCardClick(ws.id) : detailWs = ws; }}
         onRemove={() => onRemoveWorkspace(ws.id)}
       />

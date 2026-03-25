@@ -590,6 +590,10 @@
           repoDropdownIndex = -1;
           return;
         }
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          e.preventDefault();
+          return;
+        }
       }
 
       if (!mod) return;
@@ -2276,6 +2280,7 @@
           repoId={activeRepo.id}
           repoName={activeRepo.display_name}
           defaultThinkingMode={repoSettings?.default_thinking ?? false}
+          active={appMode === "plan"}
           onCardClick={handleKanbanCardClick}
           onSpawnAgent={handleSpawnFromTodo}
           onNewTodo={handleNewTodo}
