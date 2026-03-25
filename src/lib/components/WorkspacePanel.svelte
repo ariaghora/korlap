@@ -1,11 +1,11 @@
 <script lang="ts">
   import { SvelteMap } from "svelte/reactivity";
-  import type { WorkspaceInfo, RepoSettings, PrStatus, ScriptEvent } from "$lib/ipc";
-  import { runScript, closeTerminal } from "$lib/ipc";
+  import type { WorkspaceInfo, RepoSettings, PrStatus, ScriptEvent, NamedScript } from "$lib/ipc";
+  import { runScript, stopScript, closeTerminal } from "$lib/ipc";
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, CircleX, MessageSquare, Minus, ChevronUp, ChevronDown, Timer, RefreshCcw, Plus, X } from "lucide-svelte";
+  import { ExternalLink, Check, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, Square, CircleX, MessageSquare, Minus, ChevronUp, ChevronDown, Timer, RefreshCcw, Plus, X } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
@@ -175,7 +175,18 @@
   let isPopoverOpen = $derived(
     selectedWsId ? scriptPopoverOpen.get(selectedWsId) ?? false : false
   );
-  let hasRunScript = $derived(!!repoSettings?.run_script?.trim());
+  let scriptDropdownOpen = new SvelteMap<string, boolean>();
+  let runningScriptName = new SvelteMap<string, string>();
+  let isDropdownOpen = $derived(
+    selectedWsId ? scriptDropdownOpen.get(selectedWsId) ?? false : false
+  );
+  let currentRunningName = $derived(
+    selectedWsId ? runningScriptName.get(selectedWsId) ?? "" : ""
+  );
+  let hasRunScripts = $derived(
+    (repoSettings?.run_scripts?.length ?? 0) > 0 &&
+    repoSettings!.run_scripts.some((s: NamedScript) => s.command.trim())
+  );
 
   let outputEl = $state<HTMLPreElement | null>(null);
 
@@ -282,18 +293,19 @@
     selectedWsId ? activeTerminalTab.get(selectedWsId) ?? null : null
   );
 
-  function handleRunScript() {
-    if (!selectedWs || !repoSettings?.run_script?.trim()) return;
+  function handleRunNamedScript(script: NamedScript) {
+    if (!selectedWs || !script.command.trim()) return;
     const wsId = selectedWs.id;
     scriptStatusMap.set(wsId, "running");
     scriptOutputMap.set(wsId, []);
     scriptExitCodeMap.delete(wsId);
     scriptPopoverOpen.set(wsId, true);
+    scriptDropdownOpen.set(wsId, false);
+    runningScriptName.set(wsId, script.name || script.command);
 
-    runScript(wsId, repoSettings.run_script, (event: ScriptEvent) => {
+    runScript(wsId, script.command, (event: ScriptEvent) => {
       if (event.type === "output") {
         const prev = scriptOutputMap.get(wsId) ?? [];
-        // Cap at 500 lines to avoid unbounded memory growth
         const lines = prev.length >= 500 ? [...prev.slice(1), event.data] : [...prev, event.data];
         scriptOutputMap.set(wsId, lines);
         requestAnimationFrame(scrollOutputToBottom);
@@ -318,10 +330,25 @@
     });
   }
 
-  function togglePopover() {
+  function handleRunDefault() {
+    const scripts = repoSettings?.run_scripts ?? [];
+    const first = scripts.find((s: NamedScript) => s.command.trim());
+    if (first) handleRunNamedScript(first);
+  }
+
+  async function handleStopScript() {
+    if (!selectedWs) return;
+    try {
+      await stopScript(selectedWs.id);
+    } catch {
+      // Process may have already exited — the exit event will handle state cleanup
+    }
+  }
+
+  function toggleDropdown() {
     if (!selectedWsId) return;
-    const open = scriptPopoverOpen.get(selectedWsId) ?? false;
-    scriptPopoverOpen.set(selectedWsId, !open);
+    const open = scriptDropdownOpen.get(selectedWsId) ?? false;
+    scriptDropdownOpen.set(selectedWsId, !open);
   }
 
   function closePopover() {
@@ -333,6 +360,7 @@
     const target = e.target as HTMLElement;
     if (!target.closest(".run-script-wrapper")) {
       closePopover();
+      if (selectedWsId) scriptDropdownOpen.set(selectedWsId, false);
     }
   }
 </script>
@@ -348,47 +376,76 @@
         <span class="breadcrumb-sep">›</span>
         <span class="breadcrumb-base">{defaultBranch}</span>
       </span>
-      {#if hasRunScript}
+      {#if hasRunScripts}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="run-script-wrapper" onclick={(e) => e.stopPropagation()}>
           <div class="run-script-group">
+            {#if currentScriptStatus === "running"}
+              <button
+                class="run-script-btn stop"
+                onclick={handleStopScript}
+                title="Stop script"
+              >
+                <Square size={10} />
+                Stop
+              </button>
+            {:else}
+              <button
+                class="run-script-btn"
+                class:success={currentScriptStatus === "success"}
+                class:error={currentScriptStatus === "error"}
+                onclick={handleRunDefault}
+                title={`Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}`}
+              >
+                {#if currentScriptStatus === "success"}
+                  <Check size={12} />
+                {:else if currentScriptStatus === "error"}
+                  <CircleX size={12} />
+                {:else}
+                  <Play size={12} />
+                {/if}
+                Run
+              </button>
+            {/if}
             <button
-              class="run-script-btn"
+              class="run-script-toggle"
               class:running={currentScriptStatus === "running"}
               class:success={currentScriptStatus === "success"}
               class:error={currentScriptStatus === "error"}
-              onclick={handleRunScript}
-              disabled={currentScriptStatus === "running"}
-              title={currentScriptStatus === "running" ? "Script running…" : `Run: ${repoSettings?.run_script}`}
+              onclick={toggleDropdown}
+              title="Select script"
             >
-              {#if currentScriptStatus === "running"}
-                <span class="btn-spinner"></span>
-              {:else if currentScriptStatus === "success"}
-                <Check size={12} />
-              {:else if currentScriptStatus === "error"}
-                <CircleX size={12} />
-              {:else}
-                <Play size={12} />
-              {/if}
-              Run
+              <ChevronDown size={10} />
             </button>
-            {#if currentScriptOutput.length > 0 || currentScriptStatus === "running"}
-              <button
-                class="run-script-toggle"
-                class:running={currentScriptStatus === "running"}
-                class:success={currentScriptStatus === "success"}
-                class:error={currentScriptStatus === "error"}
-                onclick={togglePopover}
-                title={isPopoverOpen ? "Hide output" : "Show output"}
-              >
-                {#if isPopoverOpen}
-                  <ChevronUp size={10} />
-                {:else}
-                  <ChevronDown size={10} />
-                {/if}
-              </button>
-            {/if}
           </div>
+
+          {#if isDropdownOpen}
+            <div class="script-dropdown">
+              {#each repoSettings?.run_scripts ?? [] as script, i}
+                {#if script.command.trim()}
+                  <button
+                    class="script-dropdown-item"
+                    onclick={() => handleRunNamedScript(script)}
+                    disabled={currentScriptStatus === "running"}
+                  >
+                    <Play size={11} />
+                    <span class="script-dropdown-name">{script.name || script.command}</span>
+                    {#if i === 0}<span class="script-dropdown-default">default</span>{/if}
+                  </button>
+                {/if}
+              {/each}
+              {#if currentScriptOutput.length > 0 && !isPopoverOpen}
+                <div class="script-dropdown-divider"></div>
+                <button
+                  class="script-dropdown-item"
+                  onclick={() => { if (selectedWsId) { scriptPopoverOpen.set(selectedWsId, true); scriptDropdownOpen.set(selectedWsId, false); } }}
+                >
+                  <span class="script-dropdown-name">Show last output</span>
+                </button>
+              {/if}
+            </div>
+          {/if}
+
           {#if isPopoverOpen}
             <div class="script-popover">
               <div class="script-popover-header">
@@ -396,7 +453,7 @@
                   {#if currentScriptStatus === "running"}
                     <span class="btn-spinner btn-spinner-sm"></span>
                   {/if}
-                  {repoSettings?.run_script}
+                  {currentRunningName || "Script"}
                 </span>
                 <button class="script-popover-close" onclick={closePopover}>
                   <X size={12} />
@@ -839,6 +896,17 @@
     background: color-mix(in srgb, var(--diff-del) 12%, transparent);
   }
 
+  .run-script-btn.stop {
+    color: var(--diff-del);
+    border-color: color-mix(in srgb, var(--diff-del) 30%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 10%, transparent);
+  }
+
+  .run-script-btn.stop:hover {
+    border-color: color-mix(in srgb, var(--diff-del) 50%, transparent);
+    background: color-mix(in srgb, var(--diff-del) 18%, transparent);
+  }
+
   /* ── Run script wrapper + popover ────────────────── */
 
   .run-script-wrapper {
@@ -892,6 +960,69 @@
 
   .run-script-toggle.running {
     cursor: default;
+  }
+
+  /* ── Script dropdown ──────────────────────────── */
+
+  .script-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 200px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 51;
+    overflow: hidden;
+    padding: 0.25rem 0;
+  }
+
+  .script-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.35rem 0.6rem;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .script-dropdown-item:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .script-dropdown-item:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .script-dropdown-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .script-dropdown-default {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    background: var(--bg-sidebar);
+    padding: 0.05rem 0.35rem;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .script-dropdown-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 0.25rem 0;
   }
 
   .script-popover {

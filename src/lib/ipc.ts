@@ -515,9 +515,14 @@ export async function getPrTemplate(repoId: string): Promise<string> {
 
 // ── Repo Settings ────────────────────────────────────────────────────
 
+export interface NamedScript {
+  name: string;
+  command: string;
+}
+
 export interface RepoSettings {
   setup_script: string;
-  run_script: string;
+  run_scripts: NamedScript[];
   remove_script: string;
   pr_message: string;
   review_message: string;
@@ -551,6 +556,10 @@ export async function runScript(
   const channel = new Channel<ScriptEvent>();
   channel.onmessage = onEvent;
   return invoke("run_script", { workspaceId, command, onEvent: channel });
+}
+
+export async function stopScript(workspaceId: string): Promise<void> {
+  return invoke("stop_script", { workspaceId });
 }
 
 // ── Events ───────────────────────────────────────────────────────────

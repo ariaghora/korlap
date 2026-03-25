@@ -37,7 +37,7 @@ export async function mockTauri(
           case "plugin:event|unlisten":
             return null;
           case "get_repo_settings":
-            return { setup_script: "", run_script: "", remove_script: "" };
+            return { setup_script: "", run_scripts: [], remove_script: "" };
           case "save_repo_settings":
             return null;
           case "get_pr_status":
@@ -129,6 +129,8 @@ export async function mockTauriWithRepo(
             return "";
           case "run_script":
             return null;
+          case "stop_script":
+            return null;
           case "open_terminal":
             return null;
           case "write_terminal":
@@ -138,7 +140,7 @@ export async function mockTauriWithRepo(
           case "close_terminal":
             return null;
           case "get_repo_settings":
-            return { setup_script: "", run_script: "", remove_script: "" };
+            return { setup_script: "", run_scripts: [], remove_script: "" };
           case "save_repo_settings":
             return null;
           case "get_pr_status":

@@ -42,6 +42,7 @@ pub fn run() {
                 terminals: HashMap::new(),
                 context_meta: HashMap::new(),
                 context_agents: HashMap::new(),
+                script_pids: HashMap::new(),
             };
 
             if let Err(e) = app_state.load() {
@@ -122,6 +123,7 @@ pub fn run() {
             commands::agent::interpret_autopilot_command,
             // scripts
             commands::scripts::run_script,
+            commands::scripts::stop_script,
             // terminal
             commands::terminal::open_terminal,
             commands::terminal::write_terminal,
