@@ -336,6 +336,15 @@
     if (first) handleRunNamedScript(first);
   }
 
+  export function triggerRun() {
+    if (!hasRunScripts) return;
+    if (currentScriptStatus === "running") {
+      handleStopScript();
+    } else {
+      handleRunDefault();
+    }
+  }
+
   async function handleStopScript() {
     if (!selectedWs) return;
     try {
@@ -384,7 +393,7 @@
               <button
                 class="run-script-btn stop"
                 onclick={handleStopScript}
-                use:tooltip={{ text: "Stop script" }}
+                use:tooltip={{ text: "Stop script", shortcut: "⌘R" }}
               >
                 <Square size={10} />
                 Stop {#if selectedWs}<span class="run-branch">{selectedWs.branch}</span>{/if}
@@ -395,7 +404,7 @@
                 class:success={currentScriptStatus === "success"}
                 class:error={currentScriptStatus === "error"}
                 onclick={handleRunDefault}
-                use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}` }}
+                use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}`, shortcut: "⌘R" }}
               >
                 {#if currentScriptStatus === "success"}
                   <Check size={12} />
