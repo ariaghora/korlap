@@ -308,14 +308,32 @@ export async function writeRepoFile(
 
 // ── Agent ────────────────────────────────────────────────────────────
 
-export const MODEL_OPTIONS = [
-  { value: "", label: "Default" },
-  { value: "claude-sonnet-4-20250514", label: "Sonnet 4" },
-  { value: "claude-opus-4-20250514", label: "Opus 4" },
-  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-] as const;
+export interface ModelOption {
+  value: string;
+  label: string;
+}
 
-export type ModelOption = (typeof MODEL_OPTIONS)[number];
+const DEFAULT_MODELS: ModelOption[] = [{ value: "", label: "Default" }];
+let cachedModels: ModelOption[] | null = null;
+
+export async function listModels(): Promise<ModelOption[]> {
+  if (cachedModels) return cachedModels;
+  try {
+    cachedModels = await invoke<ModelOption[]>("list_models");
+    return cachedModels;
+  } catch {
+    return DEFAULT_MODELS;
+  }
+}
+
+export function getCachedModels(): ModelOption[] {
+  return cachedModels ?? DEFAULT_MODELS;
+}
+
+export function getModelLabel(value: string): string {
+  const models = cachedModels ?? DEFAULT_MODELS;
+  return models.find((m) => m.value === value)?.label ?? (value || "Default");
+}
 
 export async function sendMessage(
   workspaceId: string,

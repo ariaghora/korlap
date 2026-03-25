@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { type WorkspaceInfo, type PrStatus, MODEL_OPTIONS } from "$lib/ipc";
+  import { type WorkspaceInfo, type PrStatus, getModelLabel } from "$lib/ipc";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { Play, X, Trash2, Pencil, Lightbulb, BookOpen, CircleCheck, Circle } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
@@ -90,7 +90,7 @@
           <span class="card-mode-badge"><BookOpen size={10} strokeWidth={2} /> Plan</span>
         {/if}
         {#if model}
-          <span class="card-mode-badge">{MODEL_OPTIONS.find(m => m.value === model)?.label ?? model}</span>
+          <span class="card-mode-badge">{getModelLabel(model)}</span>
         {/if}
       </div>
     {/if}

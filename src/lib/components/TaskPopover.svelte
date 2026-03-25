@@ -6,7 +6,7 @@
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi, type FileSearchResult } from "./MentionAutocomplete.svelte";
   import SearchModal from "./SearchModal.svelte";
-  import { searchRepoFiles, MODEL_OPTIONS } from "$lib/ipc";
+  import { searchRepoFiles, getCachedModels, getModelLabel } from "$lib/ipc";
 
   export interface TaskData {
     title: string;
@@ -57,7 +57,6 @@
   let thinkingMode = $state(initialThinkingMode);
   let model = $state(initialModel);
   let showModelDropdown = $state(false);
-  let modelBtnEl: HTMLButtonElement | undefined = $state();
   let titleRef: HTMLInputElement | undefined = $state();
 
   // Mention input + autocomplete state
@@ -304,7 +303,7 @@
     submit();
   }
 
-  let modelLabel = $derived(MODEL_OPTIONS.find((m) => m.value === model)?.label ?? "Default");
+  let modelLabel = $derived(getModelLabel(model));
 
   function selectModel(value: string) {
     model = value;
@@ -403,7 +402,6 @@
             type="button"
             class="mode-pill"
             class:active={model !== ""}
-            bind:this={modelBtnEl}
             onclick={(e) => { e.stopPropagation(); showModelDropdown = !showModelDropdown; }}
             use:tooltip={{ text: "Model" }}
           >
@@ -414,7 +412,7 @@
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="model-dropdown" onclick={(e) => e.stopPropagation()}>
-              {#each MODEL_OPTIONS as opt (opt.value)}
+              {#each getCachedModels() as opt (opt.value)}
                 <button
                   class="model-option"
                   class:selected={model === opt.value}

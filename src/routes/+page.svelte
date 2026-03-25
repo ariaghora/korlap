@@ -10,6 +10,7 @@
     removeWorkspace,
     listWorkspaces,
     sendMessage,
+    listModels,
     saveImage,
     onAgentStatus,
     onWorkspaceUpdated,
@@ -569,6 +570,7 @@
     let unlistenWsUpdate: (() => void) | undefined;
 
     (async () => {
+      listModels().catch(() => {}); // pre-populate model cache
       listRepos().then((r) => {
         repos = r;
         if (r.length > 0) selectRepo(r[0]);

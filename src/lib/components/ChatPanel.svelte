@@ -1,6 +1,6 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, tokensByWorkspace, type Message } from "$lib/stores/messages.svelte";
-  import { searchWorkspaceFiles, suggestReplies, MODEL_OPTIONS, type FileSearchResult } from "$lib/ipc";
+  import { searchWorkspaceFiles, suggestReplies, getCachedModels, getModelLabel, type FileSearchResult } from "$lib/ipc";
   import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil, ChevronDown } from "lucide-svelte";
   import { renderMarkdown, renderUserMarkdown } from "$lib/markdown";
   import { externalLinks, copyCodeBlocks, tooltip } from "$lib/actions";
@@ -90,7 +90,7 @@
   let inputEl: HTMLDivElement | undefined = $state();
   let showModelDropdown = $state(false);
 
-  let modelLabel = $derived(MODEL_OPTIONS.find((m) => m.value === model)?.label ?? "Default");
+  let modelLabel = $derived(getModelLabel(model));
 
   // Mention input + autocomplete state
   let mentionInputApi: MentionInputApi | undefined = $state();
@@ -697,7 +697,7 @@
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="model-dropdown" onclick={(e) => e.stopPropagation()}>
-              {#each MODEL_OPTIONS as opt (opt.value)}
+              {#each getCachedModels() as opt (opt.value)}
                 <button
                   class="model-option"
                   class:selected={model === opt.value}

@@ -6,6 +6,24 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::helpers::{detect_default_branch, get_shell_env, inject_shell_env, strip_ansi};
 
+// ── Available models ─────────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct ModelOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[tauri::command]
+pub fn list_models() -> Result<Vec<ModelOption>, String> {
+    Ok(vec![
+        ModelOption { value: String::new(), label: "Default".into() },
+        ModelOption { value: "claude-sonnet-4-20250514".into(), label: "Sonnet 4".into() },
+        ModelOption { value: "claude-opus-4-20250514".into(), label: "Opus 4".into() },
+        ModelOption { value: "claude-haiku-4-5-20251001".into(), label: "Haiku 4.5".into() },
+    ])
+}
+
 /// Tools blocked to prevent agent from escaping Korlap worktree isolation.
 /// EnterWorktree creates worktrees from origin/<default> of the MAIN repo,
 /// completely bypassing workspace isolation. Requires no permission so

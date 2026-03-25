@@ -116,6 +116,7 @@ pub fn run() {
             commands::github::get_pr_template,
             commands::github::gh_pr_merge,
             // agent
+            commands::agent::list_models,
             commands::agent::send_message,
             commands::agent::stop_agent,
             commands::agent::generate_commit_message,
