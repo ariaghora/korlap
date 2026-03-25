@@ -301,6 +301,7 @@ pub fn send_message(
     on_event: Channel<AgentEvent>,
     plan_mode: Option<bool>,
     thinking_mode: Option<bool>,
+    model: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -423,6 +424,13 @@ pub fn send_message(
     // Grant agent access to the images directory so it can read pasted images
     let images_dir = data_dir.join("images");
     cmd.arg("--add-dir").arg(&images_dir);
+
+    // Model override: let the user pick a specific model
+    if let Some(ref model_id) = model {
+        if !model_id.is_empty() {
+            cmd.args(["--model", model_id]);
+        }
+    }
 
     // Thinking mode: use high effort for deeper reasoning
     if thinking_mode {

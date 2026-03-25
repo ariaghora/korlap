@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, tokensByWorkspace, type Message } from "$lib/stores/messages.svelte";
-  import { searchWorkspaceFiles, suggestReplies, type FileSearchResult } from "$lib/ipc";
-  import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil } from "lucide-svelte";
+  import { searchWorkspaceFiles, suggestReplies, MODEL_OPTIONS, type FileSearchResult } from "$lib/ipc";
+  import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil, ChevronDown } from "lucide-svelte";
   import { renderMarkdown, renderUserMarkdown } from "$lib/markdown";
   import { externalLinks, copyCodeBlocks, tooltip } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
@@ -29,6 +29,7 @@
     creating?: boolean;
     planMode?: boolean;
     thinkingMode?: boolean;
+    model?: string;
     queue?: QueueDisplayItem[];
     contextWarning?: boolean;
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
@@ -37,12 +38,13 @@
     onRemoveFromQueue?: (id: string) => void;
     onPlanModeChange?: (enabled: boolean) => void;
     onThinkingModeChange?: (enabled: boolean) => void;
+    onModelChange?: (model: string) => void;
     onExecutePlan?: () => void;
     onMentionClick?: (path: string) => void;
     onReady?: (api: ChatPanelApi) => void;
   }
 
-  let { workspaceId, creating = false, planMode = false, thinkingMode = false, queue = [], contextWarning = false, onSend, onSendImmediate, onStop, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
+  let { workspaceId, creating = false, planMode = false, thinkingMode = false, model = "", queue = [], contextWarning = false, onSend, onSendImmediate, onStop, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onModelChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
 
   let messagesMap = $derived(messagesByWorkspace.get(workspaceId));
   let messages = $derived(messagesMap ? [...messagesMap.values()] : []);
@@ -86,6 +88,9 @@
   let pastedImages = $state<PastedImage[]>([]);
   let userScrolledUp = $state(false);
   let inputEl: HTMLDivElement | undefined = $state();
+  let showModelDropdown = $state(false);
+
+  let modelLabel = $derived(MODEL_OPTIONS.find((m) => m.value === model)?.label ?? "Default");
 
   // Mention input + autocomplete state
   let mentionInputApi: MentionInputApi | undefined = $state();
@@ -630,7 +635,7 @@
   {/if}
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="input-form" onkeydown={handleInputKeydown} bind:this={inputEl}>
+  <div class="input-form" onkeydown={handleInputKeydown} onclick={() => { showModelDropdown = false; }} bind:this={inputEl}>
     {#if pastedImages.length > 0}
       <div class="image-preview-strip">
         {#each pastedImages as img (img.id)}
@@ -677,6 +682,33 @@
           <BookOpen size={13} strokeWidth={2} />
           Plan
         </button>
+        <div class="model-selector">
+          <button
+            type="button"
+            class="mode-pill"
+            class:active={model !== ""}
+            onclick={(e) => { e.stopPropagation(); showModelDropdown = !showModelDropdown; }}
+            use:tooltip={{ text: "Model" }}
+          >
+            {modelLabel}
+            <ChevronDown size={11} strokeWidth={2} />
+          </button>
+          {#if showModelDropdown}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="model-dropdown" onclick={(e) => e.stopPropagation()}>
+              {#each MODEL_OPTIONS as opt (opt.value)}
+                <button
+                  class="model-option"
+                  class:selected={model === opt.value}
+                  onclick={() => { onModelChange?.(opt.value); showModelDropdown = false; }}
+                >
+                  {opt.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
       {#if sending}
         <button type="button" class="stop-btn" onclick={onStop} use:tooltip={{ text: "Stop", shortcut: "Esc" }}>
@@ -1481,6 +1513,48 @@
 
   .mode-pill.active:hover {
     background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  .model-selector {
+    position: relative;
+  }
+
+  .model-dropdown {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 0;
+    min-width: 140px;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    padding: 0.25rem;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .model-option {
+    padding: 0.35rem 0.6rem;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.75rem;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.1s ease;
+  }
+
+  .model-option:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--text-bright);
+  }
+
+  .model-option.selected {
+    color: var(--accent);
+    font-weight: 600;
   }
 
   /* ── Plan mode badge on user messages ──── */

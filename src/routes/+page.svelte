@@ -112,6 +112,7 @@
   let changeCounts = new SvelteMap<string, { additions: number; deletions: number }>();
   let planModeByWorkspace = new SvelteMap<string, boolean>();
   let thinkingModeByWorkspace = new SvelteMap<string, boolean>();
+  let modelByWorkspace = new SvelteMap<string, string>();
   let fileNavigatePath = $state<string | null>(null);
   let fileNavigateLine = $state<number | null>(null);
   let showSearchModal = $state(false);
@@ -506,6 +507,7 @@
     mentionPaths?: string[];
     planMode?: boolean;
     thinkingMode?: boolean;
+    model?: string;
     ready?: boolean;
     depends_on?: string[];
     created_at: number;
@@ -523,6 +525,7 @@
     msgMentions?: { type: "file" | "folder"; path: string; displayName: string }[];
     planMode: boolean;
     thinkingMode: boolean;
+    model: string;
     actionLabel?: string;
     hidden?: boolean;      // hide user message from chat (e.g. auto-sent TODO prompts)
   }
@@ -804,6 +807,7 @@
       updatingBranchMap.clear();
       planModeByWorkspace.clear();
       thinkingModeByWorkspace.clear();
+      modelByWorkspace.clear();
       agentTaskByWorkspace.clear();
       autopilotByRepo.delete(repoId);
       todos = [];
@@ -863,7 +867,7 @@
     return Promise.all(newImages.map((img) => saveImage(namespace, img.base64, img.extension)));
   }
 
-  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }): Promise<string | null> {
+  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string }): Promise<string | null> {
     if (!activeRepo) return null;
     if (!data.title.trim() && data.newImages.length === 0 && data.existingPaths.length === 0) return null;
     try {
@@ -880,6 +884,7 @@
         mentionPaths: mentionPaths.length > 0 ? mentionPaths : undefined,
         planMode: data.planMode || undefined,
         thinkingMode: data.thinkingMode || undefined,
+        model: data.model || undefined,
         created_at: Date.now() / 1000,
       });
       persistTodos();
@@ -891,12 +896,12 @@
     }
   }
 
-  async function handleNewTodoAndStart(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }) {
+  async function handleNewTodoAndStart(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string }) {
     const todoId = await handleNewTodo(data);
     if (todoId) await handleSpawnFromTodo(todoId);
   }
 
-  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean }) {
+  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string }) {
     const todo = todos.find((t) => t.id === todoId);
     if (!todo) return;
     try {
@@ -909,6 +914,7 @@
       todo.mentionPaths = mentionPaths.length > 0 ? mentionPaths : undefined;
       todo.planMode = data.planMode || undefined;
       todo.thinkingMode = data.thinkingMode || undefined;
+      todo.model = data.model || undefined;
       persistTodos();
       if (autopilotEnabled) updateDependencies();
     } catch (e) {
@@ -1312,6 +1318,7 @@
       selectedWsId = ws.id;
       creatingWsId = null;
       if (todo.planMode) planModeByWorkspace.set(ws.id, true);
+      if (todo.model) modelByWorkspace.set(ws.id, todo.model);
 
       // Build prompt from title + description
       const promptText = todo.description
@@ -1351,6 +1358,7 @@
         mentions: [],
         planMode: todo.planMode ?? false,
         thinkingMode: todo.thinkingMode ?? repoSettings?.default_thinking ?? false,
+        model: todo.model ?? "",
         hidden: true,
       });
 
@@ -1407,6 +1415,7 @@
     updatingBranchMap.delete(wsId);
     planModeByWorkspace.delete(wsId);
     thinkingModeByWorkspace.delete(wsId);
+    modelByWorkspace.delete(wsId);
 
     removeWorkspace(wsId).catch((e) => {
       // Restore on failure
@@ -1534,7 +1543,7 @@
             evaluateAutopilot();
           }
         }
-      }, msg.planMode, msg.thinkingMode);
+      }, msg.planMode, msg.thinkingMode, msg.model);
     } catch (e) {
       addToast(String(e));
       setSending(wsId, false);
@@ -1581,6 +1590,7 @@
 
   async function sendPrompt(wsId: string, prompt: string, actionLabel?: string) {
     const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? repoSettings?.default_thinking ?? false;
+    const model = modelByWorkspace.get(wsId) ?? "";
     routeMessage(wsId, {
       id: crypto.randomUUID(),
       prompt,
@@ -1589,6 +1599,7 @@
       mentions: [],
       planMode: false,
       thinkingMode,
+      model,
       actionLabel,
     });
   }
@@ -1597,6 +1608,7 @@
     if (!selectedWsId || reviewByWorkspace.has(selectedWsId)) return;
     const wsId = selectedWsId;
     const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? repoSettings?.default_thinking ?? false;
+    const model = modelByWorkspace.get(wsId) ?? "";
 
     // Save images to workspace dir, collect file paths
     let imagePaths: string[] = [];
@@ -1658,6 +1670,7 @@
       msgMentions,
       planMode,
       thinkingMode,
+      model,
     });
   }
 
@@ -1666,6 +1679,7 @@
     if (!selectedWsId) return;
     const wsId = selectedWsId;
     const thinkingMode = thinkingModeByWorkspace.get(wsId) ?? repoSettings?.default_thinking ?? false;
+    const model = modelByWorkspace.get(wsId) ?? "";
     sendDirect(wsId, {
       id: crypto.randomUUID(),
       prompt,
@@ -1674,6 +1688,7 @@
       mentions: [],
       planMode: false,
       thinkingMode,
+      model,
     });
   }
 
@@ -2293,6 +2308,7 @@
             {changeCounts}
             {planModeByWorkspace}
             {thinkingModeByWorkspace}
+            {modelByWorkspace}
             {reviewByWorkspace}
             {agentTaskByWorkspace}
             {repoSettings}
@@ -2323,6 +2339,7 @@
             onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
             onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
             onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
+            onModelChange={(wsId, model) => modelByWorkspace.set(wsId, model)}
             onExecutePlan={(wsId) => {
               planModeByWorkspace.set(wsId, false);
               sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");

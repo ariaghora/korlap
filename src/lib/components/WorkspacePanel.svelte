@@ -28,6 +28,7 @@
     changeCounts: SvelteMap<string, { additions: number; deletions: number }>;
     planModeByWorkspace: SvelteMap<string, boolean>;
     thinkingModeByWorkspace: SvelteMap<string, boolean>;
+    modelByWorkspace: SvelteMap<string, string>;
     reviewByWorkspace: SvelteMap<string, ReviewState>;
     agentTaskByWorkspace: SvelteMap<string, string>;
     repoSettings: RepoSettings | null;
@@ -48,6 +49,7 @@
     onRemoveFromQueue: (wsId: string, id: string) => void;
     onPlanModeChange: (wsId: string, enabled: boolean) => void;
     onThinkingModeChange: (wsId: string, enabled: boolean) => void;
+    onModelChange: (wsId: string, model: string) => void;
     onExecutePlan: (wsId: string) => void;
     onChatReady: (wsId: string, api: ChatPanelApi) => void;
     onReviewCancel: (wsId: string) => void;
@@ -73,6 +75,7 @@
     changeCounts,
     planModeByWorkspace,
     thinkingModeByWorkspace,
+    modelByWorkspace,
     reviewByWorkspace,
     agentTaskByWorkspace,
     repoSettings,
@@ -93,6 +96,7 @@
     onRemoveFromQueue,
     onPlanModeChange,
     onThinkingModeChange,
+    onModelChange,
     onExecutePlan,
     onChatReady,
     onReviewCancel,
@@ -680,6 +684,7 @@
                   creating={ws.id === creatingWsId}
                   planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
                   thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
+                  model={modelByWorkspace.get(ws.id) ?? ""}
                   queue={getQueueItems(ws.id)}
                   {contextWarning}
                   onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
@@ -688,6 +693,7 @@
                   onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
                   onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
                   onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}
+                  onModelChange={(model) => onModelChange(ws.id, model)}
                   onExecutePlan={() => onExecutePlan(ws.id)}
                   onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
                   onReady={(api) => onChatReady(ws.id, api)}
@@ -721,6 +727,7 @@
               creating={ws.id === creatingWsId}
               planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
               thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
+              model={modelByWorkspace.get(ws.id) ?? ""}
               queue={getQueueItems(ws.id)}
               {contextWarning}
               onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
@@ -729,6 +736,7 @@
               onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
               onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
               onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}
+              onModelChange={(model) => onModelChange(ws.id, model)}
               onExecutePlan={() => onExecutePlan(ws.id)}
               onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
               onReady={(api) => onChatReady(ws.id, api)}

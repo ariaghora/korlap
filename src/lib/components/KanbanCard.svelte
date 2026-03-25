@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
+  import { type WorkspaceInfo, type PrStatus, MODEL_OPTIONS } from "$lib/ipc";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { Play, X, Trash2, Pencil, Lightbulb, BookOpen, CircleCheck, Circle } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
@@ -13,6 +13,7 @@
     imagePaths?: string[];
     planMode?: boolean;
     thinkingMode?: boolean;
+    model?: string;
     ready?: boolean;
     repoName?: string;
     // Workspace fields
@@ -38,6 +39,7 @@
     imagePaths,
     planMode = false,
     thinkingMode = false,
+    model = "",
     ready = false,
     repoName,
     workspace,
@@ -79,13 +81,16 @@
     {#if description}
       <span class="card-desc">{description}</span>
     {/if}
-    {#if planMode || thinkingMode}
+    {#if planMode || thinkingMode || model}
       <div class="card-mode-badges">
         {#if thinkingMode}
           <span class="card-mode-badge"><Lightbulb size={10} strokeWidth={2} /> Thinking</span>
         {/if}
         {#if planMode}
           <span class="card-mode-badge"><BookOpen size={10} strokeWidth={2} /> Plan</span>
+        {/if}
+        {#if model}
+          <span class="card-mode-badge">{MODEL_OPTIONS.find(m => m.value === model)?.label ?? model}</span>
         {/if}
       </div>
     {/if}

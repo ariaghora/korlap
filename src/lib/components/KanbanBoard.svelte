@@ -18,6 +18,7 @@
     mentionPaths?: string[];
     planMode?: boolean;
     thinkingMode?: boolean;
+    model?: string;
     ready?: boolean;
     depends_on?: string[];
     created_at: number;
@@ -253,6 +254,7 @@
         imagePaths={todo.imagePaths}
         planMode={todo.planMode}
         thinkingMode={todo.thinkingMode}
+        model={todo.model}
         ready={todo.ready ?? false}
         focused={focusedCol === 0 && focusedRow === i}
         {repoName}
@@ -371,6 +373,7 @@
     initialMentions={editingTodo.mentionPaths?.map((p: string) => ({ type: "file" as const, path: p, displayName: p.split("/").pop() ?? p }))}
     initialPlanMode={editingTodo.planMode}
     initialThinkingMode={editingTodo.thinkingMode}
+    initialModel={editingTodo.model}
     submitLabel="Save"
     onSubmit={handleEditSubmit}
     onCancel={() => { editingTodo = null; }}

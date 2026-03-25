@@ -308,16 +308,26 @@ export async function writeRepoFile(
 
 // ── Agent ────────────────────────────────────────────────────────────
 
+export const MODEL_OPTIONS = [
+  { value: "", label: "Default" },
+  { value: "claude-sonnet-4-20250514", label: "Sonnet 4" },
+  { value: "claude-opus-4-20250514", label: "Opus 4" },
+  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+] as const;
+
+export type ModelOption = (typeof MODEL_OPTIONS)[number];
+
 export async function sendMessage(
   workspaceId: string,
   prompt: string,
   onEvent: (event: AgentEvent) => void,
   planMode: boolean = false,
   thinkingMode: boolean = false,
+  model: string = "",
 ): Promise<void> {
   const channel = new Channel<AgentEvent>();
   channel.onmessage = onEvent;
-  return invoke("send_message", { workspaceId, prompt, onEvent: channel, planMode, thinkingMode });
+  return invoke("send_message", { workspaceId, prompt, onEvent: channel, planMode, thinkingMode, model: model || null });
 }
 
 export async function stopAgent(workspaceId: string): Promise<void> {
