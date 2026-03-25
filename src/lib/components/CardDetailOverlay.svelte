@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
+  import { renderMarkdown } from "$lib/markdown";
+  import { externalLinks } from "$lib/actions";
   import { X, ExternalLink, ArrowRight, GitBranch, Clock, GitPullRequest, CheckCircle, AlertTriangle, Circle } from "lucide-svelte";
 
   interface Props {
@@ -88,7 +90,7 @@
       <h2 class="ws-title">{workspace.task_title ?? workspace.name}</h2>
 
       {#if workspace.task_description}
-        <p class="ws-description">{workspace.task_description}</p>
+        <div class="ws-description markdown-body" use:externalLinks>{@html renderMarkdown(workspace.task_description)}</div>
       {/if}
 
       <div class="detail-rows">
@@ -282,8 +284,120 @@
     color: var(--text-secondary);
     line-height: 1.45;
     margin: 0.4rem 0 0;
-    white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  /* ── Markdown body (task description) ─── */
+
+  .markdown-body :global(h1),
+  .markdown-body :global(h2),
+  .markdown-body :global(h3),
+  .markdown-body :global(h4) {
+    margin: 0.5rem 0 0.2rem;
+    color: var(--text-bright);
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .markdown-body :global(h1) { font-size: 0.95rem; }
+  .markdown-body :global(h2) { font-size: 0.88rem; }
+  .markdown-body :global(h3) { font-size: 0.82rem; }
+  .markdown-body :global(h4) { font-size: 0.8rem; }
+
+  .markdown-body :global(> h1:first-child),
+  .markdown-body :global(> h2:first-child),
+  .markdown-body :global(> h3:first-child),
+  .markdown-body :global(> h4:first-child) {
+    margin-top: 0;
+  }
+
+  .markdown-body :global(p) {
+    margin: 0.25rem 0;
+    line-height: 1.5;
+  }
+
+  .markdown-body :global(> p:first-child) {
+    margin-top: 0;
+  }
+
+  .markdown-body :global(> p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .markdown-body :global(ul),
+  .markdown-body :global(ol) {
+    margin: 0.25rem 0;
+    padding-left: 1.3rem;
+  }
+
+  .markdown-body :global(li) {
+    margin: 0.1rem 0;
+    line-height: 1.45;
+  }
+
+  .markdown-body :global(li > p) {
+    margin: 0.05rem 0;
+  }
+
+  .markdown-body :global(strong) {
+    color: var(--text-bright);
+    font-weight: 600;
+  }
+
+  .markdown-body :global(em) {
+    font-style: italic;
+    color: var(--text-primary);
+  }
+
+  .markdown-body :global(a) {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .markdown-body :global(a:hover) {
+    text-decoration: underline;
+  }
+
+  .markdown-body :global(code) {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    background: var(--bg-active);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.08rem 0.3rem;
+    color: var(--text-bright);
+  }
+
+  .markdown-body :global(pre) {
+    margin: 0.3rem 0;
+    padding: 0.5rem 0.65rem;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+
+  .markdown-body :global(pre code) {
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    font-size: 0.73rem;
+    color: var(--text-primary);
+  }
+
+  .markdown-body :global(hr) {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0.5rem 0;
+  }
+
+  .markdown-body :global(blockquote) {
+    margin: 0.3rem 0;
+    padding: 0.1rem 0.6rem;
+    border-left: 3px solid var(--border-light);
+    color: var(--text-dim);
   }
 
   .detail-rows {
