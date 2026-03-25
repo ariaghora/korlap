@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
-  import { Folder, FolderOpen, File as FileIcon, Search } from "lucide-svelte";
-  import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, searchWorkspaceFiles, searchRepoFiles, type FileEntry, type FileSearchResult } from "$lib/ipc";
+  import { Folder, FolderOpen, File as FileIcon, Search, FileSearch } from "lucide-svelte";
+  import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, searchWorkspaceFiles, searchRepoFiles, grepWorkspace, grepRepo, type FileEntry, type FileSearchResult, type GrepMatch } from "$lib/ipc";
   import { tooltip } from "$lib/actions";
   import ResizeHandle from "./ResizeHandle.svelte";
   import CodeEditor from "./CodeEditor.svelte";
@@ -67,6 +67,11 @@
     return searchRepoFiles(scope.repoId, query);
   }
 
+  function doGrepFiles(pattern: string, isRegex: boolean, caseSensitive: boolean) {
+    if (scope.type === "workspace") return grepWorkspace(scope.workspaceId, pattern, isRegex, caseSensitive);
+    return grepRepo(scope.repoId, pattern, isRegex, caseSensitive);
+  }
+
   // ── Fuzzy file search state ─────────────────────────────
   let showSearch = $state(false);
   let searchQuery = $state("");
@@ -79,6 +84,7 @@
 
   function openSearch() {
     showSearch = true;
+    showGrep = false; // close grep if open
     searchQuery = "";
     searchResults = [];
     searchSelectedIndex = 0;
@@ -165,17 +171,146 @@
     navigateToPath(result.path, null);
   }
 
-  // Cmd+F handler — only when this file browser is visible
+  // ── Grep (content search) state ────────────────────────
+  let showGrep = $state(false);
+  let grepQuery = $state("");
+  let grepIsRegex = $state(false);
+  let grepCaseSensitive = $state(false);
+  let grepResults = $state<GrepMatch[]>([]);
+  let grepTruncated = $state(false);
+  let grepSelectedIndex = $state(0);
+  let grepLoading = $state(false);
+  let grepInputEl: HTMLInputElement | undefined = $state();
+  let grepDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function openGrep() {
+    showGrep = true;
+    showSearch = false; // close file search if open
+    grepQuery = "";
+    grepResults = [];
+    grepTruncated = false;
+    grepSelectedIndex = 0;
+    grepLoading = false;
+    queueMicrotask(() => grepInputEl?.focus());
+  }
+
+  function closeGrep() {
+    showGrep = false;
+    grepQuery = "";
+    grepResults = [];
+    grepTruncated = false;
+    clearTimeout(grepDebounceTimer);
+  }
+
+  // Debounced grep search
+  $effect(() => {
+    const q = grepQuery;
+    const _r = grepIsRegex;
+    const _c = grepCaseSensitive;
+    clearTimeout(grepDebounceTimer);
+
+    if (!q.trim()) {
+      grepResults = [];
+      grepTruncated = false;
+      grepSelectedIndex = 0;
+      grepLoading = false;
+      return;
+    }
+
+    grepLoading = true;
+    grepDebounceTimer = setTimeout(async () => {
+      try {
+        const result = await doGrepFiles(q, grepIsRegex, grepCaseSensitive);
+        grepResults = result.matches;
+        grepTruncated = result.truncated;
+        grepSelectedIndex = 0;
+      } catch {
+        grepResults = [];
+        grepTruncated = false;
+      } finally {
+        grepLoading = false;
+      }
+    }, 200);
+  });
+
+  function handleGrepKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeGrep();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (grepResults.length > 0) {
+        grepSelectedIndex = (grepSelectedIndex + 1) % grepResults.length;
+        scrollGrepItemIntoView();
+      }
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (grepResults.length > 0) {
+        grepSelectedIndex = (grepSelectedIndex - 1 + grepResults.length) % grepResults.length;
+        scrollGrepItemIntoView();
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const match = grepResults[grepSelectedIndex];
+      if (match) {
+        closeGrep();
+        navigateToPath(match.path, match.line_number);
+      }
+      return;
+    }
+  }
+
+  function scrollGrepItemIntoView() {
+    queueMicrotask(() => {
+      const el = browserEl?.querySelector(".grep-results .grep-item.active");
+      el?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function selectGrepResult(match: GrepMatch) {
+    closeGrep();
+    navigateToPath(match.path, match.line_number);
+  }
+
+  function grepFileName(path: string): string {
+    const parts = path.split("/");
+    return parts.pop() ?? path;
+  }
+
+  function grepDirPath(path: string): string {
+    const parts = path.split("/");
+    if (parts.length <= 1) return "";
+    parts.pop();
+    return parts.join("/") + "/";
+  }
+
+  // Cmd+F / Cmd+Shift+F handler — only when this file browser is visible
   function handleGlobalKeydown(e: KeyboardEvent) {
-    if (e.key === "f" && e.metaKey && !e.shiftKey) {
+    if (e.key === "f" && e.metaKey) {
       // Check if this component is visible (not display:none)
       if (browserEl && browserEl.offsetParent !== null) {
         e.preventDefault();
         e.stopPropagation();
-        if (showSearch) {
-          searchInputEl?.focus();
+        if (e.shiftKey) {
+          // Cmd+Shift+F → grep (content search)
+          if (showGrep) {
+            grepInputEl?.focus();
+          } else {
+            openGrep();
+          }
         } else {
-          openSearch();
+          // Cmd+F → file search
+          if (showSearch) {
+            searchInputEl?.focus();
+          } else {
+            openSearch();
+          }
         }
       }
     }
@@ -493,8 +628,11 @@
         <div class="tree-header">
           <span class="tree-title">Files</span>
           <div class="tree-header-actions">
-            <button class="header-icon-btn" onclick={openSearch} use:tooltip={{ text: "Search files (⌘F)" }}>
+            <button class="header-icon-btn" onclick={openSearch} use:tooltip={{ text: "Find file", shortcut: "⌘F" }}>
               <Search size={13} />
+            </button>
+            <button class="header-icon-btn" onclick={openGrep} use:tooltip={{ text: "Search in files", shortcut: "⇧⌘F" }}>
+              <FileSearch size={13} />
             </button>
             <button class="refresh-btn" onclick={refreshTree} use:tooltip={{ text: "Refresh" }}>↻</button>
           </div>
@@ -541,6 +679,68 @@
               </div>
             {:else if searchQuery.trim() && !searchLoading}
               <div class="search-empty">No files found</div>
+            {/if}
+          </div>
+        {/if}
+
+        {#if showGrep}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="grep-bar" onkeydown={handleGrepKeydown}>
+            <div class="grep-input-row">
+              <FileSearch size={12} class="search-icon" />
+              <input
+                bind:this={grepInputEl}
+                bind:value={grepQuery}
+                type="text"
+                class="search-input"
+                placeholder="Search in files..."
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <button
+                class="grep-toggle"
+                class:active={grepIsRegex}
+                onclick={() => { grepIsRegex = !grepIsRegex; }}
+                use:tooltip={{ text: "Use regex" }}
+              >.*</button>
+              <button
+                class="grep-toggle"
+                class:active={grepCaseSensitive}
+                onclick={() => { grepCaseSensitive = !grepCaseSensitive; }}
+                use:tooltip={{ text: "Match case" }}
+              >Aa</button>
+              {#if grepLoading}
+                <span class="search-spinner"></span>
+              {/if}
+            </div>
+            {#if grepResults.length > 0}
+              <div class="grep-results">
+                {#each grepResults as match, i}
+                  <button
+                    class="grep-item"
+                    class:active={i === grepSelectedIndex}
+                    onclick={() => selectGrepResult(match)}
+                    onmouseenter={() => { grepSelectedIndex = i; }}
+                  >
+                    <span class="grep-item-icon">
+                      {#if fileIconUrl(grepFileName(match.path))}
+                        <img src={fileIconUrl(grepFileName(match.path))} alt="" class="devicon" />
+                      {:else}
+                        <FileIcon size={13} />
+                      {/if}
+                    </span>
+                    <span class="grep-item-location">
+                      <span class="grep-item-dir">{grepDirPath(match.path)}</span><span class="grep-item-file">{grepFileName(match.path)}</span><span class="grep-item-line">:{match.line_number}</span>
+                    </span>
+                    <span class="grep-item-content">{match.line_content}</span>
+                  </button>
+                {/each}
+                {#if grepTruncated}
+                  <div class="grep-truncated">Results truncated — refine your search</div>
+                {/if}
+              </div>
+            {:else if grepQuery.trim() && !grepLoading}
+              <div class="search-empty">No matches found</div>
             {/if}
           </div>
         {/if}
@@ -1027,5 +1227,132 @@
   .file-body :global(.code-editor) {
     flex: 1;
     min-height: 0;
+  }
+
+  /* ── Grep (content search) ─────────────── */
+
+  .grep-bar {
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+  }
+
+  .grep-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.5rem;
+  }
+
+  .grep-input-row :global(.search-icon) {
+    flex-shrink: 0;
+    color: var(--text-dim);
+  }
+
+  .grep-toggle {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 0.05rem 0.25rem;
+    line-height: 1.2;
+  }
+
+  .grep-toggle:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .grep-toggle.active {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+
+  .grep-results {
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 0.15rem 0;
+  }
+
+  .grep-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.5rem;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.7rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .grep-item:hover,
+  .grep-item.active {
+    background: var(--bg-hover);
+  }
+
+  .grep-item-icon {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+  }
+
+  .grep-item-location {
+    flex-shrink: 0;
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    max-width: 45%;
+    overflow: hidden;
+  }
+
+  .grep-item-dir {
+    color: var(--text-dim);
+    font-size: 0.62rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+  }
+
+  .grep-item-file {
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .grep-item-line {
+    color: var(--accent);
+    flex-shrink: 0;
+    font-size: 0.62rem;
+  }
+
+  .grep-item-content {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    margin-left: 0.3rem;
+  }
+
+  .grep-truncated {
+    padding: 0.35rem 0.5rem;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.65rem;
+    font-style: italic;
   }
 </style>
