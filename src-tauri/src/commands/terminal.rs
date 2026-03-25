@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -6,6 +7,11 @@ use tauri::State;
 /// Composite key for the terminals HashMap: `{workspace_id}:{terminal_id}`
 fn terminal_key(workspace_id: &str, terminal_id: &str) -> String {
     format!("{}:{}", workspace_id, terminal_id)
+}
+
+/// Composite key for repo-level terminals: `repo:{repo_id}:{terminal_id}`
+fn repo_terminal_key(repo_id: &str, terminal_id: &str) -> String {
+    format!("repo:{}:{}", repo_id, terminal_id)
 }
 
 /// Remove and kill all terminals belonging to a workspace.
@@ -27,26 +33,31 @@ pub fn kill_workspace_terminals(
     }
 }
 
-#[tauri::command]
-pub fn open_terminal(
-    workspace_id: String,
-    terminal_id: String,
-    on_data: Channel<Vec<u8>>,
-    state: State<'_, Arc<Mutex<AppState>>>,
-) -> Result<(), String> {
-    let key = terminal_key(&workspace_id, &terminal_id);
-    let worktree_path = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        if st.terminals.contains_key(&key) {
-            return Ok(()); // Already open
+/// Remove and kill all terminals belonging to a repo (plan-mode terminals).
+pub fn kill_repo_terminals(
+    terminals: &mut std::collections::HashMap<String, crate::state::TerminalHandle>,
+    repo_id: &str,
+) {
+    let prefix = format!("repo:{}:", repo_id);
+    let keys: Vec<String> = terminals
+        .keys()
+        .filter(|k| k.starts_with(&prefix))
+        .cloned()
+        .collect();
+    for key in keys {
+        if let Some(mut handle) = terminals.remove(&key) {
+            let _ = handle.child.kill();
         }
-        let ws = st
-            .workspaces
-            .get(&workspace_id)
-            .ok_or("Workspace not found")?;
-        ws.worktree_path.clone()
-    };
+    }
+}
 
+/// Shared PTY spawning logic used by both workspace and repo terminal commands.
+fn spawn_pty(
+    cwd: PathBuf,
+    key: String,
+    on_data: Channel<Vec<u8>>,
+    state: &State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
     let pty_system = native_pty_system();
@@ -62,7 +73,7 @@ pub fn open_terminal(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut cmd = CommandBuilder::new(&shell);
     cmd.arg("-l"); // Login shell: sources .zprofile/.zshrc for proper prompt & config
-    cmd.cwd(&worktree_path);
+    cmd.cwd(&cwd);
 
     // Terminal identity — critical for readline/zle to handle backspace, arrow keys, etc.
     // Tauri is a GUI app so TERM is not in the parent environment.
@@ -150,6 +161,31 @@ pub fn open_terminal(
     Ok(())
 }
 
+// ── Workspace-level terminal commands ────────────────────────────────
+
+#[tauri::command]
+pub fn open_terminal(
+    workspace_id: String,
+    terminal_id: String,
+    on_data: Channel<Vec<u8>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let key = terminal_key(&workspace_id, &terminal_id);
+    let worktree_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        if st.terminals.contains_key(&key) {
+            return Ok(()); // Already open
+        }
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
+        ws.worktree_path.clone()
+    };
+
+    spawn_pty(worktree_path, key, on_data, &state)
+}
+
 #[tauri::command]
 pub fn write_terminal(
     workspace_id: String,
@@ -205,6 +241,94 @@ pub fn close_terminal(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let key = terminal_key(&workspace_id, &terminal_id);
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    if let Some(mut handle) = st.terminals.remove(&key) {
+        let _ = handle.child.kill();
+        let _ = handle.child.wait();
+    }
+    Ok(())
+}
+
+// ── Repo-level terminal commands ─────────────────────────────────────
+
+#[tauri::command]
+pub fn open_repo_terminal(
+    repo_id: String,
+    terminal_id: String,
+    on_data: Channel<Vec<u8>>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let key = repo_terminal_key(&repo_id, &terminal_id);
+    let repo_path = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        if st.terminals.contains_key(&key) {
+            return Ok(()); // Already open
+        }
+        let repo = st
+            .repos
+            .get(&repo_id)
+            .ok_or("Repository not found")?;
+        repo.path.clone()
+    };
+
+    spawn_pty(repo_path, key, on_data, &state)
+}
+
+#[tauri::command]
+pub fn write_repo_terminal(
+    repo_id: String,
+    terminal_id: String,
+    data: Vec<u8>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let key = repo_terminal_key(&repo_id, &terminal_id);
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    let handle = st
+        .terminals
+        .get_mut(&key)
+        .ok_or("No terminal open for this repo")?;
+
+    std::io::Write::write_all(&mut handle.writer, &data)
+        .map_err(|e| format!("Failed to write to PTY: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn resize_repo_terminal(
+    repo_id: String,
+    terminal_id: String,
+    rows: u16,
+    cols: u16,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let key = repo_terminal_key(&repo_id, &terminal_id);
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    let handle = st
+        .terminals
+        .get_mut(&key)
+        .ok_or("No terminal open for this repo")?;
+
+    handle
+        .master
+        .resize(portable_pty::PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("Failed to resize PTY: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_repo_terminal(
+    repo_id: String,
+    terminal_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let key = repo_terminal_key(&repo_id, &terminal_id);
     let mut st = state.lock().map_err(|e| e.to_string())?;
     if let Some(mut handle) = st.terminals.remove(&key) {
         let _ = handle.child.kill();

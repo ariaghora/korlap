@@ -387,7 +387,7 @@
                 title="Stop script"
               >
                 <Square size={10} />
-                Stop
+                Stop {#if selectedWs}<span class="run-branch">{selectedWs.branch}</span>{/if}
               </button>
             {:else}
               <button
@@ -404,7 +404,7 @@
                 {:else}
                   <Play size={12} />
                 {/if}
-                Run
+                Run {#if selectedWs}<span class="run-branch">{selectedWs.branch}</span>{/if}
               </button>
             {/if}
             <button
@@ -561,7 +561,7 @@
               />
             </div>
             <div class="ws-tab-container active-layer" style:display={activeTab === "files" ? undefined : "none"}>
-              <FileBrowser workspaceId={selectedWs.id} navigateTo={fileNavigatePath} navigateToLine={fileNavigateLine} />
+              <FileBrowser scope={{ type: "workspace", workspaceId: selectedWs.id }} navigateTo={fileNavigatePath} navigateToLine={fileNavigateLine} />
             </div>
           {/if}
         </div>
@@ -607,7 +607,7 @@
                 class:visible={isVisible}
                 inert={!isVisible}
               >
-                <TerminalView workspaceId={ws.id} terminalId={tab.id} visible={isVisible} />
+                <TerminalView scope={{ type: "workspace", workspaceId: ws.id }} terminalId={tab.id} visible={isVisible} />
               </div>
             {/each}
           {/each}
@@ -856,6 +856,16 @@
   }
 
   /* ── Run script button ──────────────────────────── */
+
+  .run-branch {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 500;
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    margin-left: 0.3em;
+  }
 
   .run-script-btn {
     display: flex;

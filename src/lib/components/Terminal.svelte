@@ -2,17 +2,37 @@
   import { onMount, onDestroy } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
-  import { openTerminal, writeTerminal, resizeTerminal } from "$lib/ipc";
+  import { openTerminal, writeTerminal, resizeTerminal, openRepoTerminal, writeRepoTerminal, resizeRepoTerminal } from "$lib/ipc";
   import { getTerminalTheme } from "$lib/stores/theme.svelte";
   import "@xterm/xterm/css/xterm.css";
 
+  type TerminalScope =
+    | { type: "workspace"; workspaceId: string }
+    | { type: "repo"; repoId: string };
+
   interface Props {
-    workspaceId: string;
+    scope: TerminalScope;
     terminalId: string;
     visible?: boolean;
   }
 
-  let { workspaceId, terminalId, visible = true }: Props = $props();
+  let { scope, terminalId, visible = true }: Props = $props();
+
+  // ── Scope-aware IPC dispatchers ──────────────────────
+  function doOpen(tid: string, onData: (data: number[]) => void): Promise<void> {
+    if (scope.type === "workspace") return openTerminal(scope.workspaceId, tid, onData);
+    return openRepoTerminal(scope.repoId, tid, onData);
+  }
+
+  function doWrite(tid: string, data: number[]): Promise<void> {
+    if (scope.type === "workspace") return writeTerminal(scope.workspaceId, tid, data);
+    return writeRepoTerminal(scope.repoId, tid, data);
+  }
+
+  function doResize(tid: string, rows: number, cols: number): Promise<void> {
+    if (scope.type === "workspace") return resizeTerminal(scope.workspaceId, tid, rows, cols);
+    return resizeRepoTerminal(scope.repoId, tid, rows, cols);
+  }
 
   let containerEl: HTMLDivElement | undefined = $state();
   let term: Terminal | undefined;
@@ -46,17 +66,17 @@
 
     term.onData((data) => {
       const bytes = Array.from(new TextEncoder().encode(data));
-      writeTerminal(workspaceId, terminalId, bytes).catch(() => {});
+      doWrite(terminalId, bytes).catch(() => {});
     });
 
-    openTerminal(workspaceId, terminalId, (data: number[]) => {
+    doOpen(terminalId, (data: number[]) => {
       if (term) {
         term.write(new Uint8Array(data));
       }
     })
       .then(() => {
         if (term) {
-          resizeTerminal(workspaceId, terminalId, term.rows, term.cols).catch(() => {});
+          doResize(terminalId, term.rows, term.cols).catch(() => {});
         }
       })
       .catch((e) => {
@@ -95,7 +115,7 @@
           fitDebounceId = undefined;
           if (fitAddon && term) {
             fitAddon.fit();
-            resizeTerminal(workspaceId, terminalId, term.rows, term.cols).catch(() => {});
+            doResize(terminalId, term.rows, term.cols).catch(() => {});
           }
         }, 100);
       }
