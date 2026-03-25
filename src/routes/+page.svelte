@@ -590,6 +590,10 @@
           repoDropdownIndex = -1;
           return;
         }
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          e.preventDefault();
+          return;
+        }
       }
 
       if (!mod) return;

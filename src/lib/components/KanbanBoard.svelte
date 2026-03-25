@@ -128,6 +128,7 @@
 
   function handleBoardKeydown(e: KeyboardEvent) {
     if (!active) return;
+    if (e.defaultPrevented) return;
     if (showAddDialog || editingTodo || detailWs || showDoneMenu) return;
 
     const target = e.target as HTMLElement;
