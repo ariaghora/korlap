@@ -6,6 +6,28 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::helpers::{detect_default_branch, get_shell_env, inject_shell_env, strip_ansi};
 
+// ── Available models ─────────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize)]
+pub struct ModelOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[tauri::command]
+pub fn list_models() -> Result<Vec<ModelOption>, String> {
+    // The claude CLI accepts short aliases (e.g. "sonnet", "opus") that stay
+    // stable across version bumps — no date-stamped IDs needed.
+    // There is no `claude --list-models` command, so a static list is the
+    // best we can do. Update this when Anthropic ships new model families.
+    Ok(vec![
+        ModelOption { value: String::new(), label: "Default".into() },
+        ModelOption { value: "sonnet".into(), label: "Sonnet".into() },
+        ModelOption { value: "opus".into(), label: "Opus".into() },
+        ModelOption { value: "haiku".into(), label: "Haiku".into() },
+    ])
+}
+
 /// Tools blocked to prevent agent from escaping Korlap worktree isolation.
 /// EnterWorktree creates worktrees from origin/<default> of the MAIN repo,
 /// completely bypassing workspace isolation. Requires no permission so
@@ -301,6 +323,7 @@ pub fn send_message(
     on_event: Channel<AgentEvent>,
     plan_mode: Option<bool>,
     thinking_mode: Option<bool>,
+    model: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -423,6 +446,13 @@ pub fn send_message(
     // Grant agent access to the images directory so it can read pasted images
     let images_dir = data_dir.join("images");
     cmd.arg("--add-dir").arg(&images_dir);
+
+    // Model override: let the user pick a specific model
+    if let Some(ref model_id) = model {
+        if !model_id.is_empty() {
+            cmd.args(["--model", model_id]);
+        }
+    }
 
     // Thinking mode: use high effort for deeper reasoning
     if thinking_mode {

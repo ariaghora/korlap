@@ -308,16 +308,44 @@ export async function writeRepoFile(
 
 // ── Agent ────────────────────────────────────────────────────────────
 
+export interface ModelOption {
+  value: string;
+  label: string;
+}
+
+const DEFAULT_MODELS: ModelOption[] = [{ value: "", label: "Default" }];
+let cachedModels: ModelOption[] | null = null;
+
+export async function listModels(): Promise<ModelOption[]> {
+  if (cachedModels) return cachedModels;
+  try {
+    cachedModels = await invoke<ModelOption[]>("list_models");
+    return cachedModels;
+  } catch {
+    return DEFAULT_MODELS;
+  }
+}
+
+export function getCachedModels(): ModelOption[] {
+  return cachedModels ?? DEFAULT_MODELS;
+}
+
+export function getModelLabel(value: string): string {
+  const models = cachedModels ?? DEFAULT_MODELS;
+  return models.find((m) => m.value === value)?.label ?? (value || "Default");
+}
+
 export async function sendMessage(
   workspaceId: string,
   prompt: string,
   onEvent: (event: AgentEvent) => void,
   planMode: boolean = false,
   thinkingMode: boolean = false,
+  model: string = "",
 ): Promise<void> {
   const channel = new Channel<AgentEvent>();
   channel.onmessage = onEvent;
-  return invoke("send_message", { workspaceId, prompt, onEvent: channel, planMode, thinkingMode });
+  return invoke("send_message", { workspaceId, prompt, onEvent: channel, planMode, thinkingMode, model: model || null });
 }
 
 export async function stopAgent(workspaceId: string): Promise<void> {

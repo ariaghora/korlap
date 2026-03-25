@@ -1,12 +1,12 @@
 <script lang="ts">
   import { type PastedImage } from "$lib/chat-utils";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { X, TextSearch, Lightbulb, BookOpen } from "lucide-svelte";
+  import { X, TextSearch, Lightbulb, BookOpen, ChevronDown } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi, type FileSearchResult } from "./MentionAutocomplete.svelte";
   import SearchModal from "./SearchModal.svelte";
-  import { searchRepoFiles } from "$lib/ipc";
+  import { searchRepoFiles, getCachedModels, getModelLabel } from "$lib/ipc";
 
   export interface TaskData {
     title: string;
@@ -16,6 +16,7 @@
     mentions: Mention[];
     planMode: boolean;
     thinkingMode: boolean;
+    model: string;
   }
 
   interface Props {
@@ -26,6 +27,7 @@
     initialMentions?: Mention[];
     initialPlanMode?: boolean;
     initialThinkingMode?: boolean;
+    initialModel?: string;
     submitLabel?: string;
     onSubmit: (data: TaskData) => void;
     onSubmitAndStart?: (data: TaskData) => void;
@@ -40,6 +42,7 @@
     initialMentions = [],
     initialPlanMode = false,
     initialThinkingMode = false,
+    initialModel = "",
     submitLabel = "Add",
     onSubmit,
     onSubmitAndStart,
@@ -52,6 +55,8 @@
   let mentions = $state<Mention[]>([...initialMentions]);
   let planMode = $state(initialPlanMode);
   let thinkingMode = $state(initialThinkingMode);
+  let model = $state(initialModel);
+  let showModelDropdown = $state(false);
   let titleRef: HTMLInputElement | undefined = $state();
 
   // Mention input + autocomplete state
@@ -105,6 +110,7 @@
       mentions: allMentions,
       planMode,
       thinkingMode,
+      model,
     };
   }
 
@@ -123,7 +129,9 @@
     if (showSearchModal) return; // SearchModal handles its own keys
     if (e.key === "Escape") {
       e.preventDefault();
-      if (autocompleteVisible) {
+      if (showModelDropdown) {
+        showModelDropdown = false;
+      } else if (autocompleteVisible) {
         autocompleteVisible = false;
         autocompleteResults = [];
       } else {
@@ -295,6 +303,13 @@
     submit();
   }
 
+  let modelLabel = $derived(getModelLabel(model));
+
+  function selectModel(value: string) {
+    model = value;
+    showModelDropdown = false;
+  }
+
   function handleSearchAddToContext(path: string, displayName: string, lineNumber: number) {
     showSearchModal = false;
     const mention: Mention = { type: "file", path, displayName, lineNumber };
@@ -309,7 +324,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="overlay" onclick={onCancel} onkeydown={handleOverlayKeydown}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="dialog" onclick={(e) => e.stopPropagation()}>
+  <div class="dialog" onclick={(e) => { e.stopPropagation(); showModelDropdown = false; }}>
     <input
       class="task-title"
       bind:this={titleRef}
@@ -382,6 +397,33 @@
           <BookOpen size={13} strokeWidth={2} />
           Plan
         </button>
+        <div class="model-selector">
+          <button
+            type="button"
+            class="mode-pill"
+            class:active={model !== ""}
+            onclick={(e) => { e.stopPropagation(); showModelDropdown = !showModelDropdown; }}
+            use:tooltip={{ text: "Model" }}
+          >
+            {modelLabel}
+            <ChevronDown size={11} strokeWidth={2} />
+          </button>
+          {#if showModelDropdown}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="model-dropdown" onclick={(e) => e.stopPropagation()}>
+              {#each getCachedModels() as opt (opt.value)}
+                <button
+                  class="model-option"
+                  class:selected={model === opt.value}
+                  onclick={() => selectModel(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
       <div class="footer-actions">
         {#if repoId}
@@ -433,7 +475,7 @@
   }
 
   .dialog {
-    width: 480px;
+    width: 540px;
     max-width: 90vw;
     max-height: 80vh;
     display: flex;
@@ -638,6 +680,48 @@
 
   .mode-pill.active:hover {
     background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  .model-selector {
+    position: relative;
+  }
+
+  .model-dropdown {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 0;
+    min-width: 140px;
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    padding: 0.25rem;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .model-option {
+    padding: 0.35rem 0.6rem;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.75rem;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.1s ease;
+  }
+
+  .model-option:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--text-bright);
+  }
+
+  .model-option.selected {
+    color: var(--accent);
+    font-weight: 600;
   }
 
   .footer-actions {
