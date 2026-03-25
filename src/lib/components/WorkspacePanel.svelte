@@ -500,6 +500,7 @@
                 refreshTrigger={diffRefreshTrigger}
                 onQuote={onDiffQuote}
                 onOpenFile={(path) => { fileNavigatePath = path; activeTab = "files"; }}
+                onGoToLine={(path, line) => { fileNavigatePath = path; fileNavigateLine = line; activeTab = "files"; }}
               />
             </div>
             <div class="ws-tab-container active-layer" style:display={activeTab === "files" ? undefined : "none"}>
