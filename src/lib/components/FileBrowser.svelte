@@ -761,7 +761,7 @@
     border: none;
     outline: none;
     color: var(--text-primary);
-    font-family: var(--font-mono);
+    font-family: inherit;
     font-size: 0.73rem;
     min-width: 0;
   }
