@@ -37,7 +37,6 @@
   .column {
     flex: 1;
     min-width: 0;
-    max-width: 380px;
     display: flex;
     flex-direction: column;
     background: var(--bg-sidebar);
