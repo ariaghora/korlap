@@ -89,8 +89,22 @@
   let userScrolledUp = $state(false);
   let inputEl: HTMLDivElement | undefined = $state();
   let showModelDropdown = $state(false);
+  let modelPillEl: HTMLButtonElement | undefined = $state();
+  let modelDropdownPos = $state<{ bottom: number; left: number } | null>(null);
 
   let modelLabel = $derived(getModelLabel(model));
+
+  function toggleModelDropdown() {
+    if (showModelDropdown) {
+      showModelDropdown = false;
+      return;
+    }
+    if (modelPillEl) {
+      const rect = modelPillEl.getBoundingClientRect();
+      modelDropdownPos = { bottom: window.innerHeight - rect.top + 4, left: rect.left };
+    }
+    showModelDropdown = true;
+  }
 
   // Mention input + autocomplete state
   let mentionInputApi: MentionInputApi | undefined = $state();
@@ -635,7 +649,7 @@
   {/if}
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="input-form" onkeydown={handleInputKeydown} onclick={() => { showModelDropdown = false; }} bind:this={inputEl}>
+  <div class="input-form" onkeydown={handleInputKeydown} bind:this={inputEl}>
     {#if pastedImages.length > 0}
       <div class="image-preview-strip">
         {#each pastedImages as img (img.id)}
@@ -682,33 +696,17 @@
           <BookOpen size={13} strokeWidth={2} />
           Plan
         </button>
-        <div class="model-selector">
-          <button
-            type="button"
-            class="mode-pill"
-            class:active={model !== ""}
-            onclick={(e) => { e.stopPropagation(); showModelDropdown = !showModelDropdown; }}
-            use:tooltip={{ text: "Model" }}
-          >
-            {modelLabel}
-            <ChevronDown size={11} strokeWidth={2} />
-          </button>
-          {#if showModelDropdown}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="model-dropdown" onclick={(e) => e.stopPropagation()}>
-              {#each getCachedModels() as opt (opt.value)}
-                <button
-                  class="model-option"
-                  class:selected={model === opt.value}
-                  onclick={() => { onModelChange?.(opt.value); showModelDropdown = false; }}
-                >
-                  {opt.label}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <button
+          type="button"
+          class="mode-pill"
+          class:active={model !== ""}
+          bind:this={modelPillEl}
+          onclick={(e) => { e.stopPropagation(); toggleModelDropdown(); }}
+          use:tooltip={{ text: "Model" }}
+        >
+          {modelLabel}
+          <ChevronDown size={11} strokeWidth={2} />
+        </button>
       </div>
       {#if sending}
         <button type="button" class="stop-btn" onclick={onStop} use:tooltip={{ text: "Stop", shortcut: "Esc" }}>
@@ -733,6 +731,28 @@
     />
   </div>
 </div>
+
+{#if showModelDropdown && modelDropdownPos}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="model-dropdown-backdrop" onclick={() => { showModelDropdown = false; }}>
+    <div
+      class="model-dropdown"
+      style="bottom: {modelDropdownPos.bottom}px; left: {modelDropdownPos.left}px;"
+      onclick={(e) => e.stopPropagation()}
+    >
+      {#each getCachedModels() as opt (opt.value)}
+        <button
+          class="model-option"
+          class:selected={model === opt.value}
+          onclick={() => { onModelChange?.(opt.value); showModelDropdown = false; }}
+        >
+          {opt.label}
+        </button>
+      {/each}
+    </div>
+  </div>
+{/if}
 
 <style>
   .chat-panel {
@@ -1515,21 +1535,20 @@
     background: color-mix(in srgb, var(--accent) 18%, transparent);
   }
 
-  .model-selector {
-    position: relative;
+  .model-dropdown-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
   }
 
   .model-dropdown {
-    position: absolute;
-    bottom: calc(100% + 4px);
-    left: 0;
+    position: fixed;
     min-width: 140px;
     background: var(--bg-sidebar);
     border: 1px solid var(--border-light);
     border-radius: 8px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     padding: 0.25rem;
-    z-index: 10;
     display: flex;
     flex-direction: column;
   }
