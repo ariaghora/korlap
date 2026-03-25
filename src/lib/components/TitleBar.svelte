@@ -3,6 +3,7 @@
   import type { RepoDetail, RepoSettings, NamedScript, ScriptEvent } from "$lib/ipc";
   import { syncMain, getRepoHead, checkoutDefaultBranch, checkMainBehind, runRepoScript, stopRepoScript } from "$lib/ipc";
   import { Settings, Check, Plus, RefreshCw, AlertTriangle, ChevronLeft, Zap, Network, LayoutGrid, FolderOpen, SquareTerminal, Play, Square, CircleX, ChevronDown, X } from "lucide-svelte";
+  import { SvelteMap } from "svelte/reactivity";
   import Dropdown from "./Dropdown.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
 
@@ -124,19 +125,33 @@
     dropdownRef?.close();
   }
 
-  // ── Repo-level script runner ──────────────────────────
+  // ── Repo-level script runner (per-repo state) ────────
   type ScriptStatus = "idle" | "running" | "success" | "error";
-  let repoScriptStatus = $state<ScriptStatus>("idle");
+  let scriptStatusMap = new SvelteMap<string, ScriptStatus>();
+  let scriptOutputMap = new SvelteMap<string, string[]>();
+  let scriptExitCodeMap = new SvelteMap<string, number | null>();
+  let scriptPopoverMap = new SvelteMap<string, boolean>();
+  let scriptNameMap = new SvelteMap<string, string>();
   let repoScriptDropdownOpen = $state(false);
-  let repoScriptOutput = $state<string[]>([]);
-  let repoScriptExitCode = $state<number | null>(null);
-  let repoScriptPopoverOpen = $state(false);
-  let repoScriptRunningName = $state("");
   let outputEl = $state<HTMLPreElement | null>(null);
 
+  let repoScriptStatus = $derived(scriptStatusMap.get(activeRepo.id) ?? "idle");
+  let repoScriptOutput = $derived(scriptOutputMap.get(activeRepo.id) ?? []);
+  let repoScriptExitCode = $derived(scriptExitCodeMap.get(activeRepo.id) ?? null);
+  let repoScriptPopoverOpen = $derived(scriptPopoverMap.get(activeRepo.id) ?? false);
+  let repoScriptRunningName = $derived(scriptNameMap.get(activeRepo.id) ?? "");
+
+  // Close dropdown when switching repos
+  $effect(() => {
+    const _id = activeRepo.id;
+    repoScriptDropdownOpen = false;
+  });
+
   const ANSI_COLORS: Record<number, string> = {
-    30: "#555", 31: "#f44", 32: "#4c4", 33: "#ec4", 34: "#48f", 35: "#c4c", 36: "#4cc", 37: "#ccc",
-    90: "#888", 91: "#f88", 92: "#8f8", 93: "#ff8", 94: "#8af", 95: "#f8f", 96: "#8ff", 97: "#fff",
+    30: "var(--ansi-black)",   31: "var(--ansi-red)",     32: "var(--ansi-green)",   33: "var(--ansi-yellow)",
+    34: "var(--ansi-blue)",    35: "var(--ansi-magenta)", 36: "var(--ansi-cyan)",    37: "var(--ansi-white)",
+    90: "var(--ansi-bright-black)",  91: "var(--ansi-bright-red)",     92: "var(--ansi-bright-green)",  93: "var(--ansi-bright-yellow)",
+    94: "var(--ansi-bright-blue)",   95: "var(--ansi-bright-magenta)", 96: "var(--ansi-bright-cyan)",   97: "var(--ansi-bright-white)",
   };
 
   function ansiToHtml(text: string): string {
@@ -188,34 +203,34 @@
 
   function runNamedRepoScript(script: NamedScript) {
     if (!script.command.trim()) return;
-    repoScriptStatus = "running";
+    const rid = activeRepo.id;
+    scriptStatusMap.set(rid, "running");
     repoScriptDropdownOpen = false;
-    repoScriptOutput = [];
-    repoScriptExitCode = null;
-    repoScriptPopoverOpen = true;
-    repoScriptRunningName = script.name || script.command;
+    scriptOutputMap.set(rid, []);
+    scriptExitCodeMap.delete(rid);
+    scriptPopoverMap.set(rid, true);
+    scriptNameMap.set(rid, script.name || script.command);
 
-    runRepoScript(activeRepo.id, script.command, (event: ScriptEvent) => {
+    runRepoScript(rid, script.command, (event: ScriptEvent) => {
       if (event.type === "output") {
-        repoScriptOutput = repoScriptOutput.length >= 500
-          ? [...repoScriptOutput.slice(1), event.data]
-          : [...repoScriptOutput, event.data];
+        const prev = scriptOutputMap.get(rid) ?? [];
+        scriptOutputMap.set(rid, prev.length >= 500 ? [...prev.slice(1), event.data] : [...prev, event.data]);
         requestAnimationFrame(scrollOutputToBottom);
       } else if (event.type === "exit") {
         const ok = event.code === 0;
-        repoScriptExitCode = event.code;
-        repoScriptStatus = ok ? "success" : "error";
+        scriptExitCodeMap.set(rid, event.code);
+        scriptStatusMap.set(rid, ok ? "success" : "error");
         setTimeout(() => {
-          if (repoScriptStatus === (ok ? "success" : "error")) {
-            repoScriptStatus = "idle";
+          if (scriptStatusMap.get(rid) === (ok ? "success" : "error")) {
+            scriptStatusMap.set(rid, "idle");
           }
         }, 2000);
       }
     }).catch(() => {
-      repoScriptExitCode = -1;
-      repoScriptStatus = "error";
+      scriptExitCodeMap.set(rid, -1);
+      scriptStatusMap.set(rid, "error");
       setTimeout(() => {
-        if (repoScriptStatus === "error") repoScriptStatus = "idle";
+        if (scriptStatusMap.get(rid) === "error") scriptStatusMap.set(rid, "idle");
       }, 2000);
     });
   }
@@ -234,7 +249,7 @@
       repoScriptDropdownOpen = false;
     }
     if (repoScriptPopoverOpen && !target.closest(".repo-run-wrapper")) {
-      repoScriptPopoverOpen = false;
+      scriptPopoverMap.set(activeRepo.id, false);
     }
   }
 </script>
@@ -332,6 +347,7 @@
               title="Stop script"
             >
               <Square size={10} />
+              <span class="run-label">Stop</span>
             </button>
           {:else}
             <button
@@ -348,20 +364,19 @@
               {:else}
                 <Play size={12} />
               {/if}
+              <span class="run-label">Run{#if headBranch} <span class="run-branch">{headBranch}</span>{/if}</span>
             </button>
           {/if}
-          {#if (repoSettings?.run_scripts?.length ?? 0) > 1}
-            <button
-              class="repo-run-toggle"
-              class:running={repoScriptStatus === "running"}
-              class:success={repoScriptStatus === "success"}
-              class:error={repoScriptStatus === "error"}
-              onclick={() => { repoScriptDropdownOpen = !repoScriptDropdownOpen; }}
-              title="Select script"
-            >
-              <ChevronDown size={10} />
-            </button>
-          {/if}
+          <button
+            class="repo-run-toggle"
+            class:running={repoScriptStatus === "running"}
+            class:success={repoScriptStatus === "success"}
+            class:error={repoScriptStatus === "error"}
+            onclick={() => { repoScriptDropdownOpen = !repoScriptDropdownOpen; }}
+            title="Select script"
+          >
+            <ChevronDown size={10} />
+          </button>
         </div>
         {#if repoScriptDropdownOpen}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -379,6 +394,15 @@
                 </button>
               {/if}
             {/each}
+            {#if repoScriptOutput.length > 0 && !repoScriptPopoverOpen}
+              <div class="dropdown-divider"></div>
+              <button
+                class="dropdown-item"
+                onclick={() => { scriptPopoverMap.set(activeRepo.id, true); repoScriptDropdownOpen = false; }}
+              >
+                <span class="dropdown-item-name">Show last output</span>
+              </button>
+            {/if}
           </div>
         {/if}
         {#if repoScriptPopoverOpen}
@@ -391,7 +415,7 @@
                 {/if}
                 {repoScriptRunningName || "Script"}
               </span>
-              <button class="repo-popover-close" onclick={() => { repoScriptPopoverOpen = false; }}>
+              <button class="repo-popover-close" onclick={() => { scriptPopoverMap.set(activeRepo.id, false); }}>
                 <X size={12} />
               </button>
             </div>
@@ -870,11 +894,28 @@
     border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   }
 
+  .run-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .run-branch {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 500;
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    margin-left: 0.3em;
+  }
+
   .repo-run-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0 0.45rem;
+    gap: 0.25rem;
+    padding: 0 0.55rem;
     height: 26px;
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     border: none;
