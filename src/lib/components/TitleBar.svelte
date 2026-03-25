@@ -6,6 +6,7 @@
   import { SvelteMap } from "svelte/reactivity";
   import Dropdown from "./Dropdown.svelte";
   import { addToast } from "$lib/stores/toasts.svelte";
+  import { tooltip } from "$lib/actions";
 
   interface Props {
     repos: RepoDetail[];
@@ -264,12 +265,11 @@
   ondblclick={handleDoubleClick}
 >
   <div class="titlebar-left">
-    <button class="home-btn" onclick={onGoHome} title="Home"><ChevronLeft size={14} strokeWidth={2.5} /></button>
+    <button class="home-btn" onclick={onGoHome} use:tooltip={{ text: "Home" }}><ChevronLeft size={14} strokeWidth={2.5} /></button>
     <div class="btn-group">
-      <Dropdown bind:this={dropdownRef} onclose={onDropdownClose}>
+      <Dropdown bind:this={dropdownRef} onclose={onDropdownClose} tooltipOpts={{ text: "Switch repository", shortcut: "⌘E" }}>
         {#snippet trigger()}
           <span class="repo-name">{activeRepo.display_name}</span>
-          <kbd class="shortcut-hint">⌘E</kbd>
         {/snippet}
 
         {#each repos as repo, i}
@@ -294,15 +294,14 @@
           <span>Add repository</span>
         </button>
       </Dropdown>
-      <button class="settings-btn" onclick={onSettings} title="Repository settings">
+      <button class="settings-btn" onclick={onSettings} use:tooltip={{ text: "Settings", shortcut: "⌘," }}>
         <Settings size={14} />
       </button>
     </div>
     <div class="breadcrumb">
       {#if inWorkspace}
-        <button class="breadcrumb-segment" onclick={onGoToPlan}>
+        <button class="breadcrumb-segment" onclick={onGoToPlan} use:tooltip={{ text: "Board", shortcut: "⌘1" }}>
           <LayoutGrid size={13} />
-          <kbd class="mode-hint">⌘1</kbd>
         </button>
         {#if workspaceTitle}
           <span class="breadcrumb-segment current task-title">{workspaceTitle}</span>
@@ -312,28 +311,25 @@
           class="breadcrumb-segment"
           class:current={planView === "kanban"}
           onclick={() => onPlanViewChange?.("kanban")}
-          title="Kanban (⌘1)"
+          use:tooltip={{ text: "Kanban", shortcut: "⌘1" }}
         >
           <LayoutGrid size={13} />
-          <kbd class="mode-hint">⌘1</kbd>
         </button>
         <button
           class="breadcrumb-segment"
           class:current={planView === "files"}
           onclick={() => onPlanViewChange?.("files")}
-          title="Files (⌘2)"
+          use:tooltip={{ text: "Files", shortcut: "⌘2" }}
         >
           <FolderOpen size={13} />
-          <kbd class="mode-hint">⌘2</kbd>
         </button>
         <button
           class="breadcrumb-segment"
           class:current={planView === "terminal"}
           onclick={() => onPlanViewChange?.("terminal")}
-          title="Terminal (⌘3)"
+          use:tooltip={{ text: "Terminal", shortcut: "⌘3" }}
         >
           <SquareTerminal size={13} />
-          <kbd class="mode-hint">⌘3</kbd>
         </button>
       {/if}
     </div>
@@ -344,7 +340,7 @@
             <button
               class="repo-run-btn stop"
               onclick={handleStopRepoScript}
-              title="Stop script"
+              use:tooltip={{ text: "Stop script" }}
             >
               <Square size={10} />
               <span class="run-label">Stop</span>
@@ -355,7 +351,7 @@
               class:success={repoScriptStatus === "success"}
               class:error={repoScriptStatus === "error"}
               onclick={runDefaultRepoScript}
-              title={`Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}`}
+              use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}` }}
             >
               {#if repoScriptStatus === "success"}
                 <Check size={12} />
@@ -373,7 +369,7 @@
             class:success={repoScriptStatus === "success"}
             class:error={repoScriptStatus === "error"}
             onclick={() => { repoScriptDropdownOpen = !repoScriptDropdownOpen; }}
-            title="Select script"
+            use:tooltip={{ text: "Select script" }}
           >
             <ChevronDown size={10} />
           </button>
@@ -459,7 +455,7 @@
           class:error={syncError}
           onclick={handleSync}
           disabled={syncing}
-          title="Sync local {activeRepo.default_branch} with origin"
+          use:tooltip={{ text: `Sync local ${activeRepo.default_branch} with origin` }}
         >
           <RefreshCw size={13} />
           <span class="sync-label">
@@ -472,17 +468,16 @@
       class="autopilot-btn"
       class:active={autopilotEnabled}
       onclick={onAutopilotToggle}
-      title="Toggle autopilot (⌘4)"
+      use:tooltip={{ text: "Autopilot", shortcut: "⌘4" }}
     >
       <Zap size={12} />
       Autopilot
-      <kbd class="mode-hint">⌘4</kbd>
     </button>
     {#if autopilotEnabled}
       <button
         class="dep-graph-btn"
         onclick={onShowDepGraph}
-        title="Task dependencies"
+        use:tooltip={{ text: "Task dependencies" }}
       >
         <Network size={12} />
       </button>
@@ -592,15 +587,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     padding-right: 0.65rem;
-  }
-
-  .mode-hint {
-    font-size: 0.55rem;
-    font-family: inherit;
-    padding: 0.05rem 0.2rem;
-    border-radius: 2px;
-    background: var(--border);
-    color: var(--text-muted);
   }
 
   .titlebar-right {
@@ -763,15 +749,6 @@
     background: var(--border);
     color: var(--text-dim);
     flex-shrink: 0;
-  }
-
-  .shortcut-hint {
-    font-size: 0.6rem;
-    font-family: inherit;
-    padding: 0.1rem 0.3rem;
-    border-radius: 3px;
-    background: var(--border);
-    color: var(--text-dim);
   }
 
   .dropdown-divider {

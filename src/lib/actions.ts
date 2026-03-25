@@ -1,5 +1,133 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+// ── Tooltip action ──────────────────────────────────────────────────
+
+export interface TooltipOptions {
+  /** Primary label text */
+  text: string;
+  /** Optional keyboard shortcut displayed as a kbd badge */
+  shortcut?: string;
+  /** Preferred placement — flips automatically if clipped */
+  placement?: "top" | "bottom";
+}
+
+/**
+ * Svelte action: shows a tooltip near the element on hover.
+ * Appears after a very short delay (100 ms) so it feels nearly instant.
+ * Tooltip is appended to `document.body` so it's never clipped by overflow.
+ */
+export function tooltip(node: HTMLElement, options: TooltipOptions) {
+  let opts = options;
+  let el: HTMLDivElement | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  // Remove any native title that would conflict
+  node.removeAttribute("title");
+
+  function show() {
+    if (el || !opts.text) return;
+    el = document.createElement("div");
+    el.className = "korlap-tooltip";
+
+    const label = document.createElement("span");
+    label.className = "korlap-tooltip-text";
+    label.textContent = opts.text;
+    el.appendChild(label);
+
+    if (opts.shortcut) {
+      const kbd = document.createElement("kbd");
+      kbd.className = "korlap-tooltip-kbd";
+      kbd.textContent = opts.shortcut;
+      el.appendChild(kbd);
+    }
+
+    document.body.appendChild(el);
+    position();
+  }
+
+  function position() {
+    if (!el) return;
+    const GAP = 6;
+    const EDGE_PAD = 8;
+    const rect = node.getBoundingClientRect();
+    const tt = el.getBoundingClientRect();
+    const placement = opts.placement ?? "top";
+
+    // Horizontal: center on node, clamp to viewport
+    let left = rect.left + rect.width / 2 - tt.width / 2;
+    left = Math.max(EDGE_PAD, Math.min(left, window.innerWidth - tt.width - EDGE_PAD));
+
+    // Vertical
+    let top: number;
+    let actualPlacement = placement;
+    if (placement === "top") {
+      top = rect.top - tt.height - GAP;
+      if (top < EDGE_PAD) { top = rect.bottom + GAP; actualPlacement = "bottom"; }
+    } else {
+      top = rect.bottom + GAP;
+      if (top + tt.height > window.innerHeight - EDGE_PAD) { top = rect.top - tt.height - GAP; actualPlacement = "top"; }
+    }
+
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.dataset.placement = actualPlacement;
+  }
+
+  function hide() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (el) { el.remove(); el = null; }
+  }
+
+  function onEnter() {
+    timer = setTimeout(show, 100);
+  }
+
+  function onLeave() {
+    hide();
+  }
+
+  function onPointerDown() {
+    // Dismiss immediately on click so tooltip doesn't linger
+    hide();
+  }
+
+  node.addEventListener("pointerenter", onEnter);
+  node.addEventListener("pointerleave", onLeave);
+  node.addEventListener("pointerdown", onPointerDown);
+
+  return {
+    update(newOpts: TooltipOptions) {
+      opts = newOpts;
+      node.removeAttribute("title");
+      if (el) {
+        // Update live tooltip
+        const label = el.querySelector(".korlap-tooltip-text");
+        if (label) label.textContent = opts.text;
+        const existingKbd = el.querySelector(".korlap-tooltip-kbd");
+        if (opts.shortcut) {
+          if (existingKbd) {
+            existingKbd.textContent = opts.shortcut;
+          } else {
+            const kbd = document.createElement("kbd");
+            kbd.className = "korlap-tooltip-kbd";
+            kbd.textContent = opts.shortcut;
+            el.appendChild(kbd);
+          }
+        } else if (existingKbd) {
+          existingKbd.remove();
+        }
+        position();
+      }
+    },
+    destroy() {
+      hide();
+      node.removeEventListener("pointerenter", onEnter);
+      node.removeEventListener("pointerleave", onLeave);
+      node.removeEventListener("pointerdown", onPointerDown);
+    },
+  };
+}
+
 // ── Draggable action ─────────────────────────────────────────────────
 
 export interface DragOffset {

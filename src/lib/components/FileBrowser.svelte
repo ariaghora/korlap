@@ -2,6 +2,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { Folder, FolderOpen, File as FileIcon } from "lucide-svelte";
   import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, type FileEntry } from "$lib/ipc";
+  import { tooltip } from "$lib/actions";
   import ResizeHandle from "./ResizeHandle.svelte";
   import CodeEditor from "./CodeEditor.svelte";
 
@@ -369,7 +370,7 @@
       <div class="tree-sidebar" style="width: {treeWidth}px">
         <div class="tree-header">
           <span class="tree-title">Files</span>
-          <button class="refresh-btn" onclick={refreshTree} title="Refresh">↻</button>
+          <button class="refresh-btn" onclick={refreshTree} use:tooltip={{ text: "Refresh" }}>↻</button>
         </div>
         <div class="tree-list">
           {#each rootEntries as node}

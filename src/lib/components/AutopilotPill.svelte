@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Zap, ChevronDown, ChevronUp, Loader2, GitPullRequestCreate, Eye, AlertTriangle, ListOrdered, GitMerge, MessageSquare, CircleX } from "lucide-svelte";
+  import { tooltip } from "$lib/actions";
 
   export interface AutopilotEvent {
     id: string;
@@ -122,7 +123,7 @@
           <Zap size={12} class="pill-icon" />
           <span class="pill-title">Autopilot</span>
           <span class="pill-status-small">{statusText}</span>
-          <button class="pill-collapse-btn" onclick={() => { expanded = false; }} title="Collapse">
+          <button class="pill-collapse-btn" onclick={() => { expanded = false; }} use:tooltip={{ text: "Collapse" }}>
             <ChevronDown size={14} />
           </button>
         </div>

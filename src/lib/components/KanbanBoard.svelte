@@ -7,6 +7,7 @@
   import TaskPopover, { type TaskData } from "./TaskPopover.svelte";
   import AutopilotPill, { type AutopilotEvent } from "./AutopilotPill.svelte";
   import { Plus, Ellipsis, Trash2 } from "lucide-svelte";
+  import { tooltip } from "$lib/actions";
 
   interface TodoItem {
     id: string;
@@ -92,6 +93,10 @@
   let doneMenuBtnEl = $state<HTMLButtonElement | null>(null);
   let doneMenuPos = $state({ top: 0, left: 0 });
   let detailWs = $state<WorkspaceInfo | null>(null);
+
+  export function openNewTask() {
+    showAddDialog = true;
+  }
 
   // Keyboard navigation
   let focusedCol = $state(-1); // -1 = no focus
@@ -261,7 +266,7 @@
       <div class="empty-hint">Add a task to get started</div>
     {/if}
     {#snippet footer()}
-      <button class="add-task-btn" onclick={() => { showAddDialog = true; }}>
+      <button class="add-task-btn" onclick={() => { showAddDialog = true; }} use:tooltip={{ text: "New task", shortcut: "⌘N" }}>
         <Plus size={12} /> New task
       </button>
     {/snippet}
@@ -429,20 +434,21 @@
     align-items: center;
     justify-content: center;
     gap: 0.3rem;
-    padding: 0.4rem;
-    background: var(--btn-subtle-bg);
-    border: none;
+    padding: 0.45rem;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
     border-radius: 6px;
-    color: var(--text-secondary);
+    color: var(--accent);
     font-family: inherit;
     font-size: 0.78rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.15s, border-color 0.15s;
   }
 
   .add-task-btn:hover {
-    color: var(--text-primary);
-    background: var(--btn-subtle-hover);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
   .column-menu-btn {

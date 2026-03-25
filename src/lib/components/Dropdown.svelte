@@ -1,14 +1,16 @@
 <script lang="ts">
   import { ChevronDown } from "lucide-svelte";
   import type { Snippet } from "svelte";
+  import { tooltip, type TooltipOptions } from "$lib/actions";
 
   interface Props {
     trigger: Snippet;
     children: Snippet;
     onclose?: () => void;
+    tooltipOpts?: TooltipOptions;
   }
 
-  let { trigger, children, onclose }: Props = $props();
+  let { trigger, children, onclose, tooltipOpts }: Props = $props();
 
   let open = $state(false);
   let rootEl: HTMLDivElement | undefined = $state();
@@ -42,7 +44,7 @@
 <svelte:window onmousedown={handleClickOutside} />
 
 <div class="dropdown" bind:this={rootEl}>
-  <button class="dropdown-trigger" onclick={toggle}>
+  <button class="dropdown-trigger" onclick={toggle} use:tooltip={tooltipOpts ?? { text: "" }}>
     {@render trigger()}
     <ChevronDown size={12} class="dropdown-chevron" />
   </button>
