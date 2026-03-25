@@ -37,11 +37,42 @@ pub enum AgentEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         thinking: Option<String>,
     },
+    #[serde(rename = "usage")]
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+        /// true = cumulative session total (from result event), replaces previous count
+        /// false = single API call (from assistant event), added to running total
+        cumulative: bool,
+    },
     #[serde(rename = "done")]
     Done,
     #[serde(rename = "error")]
     #[allow(dead_code)]
     Error { message: String },
+}
+
+/// Extract total input and output tokens from a usage JSON object.
+/// Claude Code splits input across input_tokens, cache_creation_input_tokens,
+/// and cache_read_input_tokens — sum all three for the real total.
+fn extract_usage(usage: &serde_json::Value) -> (u64, u64) {
+    let input = usage
+        .get("input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let cache_create = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let cache_read = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let output = usage
+        .get("output_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    (input + cache_create + cache_read, output)
 }
 
 fn parse_stream_line(
@@ -160,11 +191,36 @@ fn parse_stream_line(
             if !text.is_empty() || !tool_uses.is_empty() || thinking.is_some() {
                 let _ = on_event.send(AgentEvent::AssistantMessage { text, tool_uses, thinking });
             }
+
+            // Extract per-call token usage from message.usage
+            if let Some(usage) = message.get("usage") {
+                let (input, output) = extract_usage(usage);
+                if input > 0 || output > 0 {
+                    let _ = on_event.send(AgentEvent::Usage {
+                        input_tokens: input,
+                        output_tokens: output,
+                        cumulative: false,
+                    });
+                }
+            }
         }
         "result" => {
             if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
                 *session_id = Some(sid.to_string());
             }
+
+            // Extract cumulative session usage from result event (authoritative)
+            if let Some(usage) = v.get("usage") {
+                let (input, output) = extract_usage(usage);
+                if input > 0 || output > 0 {
+                    let _ = on_event.send(AgentEvent::Usage {
+                        input_tokens: input,
+                        output_tokens: output,
+                        cumulative: true,
+                    });
+                }
+            }
+
             let _ = on_event.send(AgentEvent::Done);
         }
         _ => {}

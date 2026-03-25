@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { messagesByWorkspace, sendingByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
+  import { messagesByWorkspace, sendingByWorkspace, tokensByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, suggestReplies, type FileSearchResult } from "$lib/ipc";
   import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil } from "lucide-svelte";
   import { renderMarkdown } from "$lib/markdown";
@@ -49,6 +49,17 @@
   let messagesMap = $derived(messagesByWorkspace.get(workspaceId));
   let messages = $derived(messagesMap ? [...messagesMap.values()] : []);
   let sending = $derived(sendingByWorkspace.get(workspaceId) ?? false);
+
+  // Token consumption for this workspace
+  let tokens = $derived(tokensByWorkspace.get(workspaceId));
+  let totalTokens = $derived(tokens ? tokens.input + tokens.output : 0);
+
+  function formatTokens(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+    if (n >= 10_000) return (n / 1_000).toFixed(0) + "k";
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
+    return n.toString();
+  }
 
   // Elapsed timer for "thinking" indicator
   let thinkingStartTime = $state<number | null>(null);
@@ -241,7 +252,7 @@
   // Footer items (file pills, plan actions, suggestions, thinking) rendered
   // as a single extra item at the end of the virtual list so they scroll naturally.
   let hasFooter = $derived(
-    (recentFiles.length > 0 && !sending) || showExecutePlan || sending || suggestedReplies.length > 0,
+    (recentFiles.length > 0 && !sending) || showExecutePlan || sending || suggestedReplies.length > 0 || totalTokens > 0,
   );
   let virtualCount = $derived(visualBlocks.length + (hasFooter ? 1 : 0));
 
@@ -566,6 +577,16 @@
                 <div class="thinking">
                   <Timer size={13} strokeWidth={2} />
                   <span class="thinking-timer">{thinkingElapsed}s</span>
+                  {#if totalTokens > 0}
+                    <span class="token-separator">·</span>
+                    <span class="token-count">{formatTokens(totalTokens)} tokens</span>
+                  {/if}
+                </div>
+              </div>
+            {:else if totalTokens > 0}
+              <div class="assistant-msg">
+                <div class="thinking token-summary">
+                  <span class="token-count">{formatTokens(totalTokens)} tokens</span>
                 </div>
               </div>
             {/if}
@@ -1116,6 +1137,18 @@
 
   .thinking-timer {
     min-width: 4.5ch;
+  }
+
+  .token-separator {
+    opacity: 0.5;
+  }
+
+  .token-count {
+    white-space: nowrap;
+  }
+
+  .token-summary {
+    opacity: 0.5;
   }
 
   @keyframes pulse {

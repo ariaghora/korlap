@@ -41,6 +41,7 @@ export interface ToolUseInfo {
 
 export type AgentEvent =
   | { type: "assistant_message"; text: string; tool_uses: ToolUseInfo[]; thinking?: string }
+  | { type: "usage"; input_tokens: number; output_tokens: number; cumulative: boolean }
   | { type: "done" }
   | { type: "error"; message: string };
 
