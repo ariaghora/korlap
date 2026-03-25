@@ -59,6 +59,8 @@
     addUserMessage,
     addAssistantMessage,
     addActionMessage,
+    addTurnTokens,
+    finalizeTurnTokens,
     loadPersistedMessages,
     clearWorkspaceData,
     setSending,
@@ -1400,6 +1402,12 @@
           } else if (event.text.trim()) {
             agentTaskByWorkspace.set(wsId, "Thinking...");
           }
+        } else if (event.type === "usage") {
+          if (event.cumulative) {
+            finalizeTurnTokens(wsId, event.input_tokens, event.output_tokens);
+          } else {
+            addTurnTokens(wsId, event.input_tokens, event.output_tokens);
+          }
         } else if (event.type === "done") {
           setSending(wsId, false);
           agentTaskByWorkspace.delete(wsId);
@@ -1852,6 +1860,12 @@
             review.resultMarkdown = event.text.trim();
           }
           reviewByWorkspace.set(wsId, { ...review });
+        } else if (event.type === "usage") {
+          if (event.cumulative) {
+            finalizeTurnTokens(wsId, event.input_tokens, event.output_tokens);
+          } else {
+            addTurnTokens(wsId, event.input_tokens, event.output_tokens);
+          }
         } else if (event.type === "done") {
           review.status = "complete";
           reviewByWorkspace.set(wsId, { ...review });

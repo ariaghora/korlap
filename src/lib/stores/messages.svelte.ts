@@ -33,6 +33,35 @@ export interface Message {
 export const messagesByWorkspace = new SvelteMap<string, SvelteMap<string, Message>>();
 export const sendingByWorkspace = new SvelteMap<string, boolean>();
 
+// ── Token usage tracking (cumulative per workspace) ───────────────
+// Two-tier: completedTokens (finalized from result events) + turnTokens (live from assistant events).
+// tokensByWorkspace = completed + turn, recomputed on every update for reactive display.
+const completedTokens = new Map<string, { input: number; output: number }>();
+const turnTokens = new SvelteMap<string, { input: number; output: number }>();
+export const tokensByWorkspace = new SvelteMap<string, { input: number; output: number }>();
+
+function updateTokens(wsId: string) {
+  const c = completedTokens.get(wsId) ?? { input: 0, output: 0 };
+  const t = turnTokens.get(wsId) ?? { input: 0, output: 0 };
+  tokensByWorkspace.set(wsId, { input: c.input + t.input, output: c.output + t.output });
+}
+
+/** Live per-call usage from assistant events — accumulates within current turn. */
+export function addTurnTokens(wsId: string, inputTokens: number, outputTokens: number) {
+  const current = turnTokens.get(wsId) ?? { input: 0, output: 0 };
+  turnTokens.set(wsId, { input: current.input + inputTokens, output: current.output + outputTokens });
+  updateTokens(wsId);
+}
+
+/** Authoritative per-turn total from result event — replaces turn accumulation. */
+export function finalizeTurnTokens(wsId: string, inputTokens: number, outputTokens: number) {
+  const c = completedTokens.get(wsId) ?? { input: 0, output: 0 };
+  completedTokens.set(wsId, { input: c.input + inputTokens, output: c.output + outputTokens });
+  turnTokens.delete(wsId);
+  updateTokens(wsId);
+}
+
+
 export function setSending(wsId: string, value: boolean) {
   sendingByWorkspace.set(wsId, value);
 }
@@ -182,4 +211,7 @@ export function clearWorkspaceData(workspaceId: string) {
   if (pending) clearTimeout(pending);
   pendingSaves.delete(workspaceId);
   messagesByWorkspace.delete(workspaceId);
+  completedTokens.delete(workspaceId);
+  turnTokens.delete(workspaceId);
+  tokensByWorkspace.delete(workspaceId);
 }
