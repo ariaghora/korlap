@@ -41,11 +41,22 @@ pub struct AgentHandle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NamedScript {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RepoSettings {
     #[serde(default)]
     pub setup_script: String,
+    /// Deprecated: migrated to run_scripts on load. Kept for backward compat deserialization.
+    #[serde(default, skip_serializing)]
+    run_script: String,
     #[serde(default)]
-    pub run_script: String,
+    pub run_scripts: Vec<NamedScript>,
     #[serde(default, alias = "archive_script")]
     pub remove_script: String,
     #[serde(default)]
@@ -58,6 +69,18 @@ pub struct RepoSettings {
     pub default_plan: bool,
     #[serde(default)]
     pub system_prompt: String,
+}
+
+impl RepoSettings {
+    /// Migrate legacy single `run_script` field into `run_scripts` vec.
+    pub fn migrate(&mut self) {
+        if self.run_scripts.is_empty() && !self.run_script.is_empty() {
+            self.run_scripts.push(NamedScript {
+                name: "Run".to_string(),
+                command: std::mem::take(&mut self.run_script),
+            });
+        }
+    }
 }
 
 pub struct TerminalHandle {
@@ -123,6 +146,8 @@ pub struct AppState {
     pub terminals: HashMap<String, TerminalHandle>,
     pub context_meta: HashMap<String, ContextMeta>,
     pub context_agents: HashMap<String, AgentHandle>,
+    /// PID of currently running script per workspace, for stop_script.
+    pub script_pids: HashMap<String, u32>,
 }
 
 impl AppState {
@@ -198,9 +223,12 @@ impl AppState {
         let settings_path = self.data_dir.join("repo_settings.json");
         if settings_path.exists() {
             if let Ok(data) = std::fs::read_to_string(&settings_path) {
-                if let Ok(settings) =
+                if let Ok(mut settings) =
                     serde_json::from_str::<HashMap<String, RepoSettings>>(&data)
                 {
+                    for s in settings.values_mut() {
+                        s.migrate();
+                    }
                     self.repo_settings.extend(settings);
                 }
             }

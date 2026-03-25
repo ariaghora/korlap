@@ -1,6 +1,6 @@
 <script lang="ts">
   import {
-    getRepoSettings, saveRepoSettings, type RepoSettings,
+    getRepoSettings, saveRepoSettings, type RepoSettings, type NamedScript,
     getContextMeta, saveContextScope, buildKnowledgeBase, stopContextBuild,
     readContextFile, writeContextFile, draftContradictionResolution, resolveContradiction, updateKnowledgeBaseIncremental,
     type ContextMeta, type ContextBuildStatus, type AgentEvent,
@@ -26,7 +26,7 @@
   let currentColorMode = $state<ColorMode>(getColorMode());
   let settings = $state<RepoSettings>({
     setup_script: "",
-    run_script: "",
+    run_scripts: [],
     remove_script: "",
     pr_message: "",
     review_message: "",
@@ -34,6 +34,16 @@
     default_plan: false,
     system_prompt: "",
   });
+
+  function addRunScript() {
+    settings.run_scripts = [...settings.run_scripts, { name: "", command: "" }];
+    scheduleAutosave();
+  }
+
+  function removeRunScript(index: number) {
+    settings.run_scripts = settings.run_scripts.filter((_, i) => i !== index);
+    scheduleAutosave();
+  }
   let saveStatus = $state<"idle" | "saving" | "saved">("idle");
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -517,19 +527,43 @@
 
       <div class="setting-block">
         <div class="setting-meta">
-          <span class="setting-name">Run</span>
-          <span class="setting-desc">Starts when you click ▶ in the Scripts tab</span>
+          <span class="setting-name">Run Scripts</span>
+          <span class="setting-desc">Available from ▶ button in workspace. First script is the default.</span>
         </div>
-        <div class="script-field">
-          <span class="script-prompt">$</span>
-          <textarea
-            bind:value={settings.run_script}
-            oninput={scheduleAutosave}
-            placeholder="bun run dev"
-            rows="2"
-            spellcheck="false"
-          ></textarea>
-        </div>
+        {#each settings.run_scripts as script, i}
+          <div class="run-script-entry" class:is-default={i === 0}>
+            <div class="run-script-entry-header">
+              {#if i === 0}
+                <span class="default-badge">Default</span>
+              {/if}
+              <input
+                class="run-script-name-input"
+                bind:value={script.name}
+                oninput={scheduleAutosave}
+                placeholder="Script name"
+                spellcheck="false"
+              />
+              <button
+                class="run-script-delete"
+                onclick={() => removeRunScript(i)}
+                title="Remove script"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+            <div class="script-field">
+              <span class="script-prompt">$</span>
+              <textarea
+                bind:value={script.command}
+                oninput={scheduleAutosave}
+                placeholder="bun run dev"
+                rows="2"
+                spellcheck="false"
+              ></textarea>
+            </div>
+          </div>
+        {/each}
+        <button class="add-script-btn" onclick={addRunScript}>+ Add script</button>
       </div>
 
       <div class="setting-block">
@@ -1290,6 +1324,98 @@
 
   .script-field:focus-within {
     border-color: var(--border-light);
+  }
+
+  /* ── Run script list editor ──────────── */
+
+  .run-script-entry {
+    margin-bottom: 0.6rem;
+    padding: 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-sidebar);
+  }
+
+  .run-script-entry.is-default {
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  }
+
+  .run-script-entry-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .default-badge {
+    font-size: 0.6rem;
+    font-weight: 600;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .run-script-name-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 0.2rem 0;
+    outline: none;
+    font-family: inherit;
+  }
+
+  .run-script-name-input:focus {
+    border-bottom-color: var(--accent);
+  }
+
+  .run-script-name-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .run-script-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .run-script-delete:hover {
+    background: var(--bg-hover);
+    color: var(--diff-del);
+  }
+
+  .add-script-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.35rem 0.65rem;
+    background: none;
+    border: 1px dashed var(--border-light);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 0.73rem;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .add-script-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   /* ── Env hint ────────────────────────── */
