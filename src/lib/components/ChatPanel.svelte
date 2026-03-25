@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { messagesByWorkspace, sendingByWorkspace, tokensByWorkspace, type Message, type MessageChunk, type MessageMention } from "$lib/stores/messages.svelte";
+  import { messagesByWorkspace, sendingByWorkspace, tokensByWorkspace, type Message } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, suggestReplies, type FileSearchResult } from "$lib/ipc";
   import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil } from "lucide-svelte";
-  import { renderMarkdown } from "$lib/markdown";
+  import { renderMarkdown, renderUserMarkdown } from "$lib/markdown";
   import { externalLinks, copyCodeBlocks } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
@@ -13,12 +13,10 @@
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import {
     toolIcons,
-    splitTextWithMentions,
     buildVisualBlocks,
     type PastedImage,
     type ChatPanelApi,
     type QueueDisplayItem,
-    type TextSegment,
     type VisualBlock,
     type ToolEntry,
   } from "$lib/chat-utils";
@@ -407,21 +405,20 @@
                     </span>
                   </div>
                 {/if}
-                <div class="user-bubble">
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="user-bubble markdown-body"
+                  use:externalLinks
+                  use:copyCodeBlocks
+                  onclick={(e: MouseEvent) => {
+                    const chip = (e.target as HTMLElement).closest('[data-mention-path]');
+                    if (chip) onMentionClick?.(chip.getAttribute('data-mention-path')!);
+                  }}
+                >
                   {#each block.msg.chunks as chunk, ci (ci)}
                     {#if chunk.type === "text"}
-                      {#if block.msg.mentions && block.msg.mentions.length > 0}
-                        {#each splitTextWithMentions(chunk.content, block.msg.mentions) as seg, si (si)}
-                          {#if seg.kind === "text"}{seg.value}{:else}
-                            <button
-                              class="msg-mention-chip"
-                              onclick={() => onMentionClick?.(seg.mention.path)}
-                            >@{seg.mention.displayName}</button>
-                          {/if}
-                        {/each}
-                      {:else}
-                        {chunk.content}
-                      {/if}
+                      {@html renderUserMarkdown(chunk.content, block.msg.mentions)}
                     {/if}
                   {/each}
                 </div>
@@ -793,11 +790,10 @@
     color: var(--text-bright);
     font-size: 0.85rem;
     line-height: 1.5;
-    white-space: pre-wrap;
     word-break: break-word;
   }
 
-  .msg-mention-chip {
+  .user-bubble :global(.msg-mention-chip) {
     display: inline;
     background: color-mix(in srgb, var(--accent) 15%, transparent);
     color: var(--accent);
@@ -810,7 +806,7 @@
     white-space: nowrap;
   }
 
-  .msg-mention-chip:hover {
+  .user-bubble :global(.msg-mention-chip:hover) {
     background: color-mix(in srgb, var(--accent) 25%, transparent);
   }
 
@@ -847,72 +843,72 @@
     word-break: break-word;
   }
 
-  /* ── Markdown body (rendered assistant text) ─── */
+  /* ── Markdown body (user + assistant messages) ─── */
 
-  .assistant-text.markdown-body :global(h1),
-  .assistant-text.markdown-body :global(h2),
-  .assistant-text.markdown-body :global(h3),
-  .assistant-text.markdown-body :global(h4) {
+  .markdown-body :global(h1),
+  .markdown-body :global(h2),
+  .markdown-body :global(h3),
+  .markdown-body :global(h4) {
     margin: 0.6rem 0 0.3rem;
     color: var(--text-bright);
     font-weight: 600;
     line-height: 1.3;
   }
 
-  .assistant-text.markdown-body :global(h1) { font-size: 1.1rem; }
-  .assistant-text.markdown-body :global(h2) { font-size: 1rem; }
-  .assistant-text.markdown-body :global(h3) { font-size: 0.92rem; }
-  .assistant-text.markdown-body :global(h4) { font-size: 0.85rem; }
+  .markdown-body :global(h1) { font-size: 1.1rem; }
+  .markdown-body :global(h2) { font-size: 1rem; }
+  .markdown-body :global(h3) { font-size: 0.92rem; }
+  .markdown-body :global(h4) { font-size: 0.85rem; }
 
-  .assistant-text.markdown-body :global(p) {
+  .markdown-body :global(p) {
     margin: 0.35rem 0;
     line-height: 1.55;
   }
 
-  .assistant-text.markdown-body :global(> p:first-child) {
+  .markdown-body :global(> p:first-child) {
     margin-top: 0;
   }
 
-  .assistant-text.markdown-body :global(> p:last-child) {
+  .markdown-body :global(> p:last-child) {
     margin-bottom: 0;
   }
 
-  .assistant-text.markdown-body :global(ul),
-  .assistant-text.markdown-body :global(ol) {
+  .markdown-body :global(ul),
+  .markdown-body :global(ol) {
     margin: 0.3rem 0;
     padding-left: 1.5rem;
   }
 
-  .assistant-text.markdown-body :global(li) {
+  .markdown-body :global(li) {
     margin: 0.15rem 0;
     line-height: 1.5;
   }
 
-  .assistant-text.markdown-body :global(li > p) {
+  .markdown-body :global(li > p) {
     margin: 0.1rem 0;
   }
 
-  .assistant-text.markdown-body :global(strong) {
+  .markdown-body :global(strong) {
     color: var(--text-bright);
     font-weight: 600;
   }
 
-  .assistant-text.markdown-body :global(em) {
+  .markdown-body :global(em) {
     font-style: italic;
     color: var(--text-primary);
   }
 
-  .assistant-text.markdown-body :global(a) {
+  .markdown-body :global(a) {
     color: var(--accent);
     text-decoration: none;
   }
 
-  .assistant-text.markdown-body :global(a:hover) {
+  .markdown-body :global(a:hover) {
     text-decoration: underline;
   }
 
   /* Inline code */
-  .assistant-text.markdown-body :global(code) {
+  .markdown-body :global(code) {
     font-family: var(--font-mono);
     font-size: 0.8rem;
     background: var(--bg-active);
@@ -923,7 +919,7 @@
   }
 
   /* Code blocks */
-  .assistant-text.markdown-body :global(pre) {
+  .markdown-body :global(pre) {
     margin: 0.4rem 0;
     padding: 0.6rem 0.75rem;
     background: var(--bg-sidebar);
@@ -933,7 +929,7 @@
     line-height: 1.5;
   }
 
-  .assistant-text.markdown-body :global(pre code) {
+  .markdown-body :global(pre code) {
     background: none;
     border: none;
     border-radius: 0;
@@ -942,7 +938,7 @@
     color: var(--text-primary);
   }
 
-  .assistant-text.markdown-body :global(.copy-code-btn) {
+  .markdown-body :global(.copy-code-btn) {
     position: absolute;
     top: 0.35rem;
     right: 0.35rem;
@@ -961,24 +957,24 @@
     transition: opacity 0.15s, color 0.15s, border-color 0.15s;
   }
 
-  .assistant-text.markdown-body :global(pre:hover .copy-code-btn) {
+  .markdown-body :global(pre:hover .copy-code-btn) {
     opacity: 1;
   }
 
-  .assistant-text.markdown-body :global(.copy-code-btn:hover) {
+  .markdown-body :global(.copy-code-btn:hover) {
     color: var(--text-bright);
     border-color: var(--text-muted);
   }
 
   /* Tables */
-  .assistant-text.markdown-body :global(table) {
+  .markdown-body :global(table) {
     border-collapse: collapse;
     margin: 0.4rem 0;
     font-size: 0.8rem;
     width: 100%;
   }
 
-  .assistant-text.markdown-body :global(th) {
+  .markdown-body :global(th) {
     background: var(--bg-active);
     color: var(--text-bright);
     font-weight: 600;
@@ -987,13 +983,13 @@
     border: 1px solid var(--border);
   }
 
-  .assistant-text.markdown-body :global(td) {
+  .markdown-body :global(td) {
     padding: 0.3rem 0.6rem;
     border: 1px solid var(--border);
   }
 
   /* Blockquotes */
-  .assistant-text.markdown-body :global(blockquote) {
+  .markdown-body :global(blockquote) {
     margin: 0.4rem 0;
     padding: 0.2rem 0.75rem;
     border-left: 3px solid var(--accent);
@@ -1001,12 +997,12 @@
     background: color-mix(in srgb, var(--accent) 4%, transparent);
   }
 
-  .assistant-text.markdown-body :global(blockquote p) {
+  .markdown-body :global(blockquote p) {
     margin: 0.2rem 0;
   }
 
   /* Horizontal rules */
-  .assistant-text.markdown-body :global(hr) {
+  .markdown-body :global(hr) {
     border: none;
     border-top: 1px solid var(--border);
     margin: 0.6rem 0;

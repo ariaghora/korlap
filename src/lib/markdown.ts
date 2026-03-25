@@ -3,6 +3,7 @@ import { markedHighlight } from "marked-highlight";
 import hljs from "highlight.js/lib/core";
 import DOMPurify from "dompurify";
 import "./hljs-korlap.css";
+import type { MessageMention } from "$lib/stores/messages.svelte.js";
 
 // Register common languages individually to keep bundle small
 import javascript from "highlight.js/lib/languages/javascript";
@@ -95,5 +96,46 @@ export function renderMarkdown(raw: string): string {
   const html = marked.parse(raw) as string;
   const sanitized = DOMPurify.sanitize(html);
   renderCache.set(raw, sanitized);
+  return sanitized;
+}
+
+function escapeHtmlAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const userRenderCache = new Map<string, string>();
+
+/**
+ * Render a user message's markdown to sanitized HTML.
+ * Mention references (@filename) are converted to clickable chips
+ * (span.msg-mention-chip with data-mention-path) before markdown parsing.
+ */
+export function renderUserMarkdown(raw: string, mentions?: MessageMention[]): string {
+  let processed = raw;
+
+  if (mentions && mentions.length > 0) {
+    // Sort by displayName length descending to avoid partial matches
+    const sorted = [...mentions].sort((a, b) => b.displayName.length - a.displayName.length);
+    for (const m of sorted) {
+      const escaped = m.displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`@${escaped}`, "g");
+      const chipHtml = `<span class="msg-mention-chip" data-mention-path="${escapeHtmlAttr(m.path)}">@${escapeHtml(m.displayName)}</span>`;
+      processed = processed.replace(regex, chipHtml);
+    }
+  }
+
+  const cached = userRenderCache.get(processed);
+  if (cached !== undefined) return cached;
+
+  const html = marked.parse(processed) as string;
+  const sanitized = DOMPurify.sanitize(html, {
+    ADD_ATTR: ["data-mention-path"],
+  });
+
+  userRenderCache.set(processed, sanitized);
   return sanitized;
 }
