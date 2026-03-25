@@ -67,7 +67,7 @@
     sendingByWorkspace,
     getMessages,
   } from "$lib/stores/messages.svelte";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import WorkspacePanel, { type PanelTab } from "$lib/components/WorkspacePanel.svelte";
@@ -696,6 +696,10 @@
           e.preventDefault();
           appMode = "plan";
           planView = "terminal";
+          tick().then(() => {
+            const textarea = document.querySelector(".plan-terminal-layer.visible .xterm-helper-textarea") as HTMLTextAreaElement;
+            textarea?.focus();
+          });
           break;
         case "4":
           e.preventDefault();
