@@ -5,7 +5,7 @@
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
   import type { Mention } from "$lib/components/MentionInput.svelte";
-  import { ExternalLink, Check, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, Square, CircleX, MessageSquare, Minus, ChevronUp, ChevronDown, Timer, RefreshCcw, Plus, X } from "lucide-svelte";
+  import { ExternalLink, Check, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, Square, CircleX, MessageSquare, Minus, ChevronUp, ChevronDown, Timer, RefreshCcw, Plus, X, Terminal } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import DiffViewer from "$lib/components/DiffViewer.svelte";
@@ -213,6 +213,7 @@
     chatDragOffset = { x: resizeStartDrag.x + posDelta.dx, y: resizeStartDrag.y + posDelta.dy };
   }
 
+  let terminalPaneVisible = $state(false);
   let terminalPaneWidth = $state(400);
   const TERMINAL_PANE_MIN = 200;
   const TERMINAL_PANE_MAX = 800;
@@ -548,6 +549,15 @@
               {/if}
             </button>
           {/each}
+          <div class="pane-tabs-spacer"></div>
+          <button
+            class="terminal-toggle-btn"
+            class:active={terminalPaneVisible}
+            onclick={() => { terminalPaneVisible = !terminalPaneVisible; }}
+            use:tooltip={{ text: terminalPaneVisible ? "Hide terminal" : "Show terminal" }}
+          >
+            <Terminal size={13} />
+          </button>
         </div>
         <div class="content-left-body">
           {#if selectedWs}
@@ -567,10 +577,12 @@
         </div>
       </div>
 
-      <ResizeHandle onResize={handleTerminalResize} />
+      {#if terminalPaneVisible}
+        <ResizeHandle onResize={handleTerminalResize} />
+      {/if}
 
       <!-- Right pane: Terminal -->
-      <div class="terminal-pane" style="width: {terminalPaneWidth}px">
+      <div class="terminal-pane" style="width: {terminalPaneVisible ? terminalPaneWidth + 'px' : '0px'}" style:display={terminalPaneVisible ? undefined : 'none'}>
         <div class="pane-tabs terminal-tabs">
           {#each currentTerminalTabs as tab (tab.id)}
             <button
@@ -853,6 +865,39 @@
   .pane-tab.active {
     color: var(--text-bright);
     background: var(--border);
+  }
+
+  .pane-tabs-spacer {
+    flex: 1;
+  }
+
+  .terminal-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-dim);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .terminal-toggle-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .terminal-toggle-btn.active {
+    color: var(--accent);
+  }
+
+  .terminal-toggle-btn.active:hover {
+    color: var(--accent);
+    background: var(--bg-hover);
   }
 
   /* ── Run script button ──────────────────────────── */
