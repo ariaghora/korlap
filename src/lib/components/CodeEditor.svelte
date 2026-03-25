@@ -22,6 +22,7 @@
   import { php } from "@codemirror/lang-php";
   import { go } from "@codemirror/lang-go";
   import { xml } from "@codemirror/lang-xml";
+  import { yaml } from "@codemirror/lang-yaml";
 
   interface Props {
     content: string;
@@ -323,6 +324,8 @@
         return [php()];
       case "xml": case "svg": case "xsl": case "xslt":
         return [xml()];
+      case "yml": case "yaml":
+        return [yaml()];
       default:
         return [];
     }
