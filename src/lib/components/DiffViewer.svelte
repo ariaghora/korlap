@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getChangedFiles, getDiff, type ChangedFile } from "$lib/ipc";
   import { MessageSquare, FileCode, SquareArrowOutUpRight } from "lucide-svelte";
+  import { tooltip } from "$lib/actions";
   import ResizeHandle from "./ResizeHandle.svelte";
 
   interface Props {
@@ -256,7 +257,7 @@
             <span class="stat-add">+{totalAdditions}</span>
             <span class="stat-del">−{totalDeletions}</span>
           </span>
-          <button class="refresh-btn-sm" onclick={loadFiles} title="Refresh">↻</button>
+          <button class="refresh-btn-sm" onclick={loadFiles} use:tooltip={{ text: "Refresh" }}>↻</button>
         </div>
         <div class="file-list">
           {#each files as file}
@@ -280,7 +281,7 @@
               {#if onOpenFile}
                 <button
                   class="open-file-btn"
-                  title="Open in Files tab"
+                  use:tooltip={{ text: "Open in Files tab" }}
                   onclick={(e: MouseEvent) => { e.stopPropagation(); onOpenFile(file.path); }}
                 >
                   <FileCode size={13} />
@@ -312,7 +313,7 @@
               {#if onGoToLine && goToLineNo !== undefined && line.type !== "hunk"}
                 <button
                   class="goto-line-btn"
-                  title="Open at line {goToLineNo}"
+                  use:tooltip={{ text: `Open at line ${goToLineNo}` }}
                   onclick={(e: MouseEvent) => { e.stopPropagation(); onGoToLine(selectedFile!, goToLineNo); }}
                 >
                   <SquareArrowOutUpRight size={12} />

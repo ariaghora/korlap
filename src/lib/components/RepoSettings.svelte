@@ -7,6 +7,7 @@
   } from "$lib/ipc";
   import { onMount } from "svelte";
   import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown, Sun, Moon, Monitor } from "lucide-svelte";
+  import { tooltip } from "$lib/actions";
   import { themeList, getPreviewColors, type ThemeId } from "$lib/themes";
   import { getThemeId, setTheme, getColorMode, setColorMode, type ColorMode } from "$lib/stores/theme.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -546,7 +547,7 @@
               <button
                 class="run-script-delete"
                 onclick={() => removeRunScript(i)}
-                title="Remove script"
+                use:tooltip={{ text: "Remove script" }}
               >
                 <Trash2 size={13} />
               </button>
@@ -757,7 +758,7 @@
               class="kb-action-btn kb-update-btn"
               onclick={handleUpdate}
               disabled={!contextMeta.built_at_commit}
-              title={contextMeta.built_at_commit ? "Incrementally update from changes since last build" : "No baseline commit — run a full build first"}
+              use:tooltip={{ text: contextMeta.built_at_commit ? "Incrementally update from changes since last build" : "No baseline commit — run a full build first" }}
             >Update</button>
             <button class="kb-action-btn" onclick={handleBuild}>Rebuild</button>
           </div>
@@ -795,10 +796,10 @@
                     <span class="kb-entry-id">{entry.id}</span>
                     <span class="kb-entry-title">{entry.title}</span>
                     <div class="kb-entry-actions">
-                      <button class="kb-icon-btn" title="Edit" onclick={() => startEdit("invariants.md", idx, entry.fullText)}>
+                      <button class="kb-icon-btn" use:tooltip={{ text: "Edit" }} onclick={() => startEdit("invariants.md", idx, entry.fullText)}>
                         <Pencil size={12} />
                       </button>
-                      <button class="kb-icon-btn kb-icon-danger" title="Remove" onclick={() => removeEntry("invariants.md", idx)}>
+                      <button class="kb-icon-btn kb-icon-danger" use:tooltip={{ text: "Remove" }} onclick={() => removeEntry("invariants.md", idx)}>
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -826,10 +827,10 @@
                   <div class="kb-entry-header">
                     <span class="kb-entry-section-title">{entry.title}</span>
                     <div class="kb-entry-actions">
-                      <button class="kb-icon-btn" title="Edit" onclick={() => startEdit("facts.md", idx, entry.fullText)}>
+                      <button class="kb-icon-btn" use:tooltip={{ text: "Edit" }} onclick={() => startEdit("facts.md", idx, entry.fullText)}>
                         <Pencil size={12} />
                       </button>
-                      <button class="kb-icon-btn kb-icon-danger" title="Remove" onclick={() => removeEntry("facts.md", idx)}>
+                      <button class="kb-icon-btn kb-icon-danger" use:tooltip={{ text: "Remove" }} onclick={() => removeEntry("facts.md", idx)}>
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -858,10 +859,10 @@
                   <div class="kb-entry-header">
                     <span class="kb-entry-section-title">{entry.title}</span>
                     <div class="kb-entry-actions">
-                      <button class="kb-icon-btn" title="Edit" onclick={() => startEdit("context.md", idx, entry.fullText)}>
+                      <button class="kb-icon-btn" use:tooltip={{ text: "Edit" }} onclick={() => startEdit("context.md", idx, entry.fullText)}>
                         <Pencil size={12} />
                       </button>
-                      <button class="kb-icon-btn kb-icon-danger" title="Remove" onclick={() => removeEntry("context.md", idx)}>
+                      <button class="kb-icon-btn kb-icon-danger" use:tooltip={{ text: "Remove" }} onclick={() => removeEntry("context.md", idx)}>
                         <Trash2 size={12} />
                       </button>
                     </div>

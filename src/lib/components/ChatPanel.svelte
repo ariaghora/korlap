@@ -3,7 +3,7 @@
   import { searchWorkspaceFiles, suggestReplies, type FileSearchResult } from "$lib/ipc";
   import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil } from "lucide-svelte";
   import { renderMarkdown, renderUserMarkdown } from "$lib/markdown";
-  import { externalLinks, copyCodeBlocks } from "$lib/actions";
+  import { externalLinks, copyCodeBlocks, tooltip } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
   import VirtualScroller from "./VirtualScroller.svelte";
@@ -615,7 +615,7 @@
               type="button"
               class="queue-remove"
               onclick={() => onRemoveFromQueue?.(item.id)}
-              title="Remove from queue"
+              use:tooltip={{ text: "Remove from queue" }}
             >&times;</button>
           </div>
         {/each}
@@ -662,7 +662,7 @@
           class="mode-pill"
           class:active={thinkingMode}
           onclick={() => onThinkingModeChange?.(!thinkingMode)}
-          title="Extended thinking: deeper reasoning before responding"
+          use:tooltip={{ text: "Extended thinking" }}
         >
           <Lightbulb size={13} strokeWidth={2} />
           Thinking
@@ -672,20 +672,20 @@
           class="mode-pill"
           class:active={planMode}
           onclick={() => onPlanModeChange?.(!planMode)}
-          title="Plan mode: analyze and plan without making changes"
+          use:tooltip={{ text: "Plan mode" }}
         >
           <BookOpen size={13} strokeWidth={2} />
           Plan
         </button>
       </div>
       {#if sending}
-        <button type="button" class="stop-btn" onclick={onStop} title="Stop">
+        <button type="button" class="stop-btn" onclick={onStop} use:tooltip={{ text: "Stop", shortcut: "Esc" }}>
           <Square size={14} strokeWidth={2.5} />
         </button>
       {:else}
         <button type="button" class="send-btn" disabled={creating}
           onclick={() => mentionInputApi?.submit()}
-          title="Send"
+          use:tooltip={{ text: "Send", shortcut: "⏎" }}
         >
           <ArrowUp size={16} strokeWidth={2.5} />
         </button>

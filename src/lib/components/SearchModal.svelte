@@ -1,6 +1,7 @@
 <script lang="ts">
   import { grepWorkspace, grepRepo, readFile, readRepoFile, type GrepMatch } from "$lib/ipc";
   import { Search } from "lucide-svelte";
+  import { tooltip } from "$lib/actions";
 
   interface Props {
     workspaceId?: string;
@@ -192,13 +193,13 @@
         class="regex-toggle"
         class:active={isRegex}
         onclick={() => { isRegex = !isRegex; }}
-        title={isRegex ? "Regex mode (click for literal)" : "Literal mode (click for regex)"}
+        use:tooltip={{ text: isRegex ? "Regex mode (click for literal)" : "Literal mode (click for regex)" }}
       >.*</button>
       <button
         class="regex-toggle"
         class:active={caseSensitive}
         onclick={() => { caseSensitive = !caseSensitive; }}
-        title={caseSensitive ? "Case sensitive (click for smart case)" : "Smart case (click for case sensitive)"}
+        use:tooltip={{ text: caseSensitive ? "Case sensitive (click for smart case)" : "Smart case (click for case sensitive)" }}
       >Aa</button>
     </div>
 

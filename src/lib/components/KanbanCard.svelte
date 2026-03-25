@@ -2,6 +2,7 @@
   import type { WorkspaceInfo, PrStatus } from "$lib/ipc";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { Play, X, Trash2, Pencil, Lightbulb, BookOpen, CircleCheck, Circle } from "lucide-svelte";
+  import { tooltip } from "$lib/actions";
 
   interface Props {
     type: "todo" | "workspace";
@@ -96,7 +97,7 @@
       </div>
     {/if}
     <div class="card-actions">
-      <button class="ready-btn" class:checked={ready} onclick={onToggleReady} title={ready ? "Unmark as ready for autopilot" : "Mark as ready for autopilot"}>
+      <button class="ready-btn" class:checked={ready} onclick={onToggleReady} use:tooltip={{ text: ready ? "Unmark ready" : "Mark ready" }}>
         {#if ready}
           <CircleCheck size={13} />
         {:else}
@@ -104,15 +105,15 @@
         {/if}
         Ready
       </button>
-      <button class="spawn-btn" onclick={onAction} title="Start agent">
+      <button class="spawn-btn" onclick={onAction} use:tooltip={{ text: "Start agent" }}>
         <Play size={11} /> Start
       </button>
       {#if onEdit}
-        <button class="edit-btn" onclick={onEdit} title="Edit">
+        <button class="edit-btn" onclick={onEdit} use:tooltip={{ text: "Edit" }}>
           <Pencil size={11} />
         </button>
       {/if}
-      <button class="remove-btn" onclick={onRemove} title="Remove">
+      <button class="remove-btn" onclick={onRemove} use:tooltip={{ text: "Remove" }}>
         <X size={11} />
       </button>
     </div>
@@ -133,7 +134,7 @@
         <span class="card-elapsed">{elapsed}</span>
       {/if}
       {#if onRemove}
-        <button class="ws-remove-btn" onclick={(e) => { e.stopPropagation(); onRemove(); }} title="Remove workspace">
+        <button class="ws-remove-btn" onclick={(e) => { e.stopPropagation(); onRemove(); }} use:tooltip={{ text: "Remove workspace" }}>
           <Trash2 size={11} />
         </button>
       {/if}
