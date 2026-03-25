@@ -745,6 +745,8 @@
 
     activeRepo = repo;
     selectedWsId = null;
+    appMode = "plan";
+    showSettings = false;
 
     // Restore autopilot state for the repo we're entering
     restoreAutopilotForRepo(repo.id);
