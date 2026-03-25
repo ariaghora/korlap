@@ -16,11 +16,15 @@ pub struct ModelOption {
 
 #[tauri::command]
 pub fn list_models() -> Result<Vec<ModelOption>, String> {
+    // The claude CLI accepts short aliases (e.g. "sonnet", "opus") that stay
+    // stable across version bumps — no date-stamped IDs needed.
+    // There is no `claude --list-models` command, so a static list is the
+    // best we can do. Update this when Anthropic ships new model families.
     Ok(vec![
         ModelOption { value: String::new(), label: "Default".into() },
-        ModelOption { value: "claude-sonnet-4-20250514".into(), label: "Sonnet 4".into() },
-        ModelOption { value: "claude-opus-4-20250514".into(), label: "Opus 4".into() },
-        ModelOption { value: "claude-haiku-4-5-20251001".into(), label: "Haiku 4.5".into() },
+        ModelOption { value: "sonnet".into(), label: "Sonnet".into() },
+        ModelOption { value: "opus".into(), label: "Opus".into() },
+        ModelOption { value: "haiku".into(), label: "Haiku".into() },
     ])
 }
 
