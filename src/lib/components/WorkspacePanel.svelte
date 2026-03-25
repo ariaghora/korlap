@@ -393,7 +393,7 @@
               <button
                 class="run-script-btn stop"
                 onclick={handleStopScript}
-                use:tooltip={{ text: "Stop script", shortcut: "⌘R" }}
+                use:tooltip={{ text: "Stop script", shortcut: "⌘⇧R" }}
               >
                 <Square size={10} />
                 Stop {#if selectedWs}<span class="run-branch">{selectedWs.branch}</span>{/if}
@@ -404,7 +404,7 @@
                 class:success={currentScriptStatus === "success"}
                 class:error={currentScriptStatus === "error"}
                 onclick={handleRunDefault}
-                use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}`, shortcut: "⌘R" }}
+                use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}`, shortcut: "⌘⇧R" }}
               >
                 {#if currentScriptStatus === "success"}
                   <Check size={12} />
@@ -485,7 +485,7 @@
             class="action-badge update-branch"
             onclick={onUpdateBranch}
             disabled={isBusy || updatingBranch}
-            use:tooltip={{ text: `Merge ${baseBehindBy} new commit${baseBehindBy === 1 ? '' : 's'} from base branch` }}
+            use:tooltip={{ text: `Merge ${baseBehindBy} new commit${baseBehindBy === 1 ? '' : 's'} from base branch`, shortcut: "⌘U" }}
           >
             {#if updatingBranch}<span class="btn-spinner"></span>{:else}<ArrowDown size={11} />{/if}
             Update{#if !updatingBranch}&nbsp;<span class="update-count">{baseBehindBy}</span>{/if}
@@ -496,31 +496,31 @@
             <button class="pr-link-btn" onclick={() => openUrl(prStatus!.url)} use:tooltip={{ text: `Open PR #${prStatus.number} in browser` }}>
               <ExternalLink size={12} />
             </button>
-            <button class="action-badge review" onclick={onReview} disabled={isBusy}>
+            <button class="action-badge review" onclick={onReview} disabled={isBusy} use:tooltip={{ text: "Review changes", shortcut: "⌘R" }}>
               <Eye size={11} /> Review
             </button>
             {#if prStatus.mergeable === "conflicting"}
-              <button class="action-badge conflicts" onclick={onPrAction} disabled={isBusy}><AlertTriangle size={11} /> Resolve Conflicts</button>
+              <button class="action-badge conflicts" onclick={onPrAction} disabled={isBusy} use:tooltip={{ text: "Resolve merge conflicts", shortcut: "⌘M" }}><AlertTriangle size={11} /> Resolve Conflicts</button>
             {:else if prStatus.checks === "failing"}
-              <button class="action-badge checks-fail" onclick={onPrAction} disabled={isBusy}><Wrench size={11} /> Fix issues</button>
+              <button class="action-badge checks-fail" onclick={onPrAction} disabled={isBusy} use:tooltip={{ text: "Fix failing checks", shortcut: "⌘M" }}><Wrench size={11} /> Fix issues</button>
             {:else if prStatus.checks === "pending"}
               <span class="status-label checks-pending"><span class="btn-spinner btn-spinner-sm"></span> Checks pending</span>
             {:else if (prStatus.ahead_by ?? 0) > 0}
-              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<ArrowUp size={11} />{/if} Push</button>
+              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy} use:tooltip={{ text: "Push commits to remote", shortcut: "⌘M" }}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<ArrowUp size={11} />{/if} Push</button>
             {:else if wsChanges && (wsChanges.additions !== prStatus.additions || wsChanges.deletions !== prStatus.deletions)}
-              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<ArrowUp size={11} />{/if} Commit & push</button>
+              <button class="action-badge push-needed" onclick={onPrAction} disabled={isBusy} use:tooltip={{ text: "Commit and push changes", shortcut: "⌘M" }}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<ArrowUp size={11} />{/if} Commit & push</button>
             {:else}
-              <button class="action-badge mergeable" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<GitMerge size={11} />{/if} Merge</button>
+              <button class="action-badge mergeable" onclick={onPrAction} disabled={isBusy} use:tooltip={{ text: "Merge pull request", shortcut: "⌘M" }}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<GitMerge size={11} />{/if} Merge</button>
             {/if}
           </div>
         {:else if prStatus?.state === "merged"}
           <span class="status-label merged"><Check size={10} class="status-icon" /> Done</span>
         {:else if wsChanges && (wsChanges.additions > 0 || wsChanges.deletions > 0)}
           <div class="action-group">
-            <button class="action-badge review" onclick={onReview} disabled={isBusy}>
+            <button class="action-badge review" onclick={onReview} disabled={isBusy} use:tooltip={{ text: "Review changes", shortcut: "⌘R" }}>
               <Eye size={11} /> Review
             </button>
-            <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
+            <button class="action-badge create-pr" onclick={onPrAction} disabled={isBusy} use:tooltip={{ text: "Push and create pull request", shortcut: "⌘M" }}>{#if operationInProgress}<span class="btn-spinner"></span>{:else}<GitPullRequestCreate size={11} />{/if} Push & create PR</button>
           </div>
         {/if}
       </div>

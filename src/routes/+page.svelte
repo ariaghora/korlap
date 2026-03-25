@@ -708,13 +708,28 @@
           if (autopilotEnabled) onAutopilotActivated();
           break;
         case "r":
-          if (!inInput) {
+          if (e.shiftKey && !inInput) {
             e.preventDefault();
             if (appMode === "work") {
               wsPanelRef?.triggerRun();
             } else {
               titleBarRef?.triggerRun();
             }
+          } else if (!inInput && selectedWsId && appMode === "work") {
+            e.preventDefault();
+            handleReview();
+          }
+          break;
+        case "m":
+          if (!inInput && selectedWsId && appMode === "work") {
+            e.preventDefault();
+            handlePrAction();
+          }
+          break;
+        case "u":
+          if (!inInput && selectedWsId && appMode === "work") {
+            e.preventDefault();
+            handleUpdateBranch();
           }
           break;
       }

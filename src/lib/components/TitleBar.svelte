@@ -349,7 +349,7 @@
             <button
               class="repo-run-btn stop"
               onclick={handleStopRepoScript}
-              use:tooltip={{ text: "Stop script", shortcut: "⌘R" }}
+              use:tooltip={{ text: "Stop script", shortcut: "⌘⇧R" }}
             >
               <Square size={10} />
               <span class="run-label">Stop</span>
@@ -360,7 +360,7 @@
               class:success={repoScriptStatus === "success"}
               class:error={repoScriptStatus === "error"}
               onclick={runDefaultRepoScript}
-              use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}`, shortcut: "⌘R" }}
+              use:tooltip={{ text: `Run: ${repoSettings?.run_scripts?.[0]?.name || repoSettings?.run_scripts?.[0]?.command || "Script"}`, shortcut: "⌘⇧R" }}
             >
               {#if repoScriptStatus === "success"}
                 <Check size={12} />
