@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getChangedFiles, getDiff, type ChangedFile } from "$lib/ipc";
-  import { MessageSquare, FileCode } from "lucide-svelte";
+  import { MessageSquare, FileCode, SquareArrowOutUpRight } from "lucide-svelte";
   import ResizeHandle from "./ResizeHandle.svelte";
 
   interface Props {
@@ -8,9 +8,10 @@
     refreshTrigger?: number;
     onQuote?: (text: string) => void;
     onOpenFile?: (path: string) => void;
+    onGoToLine?: (path: string, line: number) => void;
   }
 
-  let { workspaceId, refreshTrigger = 0, onQuote, onOpenFile }: Props = $props();
+  let { workspaceId, refreshTrigger = 0, onQuote, onOpenFile, onGoToLine }: Props = $props();
 
   let files = $state<ChangedFile[]>([]);
   let selectedFile = $state<string | null>(null);
@@ -298,6 +299,7 @@
         {#if selectedFile}
           {#each visibleLines as { line, idx: _origIdx }, visIdx}
             {@const selected = selMin !== null && selMax !== null && visIdx >= selMin && visIdx <= selMax}
+            {@const goToLineNo = line.newNo ?? line.oldNo}
             <div class="diff-line {line.type}" class:selected>
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -307,6 +309,15 @@
               <span class="line-no new" onmousedown={(e: MouseEvent) => handleLineMousedown(visIdx, e)} onclick={(e: MouseEvent) => { e.stopPropagation(); handleLineClick(visIdx, e); }}>{line.newNo ?? ""}</span>
               <span class="diff-gutter">{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</span>
               <span class="diff-text">{line.type === "hunk" ? line.text : line.text.slice(1) || " "}</span>
+              {#if onGoToLine && goToLineNo !== undefined && line.type !== "hunk"}
+                <button
+                  class="goto-line-btn"
+                  title="Open at line {goToLineNo}"
+                  onclick={(e: MouseEvent) => { e.stopPropagation(); onGoToLine(selectedFile!, goToLineNo); }}
+                >
+                  <SquareArrowOutUpRight size={12} />
+                </button>
+              {/if}
             </div>
           {/each}
 
@@ -628,5 +639,29 @@
   .quote-btn:hover {
     background: var(--bg-hover);
     border-color: var(--accent);
+  }
+
+  /* ── Go-to-line button ──────────────────── */
+
+  .goto-line-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0 0.3rem;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    opacity: 0.6;
+  }
+
+  .diff-line:hover .goto-line-btn {
+    display: inline-flex;
+  }
+
+  .goto-line-btn:hover {
+    color: var(--accent);
+    opacity: 1;
   }
 </style>
