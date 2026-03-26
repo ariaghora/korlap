@@ -376,6 +376,25 @@ fn do_initialize(
     // Send initialized notification
     send_notification(handle_arc, "initialized", serde_json::json!({}))?;
 
+    // Tell the server to only analyze open files, not crawl the entire
+    // workspace. Without this, pyright blocks ALL requests (hover, definition,
+    // etc.) while it crawls and analyzes every file in the project — which
+    // can take minutes for large codebases. With openFilesOnly, the server
+    // responds immediately for files opened via didOpen.
+    send_notification(
+        handle_arc,
+        "workspace/didChangeConfiguration",
+        serde_json::json!({
+            "settings": {
+                "python": {
+                    "analysis": {
+                        "diagnosticMode": "openFilesOnly"
+                    }
+                }
+            }
+        }),
+    )?;
+
     // NOTE: do NOT wait_for_ready here. start_server must return fast.
     // Callers that need readiness (MCP path, lsp_start_server) call
     // wait_for_ready separately, outside any mutex.
