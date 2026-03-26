@@ -46,6 +46,7 @@
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
     onSendImmediate: (prompt: string) => void;
     onStop: () => void;
+    onSendNow: (wsId: string, id: string) => void;
     onRemoveFromQueue: (wsId: string, id: string) => void;
     onPlanModeChange: (wsId: string, enabled: boolean) => void;
     onThinkingModeChange: (wsId: string, enabled: boolean) => void;
@@ -95,6 +96,7 @@
     onSend,
     onSendImmediate,
     onStop,
+    onSendNow,
     onRemoveFromQueue,
     onPlanModeChange,
     onThinkingModeChange,
@@ -712,6 +714,7 @@
                   onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
                   onSendImmediate={(prompt) => onSendImmediate(prompt)}
                   {onStop}
+                  onSendNow={(id) => { if (ws.id) onSendNow(ws.id, id); }}
                   onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
                   onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
                   onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}
@@ -755,6 +758,7 @@
               onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
               onSendImmediate={(prompt) => onSendImmediate(prompt)}
               {onStop}
+              onSendNow={(id) => { if (ws.id) onSendNow(ws.id, id); }}
               onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
               onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
               onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}

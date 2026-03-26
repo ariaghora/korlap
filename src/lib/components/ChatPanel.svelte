@@ -35,6 +35,7 @@
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
     onSendImmediate?: (prompt: string) => void;
     onStop: () => void;
+    onSendNow?: (id: string) => void;
     onRemoveFromQueue?: (id: string) => void;
     onPlanModeChange?: (enabled: boolean) => void;
     onThinkingModeChange?: (enabled: boolean) => void;
@@ -44,7 +45,7 @@
     onReady?: (api: ChatPanelApi) => void;
   }
 
-  let { workspaceId, creating = false, planMode = false, thinkingMode = false, model = "", queue = [], contextWarning = false, onSend, onSendImmediate, onStop, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onModelChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
+  let { workspaceId, creating = false, planMode = false, thinkingMode = false, model = "", queue = [], contextWarning = false, onSend, onSendImmediate, onStop, onSendNow, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onModelChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
 
   let messagesMap = $derived(messagesByWorkspace.get(workspaceId));
   let messages = $derived(messagesMap ? [...messagesMap.values()] : []);
@@ -630,6 +631,14 @@
                 <span class="queue-meta">{item.mentionCount} file{item.mentionCount > 1 ? 's' : ''}</span>
               {/if}
             </span>
+            {#if sending}
+              <button
+                type="button"
+                class="queue-send-now"
+                onclick={() => onSendNow?.(item.id)}
+                use:tooltip={{ text: "Stop agent and send now" }}
+              >Send now</button>
+            {/if}
             <button
               type="button"
               class="queue-remove"
@@ -1381,6 +1390,25 @@
     font-size: 0.65rem;
     color: var(--text-dim);
     flex-shrink: 0;
+  }
+
+  .queue-send-now {
+    background: none;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0.1rem 0.4rem;
+    flex-shrink: 0;
+    font-size: 0.65rem;
+    font-weight: 500;
+    border-radius: 4px;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .queue-send-now:hover {
+    background: var(--accent);
+    color: var(--bg-card);
   }
 
   .queue-remove {

@@ -1602,6 +1602,28 @@
     queueByWorkspace.set(wsId, queue.filter(q => q.id !== messageId));
   }
 
+  /** Stop the current agent and immediately send a queued message. */
+  async function handleSendQueuedNow(wsId: string, messageId: string) {
+    const queue = queueByWorkspace.get(wsId);
+    if (!queue) return;
+    const idx = queue.findIndex(q => q.id === messageId);
+    if (idx < 0) return;
+    const msg = queue[idx];
+    // Remove from queue
+    queue.splice(idx, 1);
+    queueByWorkspace.set(wsId, [...queue]);
+    // Stop current agent
+    try {
+      await stopAgent(wsId);
+      setSending(wsId, false);
+    } catch (e) {
+      addToast(String(e));
+      return;
+    }
+    // Send the queued message directly
+    sendDirect(wsId, msg);
+  }
+
   /** Route a QueuedMessage: send directly, or enqueue if busy. */
   function routeMessage(wsId: string, msg: QueuedMessage) {
     if (sendingByWorkspace.get(wsId)) {
@@ -2373,6 +2395,7 @@
             onSend={(prompt, images, mentions, planMode) => handleSend(prompt, images, mentions, planMode)}
             onSendImmediate={(prompt) => handleSendImmediate(prompt)}
             onStop={handleStop}
+            onSendNow={(wsId, id) => handleSendQueuedNow(wsId, id)}
             onRemoveFromQueue={(wsId, id) => removeFromQueue(wsId, id)}
             onPlanModeChange={(wsId, enabled) => planModeByWorkspace.set(wsId, enabled)}
             onThinkingModeChange={(wsId, enabled) => thinkingModeByWorkspace.set(wsId, enabled)}
