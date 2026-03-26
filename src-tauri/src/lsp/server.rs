@@ -246,13 +246,14 @@ pub fn start_server(
                 venv_path.display()
             );
             cmd.env("VIRTUAL_ENV", &venv_path);
-            // Prepend venv bin to PATH so pyright finds the right Python
+            // Prepend venv bin to PATH so pyright finds the right Python.
+            // IMPORTANT: use the shell env's PATH (set by inject_shell_env above),
+            // NOT std::env::var("PATH") which is the Tauri app's minimal PATH
+            // (missing /opt/homebrew/bin, etc. when launched from Finder/Dock).
             let venv_bin = venv_path.join("bin");
-            if let Some(existing_path) = std::env::var("PATH").ok() {
-                cmd.env("PATH", format!("{}:{}", venv_bin.display(), existing_path));
-            } else {
-                cmd.env("PATH", venv_bin);
-            }
+            let shell_env = crate::commands::helpers::get_shell_env();
+            let base_path = shell_env.path.as_deref().unwrap_or("/usr/bin:/bin");
+            cmd.env("PATH", format!("{}:{}", venv_bin.display(), base_path));
             break;
         }
     }
