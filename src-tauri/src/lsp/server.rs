@@ -157,7 +157,7 @@ impl LspServerPool {
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
                     let _ = send_notification_inner(
-                        &mut handle,
+                        &handle.stdin,
                         "workspace/didChangeWorkspaceFolders",
                         serde_json::json!({
                             "event": {
@@ -288,7 +288,7 @@ pub fn start_server(
 
     let handle = LspServerHandle {
         child,
-        stdin: std::io::BufWriter::new(stdin),
+        stdin: Arc::new(Mutex::new(std::io::BufWriter::new(stdin))),
         next_id: 1,
         pending: HashMap::new(),
         workspace_folders: vec![repo_root.to_path_buf()],
@@ -305,13 +305,13 @@ pub fn start_server(
         reader_loop(stdout, reader_handle);
     });
 
-    // Drain stderr (log, don't accumulate)
+    // Drain stderr — log at info level so LSP server errors are visible
     let cmd_name = config.command.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines() {
             match line {
-                Ok(l) => tracing::debug!("[{}] {}", cmd_name, l),
+                Ok(l) => tracing::info!("[{}] {}", cmd_name, l),
                 Err(_) => break,
             }
         }
@@ -440,14 +440,16 @@ fn shutdown_server(handle: &mut LspServerHandle) -> Result<(), LspError> {
         "method": "shutdown",
         "params": null
     });
-    let _ = write_message(&mut handle.stdin, &msg);
+    if let Ok(mut writer) = handle.stdin.lock() {
+        let _ = write_message(&mut writer, &msg);
 
-    // Exit notification
-    let exit_msg = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "exit"
-    });
-    let _ = write_message(&mut handle.stdin, &exit_msg);
+        // Exit notification
+        let exit_msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "exit"
+        });
+        let _ = write_message(&mut writer, &exit_msg);
+    }
 
     // Brief grace period, then force kill
     std::thread::sleep(Duration::from_millis(500));
@@ -504,15 +506,23 @@ fn reader_loop(stdout: std::process::ChildStdout, handle: Arc<Mutex<LspServerHan
             if msg.get("method").is_some() {
                 // Server-initiated request (e.g. window/workDoneProgress/create,
                 // client/registerCapability). We MUST respond or the server deadlocks.
-                let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
-                tracing::debug!("LSP: responding to server request: {} (id={})", method, id);
-                if let Ok(mut h) = handle.lock() {
-                    let response = serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "result": null
-                    });
-                    let _ = write_message(&mut h.stdin, &response);
+                // Use the separate stdin mutex — never hold the handle lock during write.
+                let method_name = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
+                tracing::debug!("LSP: responding to server request: {} (id={})", method_name, id);
+                let stdin = if let Ok(h) = handle.lock() {
+                    Some(Arc::clone(&h.stdin))
+                } else {
+                    None
+                };
+                if let Some(stdin) = stdin {
+                    if let Ok(mut writer) = stdin.lock() {
+                        let response = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": null
+                        });
+                        let _ = write_message(&mut writer, &response);
+                    }
                 }
                 continue;
             }
@@ -576,15 +586,16 @@ fn handle_server_notification(
 // ── Request/notification transport ──────────────────────────────────
 
 /// Send a JSON-RPC request and wait for the response.
-/// Holds the server handle Mutex only briefly to write the message,
-/// then blocks on mpsc::Receiver without holding any locks.
+/// The handle mutex is held only to assign an ID and register the pending
+/// channel. The actual write to stdin uses its own separate mutex, so the
+/// reader thread is never blocked by a slow write (prevents pipe deadlock).
 pub fn send_request(
     handle_arc: &Arc<Mutex<LspServerHandle>>,
     method: &str,
     params: serde_json::Value,
     timeout: Duration,
 ) -> LspResult {
-    let receiver = {
+    let (receiver, message, stdin) = {
         let mut handle = handle_arc
             .lock()
             .map_err(|e| LspError::Transport(e.to_string()))?;
@@ -599,14 +610,20 @@ pub fn send_request(
             "params": params,
         });
 
-        write_message(&mut handle.stdin, &message)?;
-
         let (tx, rx) = std::sync::mpsc::channel();
         handle.pending.insert(id, tx);
 
-        rx
+        (rx, message, Arc::clone(&handle.stdin))
         // handle Mutex dropped here
     };
+
+    // Write with only the stdin lock — never holds both locks at once
+    {
+        let mut writer = stdin
+            .lock()
+            .map_err(|e| LspError::Transport(e.to_string()))?;
+        write_message(&mut writer, &message)?;
+    }
 
     // Wait without holding any lock
     receiver
@@ -618,19 +635,34 @@ pub fn send_request(
 }
 
 /// Send a JSON-RPC notification (no response expected).
+/// Only holds the handle mutex to clone the stdin Arc, then writes
+/// with only the stdin lock held.
 pub fn send_notification(
     handle_arc: &Arc<Mutex<LspServerHandle>>,
     method: &str,
     params: serde_json::Value,
 ) -> Result<(), LspError> {
-    let mut handle = handle_arc
+    let stdin = {
+        let handle = handle_arc
+            .lock()
+            .map_err(|e| LspError::Transport(e.to_string()))?;
+        Arc::clone(&handle.stdin)
+    };
+    let message = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+    });
+    let mut writer = stdin
         .lock()
         .map_err(|e| LspError::Transport(e.to_string()))?;
-    send_notification_inner(&mut handle, method, params)
+    write_message(&mut writer, &message)
 }
 
+/// Send a notification while already holding the handle lock.
+/// Used only during shutdown where we already have &mut handle.
 fn send_notification_inner(
-    handle: &mut LspServerHandle,
+    stdin: &Arc<Mutex<std::io::BufWriter<std::process::ChildStdin>>>,
     method: &str,
     params: serde_json::Value,
 ) -> Result<(), LspError> {
@@ -639,7 +671,10 @@ fn send_notification_inner(
         "method": method,
         "params": params,
     });
-    write_message(&mut handle.stdin, &message)
+    let mut writer = stdin
+        .lock()
+        .map_err(|e| LspError::Transport(e.to_string()))?;
+    write_message(&mut writer, &message)
 }
 
 /// Write a Content-Length-framed JSON-RPC message.

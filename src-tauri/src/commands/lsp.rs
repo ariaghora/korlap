@@ -98,15 +98,22 @@ fn do_hover(
     let Some((handle, _wt, abs_path, lang_id)) =
         get_running_server(&state, &lsp_mgr, &workspace_id, &file_path)?
     else {
+        tracing::debug!("LSP hover: no running server for {}", file_path);
         return Ok(None);
     };
 
     let result = lsp::hover(&handle, &abs_path, line.saturating_sub(1), character.saturating_sub(1), &lang_id)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            tracing::warn!("LSP hover error for {}:{}:{} — {}", file_path, line, character, e);
+            e.to_string()
+        })?;
 
     match lsp::extract_hover(&result) {
         Some((kind, text)) => Ok(Some(LspHoverResult { kind, text })),
-        None => Ok(None),
+        None => {
+            tracing::debug!("LSP hover: null result for {}:{}:{} (lang={})", file_path, line, character, lang_id);
+            Ok(None)
+        }
     }
 }
 
