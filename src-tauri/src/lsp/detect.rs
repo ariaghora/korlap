@@ -52,6 +52,47 @@ pub fn detect_servers<'a>(
         .collect()
 }
 
+/// Detect the project root for a single server config.
+/// Returns the directory containing the detect_file (may be repo_root or a subdirectory).
+pub fn detect_project_root(repo_root: &Path, config: &LspServerConfig) -> Option<PathBuf> {
+    // If project_roots is set, only check those directories
+    if !config.project_roots.is_empty() {
+        for root in &config.project_roots {
+            let dir = repo_root.join(root);
+            for f in &config.detect_files {
+                if dir.join(f).exists() {
+                    return Some(dir);
+                }
+            }
+        }
+        return None;
+    }
+
+    // Auto-detect: check root first
+    for f in &config.detect_files {
+        if repo_root.join(f).exists() {
+            return Some(repo_root.to_path_buf());
+        }
+    }
+
+    // Then one level of subdirectories
+    if let Ok(entries) = std::fs::read_dir(repo_root) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            for f in &config.detect_files {
+                if dir.join(f).exists() {
+                    return Some(dir);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Check whether the LSP binary for a config exists on PATH.
 /// Uses the shell env from helpers.rs so we see the same PATH as spawned processes.
 pub fn validate_binary(config: &LspServerConfig) -> Result<PathBuf, String> {

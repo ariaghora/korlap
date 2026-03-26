@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 
 /// User-configurable language server definition.
 /// Stored in RepoSettings.lsp_servers, keyed by an arbitrary id (e.g. "rust", "svelte").
@@ -108,7 +108,10 @@ pub struct LspServerKey {
 /// Handle to a running LSP server. Lives behind its own Arc<Mutex<>>.
 pub struct LspServerHandle {
     pub child: Child,
-    pub stdin: BufWriter<ChildStdin>,
+    /// Stdin is behind its own Arc<Mutex<>> so writes never block the reader
+    /// thread (prevents pipe deadlock when sending large didOpen content while
+    /// pyright simultaneously writes to stdout).
+    pub stdin: Arc<Mutex<BufWriter<ChildStdin>>>,
     pub next_id: i64,
     /// Pending requests: JSON-RPC id -> sender for the response.
     pub pending: HashMap<i64, mpsc::Sender<LspResult>>,
