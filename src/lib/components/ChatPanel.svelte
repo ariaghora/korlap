@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, tokensByWorkspace, type Message } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, suggestReplies, getCachedModels, getModelLabel, type FileSearchResult } from "$lib/ipc";
-  import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil, ChevronDown } from "lucide-svelte";
+  import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil, ChevronDown, Zap } from "lucide-svelte";
   import { renderMarkdown, renderUserMarkdown } from "$lib/markdown";
   import { externalLinks, copyCodeBlocks, tooltip } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
@@ -35,6 +35,7 @@
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
     onSendImmediate?: (prompt: string) => void;
     onStop: () => void;
+    onSendNow?: (id: string) => void;
     onRemoveFromQueue?: (id: string) => void;
     onPlanModeChange?: (enabled: boolean) => void;
     onThinkingModeChange?: (enabled: boolean) => void;
@@ -44,7 +45,7 @@
     onReady?: (api: ChatPanelApi) => void;
   }
 
-  let { workspaceId, creating = false, planMode = false, thinkingMode = false, model = "", queue = [], contextWarning = false, onSend, onSendImmediate, onStop, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onModelChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
+  let { workspaceId, creating = false, planMode = false, thinkingMode = false, model = "", queue = [], contextWarning = false, onSend, onSendImmediate, onStop, onSendNow, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onModelChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
 
   let messagesMap = $derived(messagesByWorkspace.get(workspaceId));
   let messages = $derived(messagesMap ? [...messagesMap.values()] : []);
@@ -630,6 +631,16 @@
                 <span class="queue-meta">{item.mentionCount} file{item.mentionCount > 1 ? 's' : ''}</span>
               {/if}
             </span>
+            {#if sending}
+              <button
+                type="button"
+                class="queue-send-now"
+                onclick={() => onSendNow?.(item.id)}
+                use:tooltip={{ text: "Stop agent and send now" }}
+              >
+                <Zap size={11} strokeWidth={2.5} />
+              </button>
+            {/if}
             <button
               type="button"
               class="queue-remove"
@@ -1381,6 +1392,24 @@
     font-size: 0.65rem;
     color: var(--text-dim);
     flex-shrink: 0;
+  }
+
+  .queue-send-now {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0 0.2rem;
+    flex-shrink: 0;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    opacity: 0.7;
+    transition: opacity 0.1s;
+  }
+
+  .queue-send-now:hover {
+    opacity: 1;
   }
 
   .queue-remove {
