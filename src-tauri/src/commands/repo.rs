@@ -23,7 +23,7 @@ pub fn add_repo(path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<
 pub fn remove_repo(
     repo_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
-    lsp_manager: State<'_, Arc<Mutex<crate::lsp::server::LspManager>>>,
+    lsp_manager: State<'_, Arc<Mutex<crate::lsp::server::LspServerPool>>>,
 ) -> Result<(), String> {
     // Shut down all LSP servers for this repo
     if let Ok(mut mgr) = lsp_manager.lock() {

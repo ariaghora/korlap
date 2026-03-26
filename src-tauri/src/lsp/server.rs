@@ -13,13 +13,13 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Manages all running LSP servers. Keyed by (repo_id, language).
 /// Lives in its own Arc<Mutex<>> — NOT inside AppState — so LSP I/O
 /// never blocks Tauri commands.
-pub struct LspManager {
+pub struct LspServerPool {
     servers: HashMap<LspServerKey, Arc<Mutex<LspServerHandle>>>,
 }
 
-impl LspManager {
+impl LspServerPool {
     pub fn new() -> Self {
-        LspManager {
+        LspServerPool {
             servers: HashMap::new(),
         }
     }

@@ -1,5 +1,5 @@
 use crate::lsp;
-use crate::lsp::server::LspManager;
+use crate::lsp::server::LspServerPool;
 use crate::lsp::types::{config_for_extension, resolve_configs, LspServerKey};
 use crate::state::AppState;
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ fn resolve_ws(
 /// Returns None if server not started or mutex busy.
 fn get_running_server(
     state: &Arc<Mutex<AppState>>,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
     workspace_id: &str,
     file_path: &str,
 ) -> Result<Option<(Arc<Mutex<crate::lsp::types::LspServerHandle>>, PathBuf, PathBuf, String)>, String>
@@ -75,7 +75,7 @@ fn get_running_server(
 
 fn do_hover(
     state: Arc<Mutex<AppState>>,
-    lsp_mgr: Arc<Mutex<LspManager>>,
+    lsp_mgr: Arc<Mutex<LspServerPool>>,
     workspace_id: String,
     file_path: String,
     line: u32,
@@ -98,7 +98,7 @@ fn do_hover(
 
 fn do_goto_definition(
     state: Arc<Mutex<AppState>>,
-    lsp_mgr: Arc<Mutex<LspManager>>,
+    lsp_mgr: Arc<Mutex<LspServerPool>>,
     workspace_id: String,
     file_path: String,
     line: u32,
@@ -137,7 +137,7 @@ fn do_goto_definition(
 
 fn do_diagnostics(
     state: Arc<Mutex<AppState>>,
-    lsp_mgr: Arc<Mutex<LspManager>>,
+    lsp_mgr: Arc<Mutex<LspServerPool>>,
     workspace_id: String,
     file_path: String,
 ) -> Result<Vec<LspDiagnostic>, String> {
@@ -182,7 +182,7 @@ fn do_diagnostics(
 
 fn do_rename(
     state: Arc<Mutex<AppState>>,
-    lsp_mgr: Arc<Mutex<LspManager>>,
+    lsp_mgr: Arc<Mutex<LspServerPool>>,
     workspace_id: String,
     file_path: String,
     line: u32,
@@ -267,7 +267,7 @@ pub async fn lsp_start_server(
     workspace_id: String,
     app: AppHandle,
     state: State<'_, Arc<Mutex<AppState>>>,
-    lsp_manager: State<'_, Arc<Mutex<LspManager>>>,
+    lsp_manager: State<'_, Arc<Mutex<LspServerPool>>>,
 ) -> Result<(), String> {
     let (repo_id, repo_path, worktree_path) = resolve_ws(state.inner(), &workspace_id)?;
 
@@ -391,7 +391,7 @@ pub async fn lsp_start_server(
 /// Query current LSP server status. Called by frontend on mount to populate status bar.
 #[tauri::command]
 pub fn lsp_get_status(
-    lsp_manager: State<'_, Arc<Mutex<LspManager>>>,
+    lsp_manager: State<'_, Arc<Mutex<LspServerPool>>>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let mgr = lsp_manager.lock().map_err(|e| e.to_string())?;
     Ok(mgr.list_running())
@@ -404,7 +404,7 @@ pub async fn lsp_hover(
     line: u32,
     character: u32,
     state: State<'_, Arc<Mutex<AppState>>>,
-    lsp_manager: State<'_, Arc<Mutex<LspManager>>>,
+    lsp_manager: State<'_, Arc<Mutex<LspServerPool>>>,
 ) -> Result<Option<LspHoverResult>, String> {
     let s = state.inner().clone();
     let m = lsp_manager.inner().clone();
@@ -420,7 +420,7 @@ pub async fn lsp_goto_definition(
     line: u32,
     character: u32,
     state: State<'_, Arc<Mutex<AppState>>>,
-    lsp_manager: State<'_, Arc<Mutex<LspManager>>>,
+    lsp_manager: State<'_, Arc<Mutex<LspServerPool>>>,
 ) -> Result<Option<LspLocation>, String> {
     let s = state.inner().clone();
     let m = lsp_manager.inner().clone();
@@ -434,7 +434,7 @@ pub async fn lsp_diagnostics(
     workspace_id: String,
     file_path: String,
     state: State<'_, Arc<Mutex<AppState>>>,
-    lsp_manager: State<'_, Arc<Mutex<LspManager>>>,
+    lsp_manager: State<'_, Arc<Mutex<LspServerPool>>>,
 ) -> Result<Vec<LspDiagnostic>, String> {
     let s = state.inner().clone();
     let m = lsp_manager.inner().clone();
@@ -451,7 +451,7 @@ pub async fn lsp_rename(
     character: u32,
     new_name: String,
     state: State<'_, Arc<Mutex<AppState>>>,
-    lsp_manager: State<'_, Arc<Mutex<LspManager>>>,
+    lsp_manager: State<'_, Arc<Mutex<LspServerPool>>>,
 ) -> Result<RenameResult, String> {
     let s = state.inner().clone();
     let m = lsp_manager.inner().clone();

@@ -251,7 +251,7 @@ pub async fn create_workspace(
 pub async fn remove_workspace(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
-    lsp_manager: State<'_, Arc<Mutex<crate::lsp::server::LspManager>>>,
+    lsp_manager: State<'_, Arc<Mutex<crate::lsp::server::LspServerPool>>>,
 ) -> Result<(), String> {
     let (worktree_path, repo_path, ws_name, repo_id) = {
         let mut st = state.lock().map_err(|e| e.to_string())?;

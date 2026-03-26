@@ -3,7 +3,7 @@
 /// so it can be passed to the MCP server via environment variable.
 
 use crate::lsp;
-use crate::lsp::server::LspManager;
+use crate::lsp::server::LspServerPool;
 use crate::lsp::types::{config_for_extension, resolve_configs, LspServerKey};
 use crate::state::AppState;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter};
 pub fn start_api(
     app: AppHandle,
     state: Arc<Mutex<AppState>>,
-    lsp_manager: Arc<Mutex<LspManager>>,
+    lsp_manager: Arc<Mutex<LspServerPool>>,
 ) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind MCP API port");
     let port = listener.local_addr().expect("No local addr").port();
@@ -45,7 +45,7 @@ fn handle_request(
     stream: &mut std::net::TcpStream,
     state: &Arc<Mutex<AppState>>,
     app: &AppHandle,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
 ) -> Result<(), String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
 
@@ -275,7 +275,7 @@ fn parse_lsp_body(body: &[u8]) -> Result<(String, String, u32, u32), (String, St
 /// Emits `lsp-status` events to the frontend for UI indicators.
 fn get_lsp_server(
     state: &Arc<Mutex<AppState>>,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
     workspace_id: &str,
     file_path: &str,
     app: &AppHandle,
@@ -376,7 +376,7 @@ fn get_lsp_server(
 fn handle_lsp_goto_definition(
     body: &[u8],
     state: &Arc<Mutex<AppState>>,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
     app: &AppHandle,
 ) -> (String, String) {
     let (workspace_id, file_path, line, character) = match parse_lsp_body(body) {
@@ -406,7 +406,7 @@ fn handle_lsp_goto_definition(
 fn handle_lsp_references(
     body: &[u8],
     state: &Arc<Mutex<AppState>>,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
     app: &AppHandle,
 ) -> (String, String) {
     let (workspace_id, file_path, line, character) = match parse_lsp_body(body) {
@@ -437,7 +437,7 @@ fn handle_lsp_references(
 fn handle_lsp_hover(
     body: &[u8],
     state: &Arc<Mutex<AppState>>,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
     app: &AppHandle,
 ) -> (String, String) {
     let (workspace_id, file_path, line, character) = match parse_lsp_body(body) {
@@ -467,7 +467,7 @@ fn handle_lsp_hover(
 fn handle_lsp_workspace_symbols(
     body: &[u8],
     state: &Arc<Mutex<AppState>>,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
     _app: &AppHandle,
 ) -> (String, String) {
     let v = match serde_json::from_slice::<serde_json::Value>(body) {
@@ -562,7 +562,7 @@ fn handle_lsp_workspace_symbols(
 fn handle_lsp_diagnostics(
     body: &[u8],
     state: &Arc<Mutex<AppState>>,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
     app: &AppHandle,
 ) -> (String, String) {
     let v = match serde_json::from_slice::<serde_json::Value>(body) {
@@ -617,7 +617,7 @@ fn handle_lsp_diagnostics(
 fn handle_lsp_rename(
     body: &[u8],
     state: &Arc<Mutex<AppState>>,
-    lsp_mgr: &Arc<Mutex<LspManager>>,
+    lsp_mgr: &Arc<Mutex<LspServerPool>>,
     app: &AppHandle,
 ) -> (String, String) {
     let v = match serde_json::from_slice::<serde_json::Value>(body) {

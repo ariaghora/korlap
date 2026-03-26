@@ -51,7 +51,7 @@ pub fn run() {
             }
 
             let state = std::sync::Arc::new(Mutex::new(app_state));
-            let lsp_manager = std::sync::Arc::new(Mutex::new(lsp::server::LspManager::new()));
+            let lsp_manager = std::sync::Arc::new(Mutex::new(lsp::server::LspServerPool::new()));
             let port = mcp_api::start_api(
                 app.handle().clone(),
                 state.clone(),
