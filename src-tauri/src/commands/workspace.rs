@@ -48,6 +48,7 @@ pub async fn create_workspace(
     task_title: Option<String>,
     task_description: Option<String>,
     source_todo_id: Option<String>,
+    custom_branch: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<WorkspaceInfo, String> {
     let (repo_path, gh_profile) = {
@@ -141,43 +142,65 @@ pub async fn create_workspace(
 
     let start_point = format!("origin/{}", base_branch);
 
-    // Generate a unique name (retry if branch already exists)
-    let mut name = random_workspace_name();
     let worktree_base = {
         let st = state.lock().map_err(|e| e.to_string())?;
         st.worktree_dir()
     };
 
-    for attempt in 0..10 {
-        let branch = format!("korlap/{}", name);
+    // When a custom branch is provided, use it directly; otherwise generate a random one.
+    let (dir_name, branch, display_name) = if let Some(ref cb) = custom_branch {
+        let cb = cb.trim().to_string();
+        if cb.is_empty() {
+            return Err("Branch name cannot be empty".into());
+        }
+
+        // Check if branch already exists
         let check = std::process::Command::new("git")
-            .args(["rev-parse", "--verify", &branch])
+            .args(["rev-parse", "--verify", &cb])
             .current_dir(&repo_path)
             .output()
             .map_err(|e| format!("Failed to run git: {}", e))?;
-
-        let folder_exists = worktree_base.join(&name).exists();
-
-        if !check.status.success() && !folder_exists {
-            break; // branch doesn't exist and folder is free, good to use
+        if check.status.success() {
+            return Err(format!("Branch '{}' already exists", cb));
         }
 
-        if attempt == 9 {
-            return Err("Could not generate a unique workspace name after 10 attempts".into());
-        }
+        // Use a random dir name to avoid filesystem issues with slashes in branch names
+        let dir = random_workspace_name();
+        (dir, cb.clone(), cb)
+    } else {
+        let mut name = random_workspace_name();
+        for attempt in 0..10 {
+            let branch = format!("korlap/{}", name);
+            let check = std::process::Command::new("git")
+                .args(["rev-parse", "--verify", &branch])
+                .current_dir(&repo_path)
+                .output()
+                .map_err(|e| format!("Failed to run git: {}", e))?;
 
-        name = format!(
-            "{}-{}",
-            random_workspace_name(),
-            &Uuid::new_v4().to_string()[..4]
-        );
-    }
+            let folder_exists = worktree_base.join(&name).exists();
+
+            if !check.status.success() && !folder_exists {
+                break;
+            }
+
+            if attempt == 9 {
+                return Err("Could not generate a unique workspace name after 10 attempts".into());
+            }
+
+            name = format!(
+                "{}-{}",
+                random_workspace_name(),
+                &Uuid::new_v4().to_string()[..4]
+            );
+        }
+        let branch = format!("korlap/{}", name);
+        (name.clone(), branch, name)
+    };
 
     let id = Uuid::new_v4().to_string();
-    let branch = format!("korlap/{}", name);
 
     // Worktree lives in app data dir, named after the workspace for human readability
-    let worktree_path = worktree_base.join(&name);
+    let worktree_path = worktree_base.join(&dir_name);
 
     std::fs::create_dir_all(worktree_path.parent().unwrap_or(&worktree_path))
         .map_err(|e| e.to_string())?;
@@ -197,7 +220,7 @@ pub async fn create_workspace(
 
     let ws = WorkspaceInfo {
         id: id.clone(),
-        name,
+        name: display_name,
         branch,
         worktree_path: worktree_path.clone(),
         repo_id: repo_id.clone(),
@@ -207,6 +230,7 @@ pub async fn create_workspace(
         task_title,
         task_description,
         source_todo_id,
+        custom_branch: custom_branch.is_some(),
     };
 
     // Check if there's a setup script to run

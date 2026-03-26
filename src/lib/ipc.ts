@@ -29,6 +29,7 @@ export interface WorkspaceInfo {
   task_title?: string | null;
   task_description?: string | null;
   source_todo_id?: string | null;
+  custom_branch?: boolean;
 }
 
 export interface ToolUseInfo {
@@ -172,12 +173,14 @@ export async function createWorkspace(
   taskTitle?: string,
   taskDescription?: string,
   sourceTodoId?: string,
+  customBranch?: string,
 ): Promise<WorkspaceInfo> {
   return invoke<WorkspaceInfo>("create_workspace", {
     repoId,
     taskTitle: taskTitle ?? null,
     taskDescription: taskDescription ?? null,
     sourceTodoId: sourceTodoId ?? null,
+    customBranch: customBranch ?? null,
   });
 }
 

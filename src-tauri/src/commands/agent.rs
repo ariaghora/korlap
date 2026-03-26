@@ -331,7 +331,7 @@ pub fn send_message(
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
     let thinking_mode = thinking_mode.unwrap_or(false);
-    let (worktree_path, gh_profile, _repo_id, ws_branch, repo_path, user_system_prompt, context_dir) = {
+    let (worktree_path, gh_profile, _repo_id, ws_branch, repo_path, user_system_prompt, context_dir, is_custom_branch) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
             return Err("Agent is already processing a message".into());
@@ -354,6 +354,7 @@ pub fn send_message(
             repo.path.clone(),
             user_sp,
             ctx_dir,
+            ws.custom_branch,
         )
     };
 
@@ -472,6 +473,15 @@ pub fn send_message(
             .unwrap_or_else(|_| "main".to_string());
         let wt_display = worktree_path.to_string_lossy();
         let repo_display = repo_path.to_string_lossy();
+        let rename_instruction = if !is_custom_branch {
+            "Use the rename_branch tool to give your branch a meaningful name based on the task. \
+             Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
+             IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. \
+             Parse the user's request, pick a name, and rename immediately.\n\
+             If the task scope changes mid-conversation, rename the branch again to reflect the new direction."
+        } else {
+            "The branch was manually named by the user. Do NOT rename it unless the user explicitly asks you to."
+        };
         let mut system_prompt = format!(
             "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
              Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
@@ -487,9 +497,8 @@ pub fn send_message(
              • Do NOT use the Agent tool with isolation: \"worktree\" — it will create a worktree from the wrong repo.\n\
              • If you discover paths outside {wt_display}, ignore them. You have no business there.\n\
              \n\
-             You have access to Korlap tools via MCP. Use the rename_branch tool to give your branch a meaningful name based on the task. Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
-             IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. Parse the user's request, pick a name, and rename immediately.\n\
-             If the task scope changes mid-conversation, rename the branch again to reflect the new direction.\n\
+             You have access to Korlap tools via MCP.\n\
+             {rename_instruction}\n\
              Keep all changes on the target branch. Do not modify other branches.\n\
              \n\
              You have LSP tools for compiler-accurate code navigation:\n\
