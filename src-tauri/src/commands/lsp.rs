@@ -2,7 +2,7 @@ use crate::lsp;
 use crate::lsp::server::LspServerPool;
 use crate::lsp::types::{config_for_extension, resolve_configs, LspServerKey};
 use crate::state::AppState;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
@@ -279,6 +279,131 @@ pub struct LspDiagnostic {
     pub source: String,
 }
 
+// ── Shared spawn helper ─────────────────────────────────────────────
+
+/// Spawn a single LSP server in a background thread. Emits lsp-status events.
+/// Does NOT hold LspServerPool mutex across the spawn — only brief locks.
+fn spawn_server_background(
+    key: LspServerKey,
+    config: lsp::types::LspServerConfig,
+    project_root: PathBuf,
+    worktree_project_dir: PathBuf,
+    lsp_mgr: Arc<Mutex<LspServerPool>>,
+    app: AppHandle,
+) {
+    std::thread::spawn(move || {
+        // 1. Brief mutex hold: validate binary, check if already running
+        let binary_path = {
+            let mut mgr = match lsp_mgr.lock() {
+                Ok(m) => m,
+                Err(e) => {
+                    let _ = app.emit("lsp-status", serde_json::json!({
+                        "repo_id": key.repo_id,
+                        "server_id": key.server_id,
+                        "status": "error",
+                        "message": format!("{}", e),
+                    }));
+                    return;
+                }
+            };
+            match mgr.prepare_start(&key, &config) {
+                Ok(Some(path)) => path,
+                Ok(None) => {
+                    // Already running
+                    let _ = app.emit("lsp-status", serde_json::json!({
+                        "repo_id": key.repo_id,
+                        "server_id": key.server_id,
+                        "status": "ready",
+                        "message": format!("{} language server ready", key.server_id),
+                    }));
+                    return;
+                }
+                Err(e) => {
+                    let _ = app.emit("lsp-status", serde_json::json!({
+                        "repo_id": key.repo_id,
+                        "server_id": key.server_id,
+                        "status": "error",
+                        "message": format!("{}", e),
+                    }));
+                    return;
+                }
+            }
+            // LspManager mutex released here
+        };
+
+        let _ = app.emit("lsp-status", serde_json::json!({
+            "repo_id": key.repo_id,
+            "server_id": key.server_id,
+            "status": "starting",
+            "message": format!("Starting {} language server...", key.server_id),
+        }));
+
+        // 2. Start server WITHOUT holding LspManager mutex
+        let result = lsp::server::start_server(&binary_path, &config, &project_root);
+
+        match result {
+            Ok(handle) => {
+                let _ = lsp::add_worktree(&handle, &worktree_project_dir);
+
+                // 3. Brief mutex hold: insert handle — now visible to UI via get_existing
+                if let Ok(mut mgr) = lsp_mgr.lock() {
+                    mgr.insert(key.clone(), handle.clone());
+                }
+
+                let _ = app.emit("lsp-status", serde_json::json!({
+                    "repo_id": key.repo_id,
+                    "server_id": key.server_id,
+                    "status": "indexing",
+                    "message": format!("{} indexing...", key.server_id),
+                }));
+
+                // 4. Wait for readiness WITHOUT holding mutex (10-60s)
+                let _ = lsp::server::wait_for_ready(&handle, &project_root);
+
+                let _ = app.emit("lsp-status", serde_json::json!({
+                    "repo_id": key.repo_id,
+                    "server_id": key.server_id,
+                    "status": "ready",
+                    "message": format!("{} ready", key.server_id),
+                }));
+            }
+            Err(e) => {
+                let _ = app.emit("lsp-status", serde_json::json!({
+                    "repo_id": key.repo_id,
+                    "server_id": key.server_id,
+                    "status": "error",
+                    "message": format!("{}", e),
+                }));
+            }
+        }
+    });
+}
+
+/// Resolve config + project root for a single server_id in a repo.
+fn resolve_single_server(
+    repo_path: &Path,
+    configs: &std::collections::HashMap<String, lsp::types::LspServerConfig>,
+    server_id: &str,
+) -> Option<(lsp::types::LspServerConfig, PathBuf)> {
+    let config = configs.get(server_id)?;
+    let project_root = lsp::detect::detect_project_root(repo_path, config)?;
+    Some((config.clone(), project_root))
+}
+
+/// Compute the worktree project directory (maps repo-relative subdir into worktree).
+fn compute_worktree_project_dir(
+    repo_path: &Path,
+    project_root: &Path,
+    worktree_path: &Path,
+) -> PathBuf {
+    if let Ok(subdir) = project_root.strip_prefix(repo_path) {
+        if !subdir.as_os_str().is_empty() {
+            return worktree_path.join(subdir);
+        }
+    }
+    worktree_path.to_path_buf()
+}
+
 // ── Tauri commands (all async, never block the UI) ──────────────────
 
 /// Start LSP server(s) for a workspace in the background.
@@ -319,103 +444,97 @@ pub async fn lsp_start_server(
             }
         }
 
-        let config_owned = config.clone();
-        let project_root = project_root.clone();
-        // Compute worktree project dir: if project is in a subdirectory (e.g., "backend/"),
-        // register <worktree>/backend/ instead of just <worktree>/ so the LSP server
-        // can find pyproject.toml, source roots, etc. in the worktree too.
-        let worktree_project_dir = if let Ok(subdir) = project_root.strip_prefix(&repo_path) {
-            if !subdir.as_os_str().is_empty() {
-                worktree_path.join(subdir)
-            } else {
-                worktree_path.clone()
-            }
-        } else {
-            worktree_path.clone()
-        };
-        let lsp_mgr = lsp_mgr.clone();
-        let app = app.clone();
+        let worktree_project_dir = compute_worktree_project_dir(&repo_path, &project_root, &worktree_path);
 
-        std::thread::spawn(move || {
-            // 1. Brief mutex hold: validate binary, check if already running
-            let binary_path = {
-                let mut mgr = match lsp_mgr.lock() {
-                    Ok(m) => m,
-                    Err(e) => {
-                        let _ = app.emit("lsp-status", serde_json::json!({
-                            "server_id": key.server_id,
-                            "status": "error",
-                            "message": format!("{}", e),
-                        }));
-                        return;
-                    }
-                };
-                match mgr.prepare_start(&key, &config_owned) {
-                    Ok(Some(path)) => path,
-                    Ok(None) => {
-                        // Already running
-                        let _ = app.emit("lsp-status", serde_json::json!({
-                            "server_id": key.server_id,
-                            "status": "ready",
-                            "message": format!("{} language server ready", key.server_id),
-                        }));
-                        return;
-                    }
-                    Err(e) => {
-                        let _ = app.emit("lsp-status", serde_json::json!({
-                            "server_id": key.server_id,
-                            "status": "error",
-                            "message": format!("{}", e),
-                        }));
-                        return;
-                    }
-                }
-                // LspManager mutex released here
-            };
-
-            let _ = app.emit("lsp-status", serde_json::json!({
-                "server_id": key.server_id,
-                "status": "starting",
-                "message": format!("Starting {} language server...", key.server_id),
-            }));
-
-            // 2. Start server WITHOUT holding LspManager mutex
-            let result = lsp::server::start_server(&binary_path, &config_owned, &project_root);
-
-            match result {
-                Ok(handle) => {
-                    let _ = lsp::add_worktree(&handle, &worktree_project_dir);
-
-                    // 3. Brief mutex hold: insert handle — now visible to UI via get_existing
-                    if let Ok(mut mgr) = lsp_mgr.lock() {
-                        mgr.insert(key.clone(), handle.clone());
-                    }
-
-                    let _ = app.emit("lsp-status", serde_json::json!({
-                        "server_id": key.server_id,
-                        "status": "indexing",
-                        "message": format!("{} indexing...", key.server_id),
-                    }));
-
-                    // 4. Wait for readiness WITHOUT holding mutex (10-60s)
-                    let _ = lsp::server::wait_for_ready(&handle, &project_root);
-
-                    let _ = app.emit("lsp-status", serde_json::json!({
-                        "server_id": key.server_id,
-                        "status": "ready",
-                        "message": format!("{} ready", key.server_id),
-                    }));
-                }
-                Err(e) => {
-                    let _ = app.emit("lsp-status", serde_json::json!({
-                        "server_id": key.server_id,
-                        "status": "error",
-                        "message": format!("{}", e),
-                    }));
-                }
-            }
-        });
+        spawn_server_background(
+            key,
+            config.clone(),
+            project_root.clone(),
+            worktree_project_dir,
+            lsp_mgr.clone(),
+            app.clone(),
+        );
     }
+
+    Ok(())
+}
+
+/// Stop a single LSP server for a repo.
+#[tauri::command]
+pub async fn lsp_stop_server(
+    repo_id: String,
+    server_id: String,
+    app: AppHandle,
+    lsp_manager: State<'_, Arc<Mutex<LspServerPool>>>,
+) -> Result<(), String> {
+    let key = LspServerKey {
+        repo_id: repo_id.clone(),
+        server_id: server_id.clone(),
+    };
+
+    let stopped = {
+        let mut mgr = lsp_manager.lock().map_err(|e| e.to_string())?;
+        mgr.stop_server(&key)
+    };
+
+    if stopped {
+        let _ = app.emit("lsp-status", serde_json::json!({
+            "repo_id": repo_id,
+            "server_id": server_id,
+            "status": "stopped",
+            "message": format!("{} stopped", server_id),
+        }));
+    }
+
+    Ok(())
+}
+
+/// Stop then restart a single LSP server. Requires workspace_id to resolve
+/// the worktree path for re-registering workspace folders.
+#[tauri::command]
+pub async fn lsp_restart_server(
+    repo_id: String,
+    server_id: String,
+    workspace_id: String,
+    app: AppHandle,
+    state: State<'_, Arc<Mutex<AppState>>>,
+    lsp_manager: State<'_, Arc<Mutex<LspServerPool>>>,
+) -> Result<(), String> {
+    let key = LspServerKey {
+        repo_id: repo_id.clone(),
+        server_id: server_id.clone(),
+    };
+
+    // 1. Stop existing server (if running)
+    {
+        let mut mgr = lsp_manager.lock().map_err(|e| e.to_string())?;
+        mgr.stop_server(&key);
+    }
+
+    // 2. Resolve paths
+    let (_ws_repo_id, repo_path, worktree_path) = resolve_ws(state.inner(), &workspace_id)?;
+
+    let user_overrides = state
+        .lock()
+        .ok()
+        .and_then(|st| st.repo_settings.get(&repo_id).map(|s| s.lsp_servers.clone()))
+        .unwrap_or_default();
+    let configs = resolve_configs(&user_overrides);
+
+    let (config, project_root) = resolve_single_server(&repo_path, &configs, &server_id)
+        .ok_or_else(|| format!("No LSP config found for server '{}'", server_id))?;
+
+    let worktree_project_dir = compute_worktree_project_dir(&repo_path, &project_root, &worktree_path);
+
+    // 3. Spawn in background
+    spawn_server_background(
+        key,
+        config,
+        project_root,
+        worktree_project_dir,
+        lsp_manager.inner().clone(),
+        app,
+    );
 
     Ok(())
 }

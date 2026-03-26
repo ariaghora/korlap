@@ -171,6 +171,8 @@ pub fn run() {
             commands::context::resolve_contradiction,
             // lsp
             commands::lsp::lsp_start_server,
+            commands::lsp::lsp_stop_server,
+            commands::lsp::lsp_restart_server,
             commands::lsp::lsp_get_status,
             commands::lsp::lsp_hover,
             commands::lsp::lsp_goto_definition,
