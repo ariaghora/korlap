@@ -3,10 +3,11 @@
     getRepoSettings, saveRepoSettings, type RepoSettings, type NamedScript, type LspServerConfig,
     getContextMeta, saveContextScope, buildKnowledgeBase, stopContextBuild,
     readContextFile, writeContextFile, draftContradictionResolution, resolveContradiction, updateKnowledgeBaseIncremental,
+    lspStopServer, lspRestartServer,
     type ContextMeta, type ContextBuildStatus, type AgentEvent,
   } from "$lib/ipc";
   import { onMount } from "svelte";
-  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown, Sun, Moon, Monitor, Braces, Plus, RotateCcw } from "lucide-svelte";
+  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown, Sun, Moon, Monitor, Braces, Plus, RotateCcw, Square, RefreshCw } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
   import { themeList, getPreviewColors, type ThemeId } from "$lib/themes";
   import { getThemeId, setTheme, getColorMode, setColorMode, type ColorMode } from "$lib/stores/theme.svelte";
@@ -16,10 +17,12 @@
     repoId: string;
     repoName: string;
     repoPath: string;
+    lspStatusMap?: Map<string, { status: string; message: string; repo_id: string }>;
+    workspaceId?: string | null;
     onClose: () => void;
   }
 
-  let { repoId, repoName, repoPath, onClose }: Props = $props();
+  let { repoId, repoName, repoPath, lspStatusMap, workspaceId, onClose }: Props = $props();
 
   type Section = "scripts" | "agent" | "lsp" | "knowledge" | "appearance";
   let activeSection = $state<Section>("scripts");
@@ -193,6 +196,44 @@
     addingLsp = false;
     newLspId = "";
     newLspConfig = { command: "", args: [], extensions: [], language_id: "", detect_files: [], install_hint: "", project_roots: [] };
+  }
+
+  let lspBusy = $state(new Set<string>());
+
+  async function handleLspStop(serverId: string) {
+    lspBusy = new Set([...lspBusy, serverId]);
+    try {
+      await lspStopServer(repoId, serverId);
+    } catch (e) {
+      console.error("Failed to stop LSP server:", e);
+    } finally {
+      const next = new Set(lspBusy);
+      next.delete(serverId);
+      lspBusy = next;
+    }
+  }
+
+  async function handleLspRestart(serverId: string) {
+    if (!workspaceId) return;
+    lspBusy = new Set([...lspBusy, serverId]);
+    try {
+      await lspRestartServer(repoId, serverId, workspaceId);
+    } catch (e) {
+      console.error("Failed to restart LSP server:", e);
+    } finally {
+      const next = new Set(lspBusy);
+      next.delete(serverId);
+      lspBusy = next;
+    }
+  }
+
+  function getLspStatus(serverId: string): { status: string; message: string } | null {
+    if (!lspStatusMap) return null;
+    const info = lspStatusMap.get(serverId);
+    if (!info) return null;
+    // Only show status for current repo
+    if (info.repo_id && info.repo_id !== repoId) return null;
+    return info;
   }
 
   function scheduleScopeSave() {
@@ -772,6 +813,9 @@
       </p>
 
       {#each getLspEntries() as { id, config, isOverride, isCustom }}
+        {@const status = getLspStatus(id)}
+        {@const isRunning = status?.status === "ready" || status?.status === "starting" || status?.status === "indexing"}
+        {@const isBusy = lspBusy.has(id)}
         <div class="lsp-card">
           <div class="lsp-card-header">
             <span class="lsp-id">{id}</span>
@@ -783,8 +827,25 @@
               {:else}
                 <span class="lsp-badge builtin">built-in</span>
               {/if}
+              {#if status}
+                <span class="lsp-badge status-{status.status}">{status.status}</span>
+              {/if}
             </div>
             <div class="lsp-actions">
+              {#if isRunning}
+                <button class="lsp-action-btn" use:tooltip={{ text: "Stop server" }} onclick={() => handleLspStop(id)} disabled={isBusy}>
+                  <Square size={10} />
+                </button>
+              {/if}
+              {#if workspaceId}
+                <button class="lsp-action-btn" use:tooltip={{ text: "Restart server" }} onclick={() => handleLspRestart(id)} disabled={isBusy}>
+                  {#if isBusy}
+                    <Loader2 size={12} class="lsp-spin" />
+                  {:else}
+                    <RefreshCw size={12} />
+                  {/if}
+                </button>
+              {/if}
               {#if isOverride}
                 <button class="lsp-action-btn" use:tooltip={{ text: "Reset to default" }} onclick={() => resetLspServer(id)}>
                   <RotateCcw size={12} />
@@ -1659,6 +1720,27 @@
     color: var(--status-ok);
   }
 
+  .lsp-badge.status-ready {
+    background: color-mix(in srgb, var(--status-ok) 15%, transparent);
+    color: var(--status-ok);
+  }
+
+  .lsp-badge.status-starting,
+  .lsp-badge.status-indexing {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+  }
+
+  .lsp-badge.status-error {
+    background: color-mix(in srgb, var(--status-error) 15%, transparent);
+    color: var(--status-error);
+  }
+
+  .lsp-badge.status-stopped {
+    background: color-mix(in srgb, var(--text-dim) 15%, transparent);
+    color: var(--text-dim);
+  }
+
   .lsp-actions {
     display: flex;
     gap: 0.25rem;
@@ -1685,6 +1767,19 @@
   .lsp-action-btn.danger:hover {
     color: var(--status-error);
     border-color: var(--status-error);
+  }
+
+  .lsp-action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .lsp-action-btn :global(.lsp-spin) {
+    animation: lsp-spin 1s linear infinite;
+  }
+
+  @keyframes lsp-spin {
+    to { transform: rotate(360deg); }
   }
 
   .lsp-fields {

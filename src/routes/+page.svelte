@@ -108,8 +108,8 @@
   let chatExpanded = $state(true);
   let terminalPaneVisible = $state(false);
 
-  // App-wide LSP status tracking
-  let lspStatusMap = $state(new Map<string, { status: string; message: string }>());
+  // App-wide LSP status tracking (keyed by server_id)
+  let lspStatusMap = $state(new Map<string, { status: string; message: string; repo_id: string }>());
   let diffRefreshTrigger = $state(0);
   let showSettings = $state(false);
   let creatingWsId = $state<string | null>(null);
@@ -613,11 +613,11 @@
 
       // LSP server lifecycle events → status bar + toast notifications
       const lspStartToasts = new Map<string, string>();
-      const unlistenLsp = await listen<{ server_id: string; status: string; message: string }>("lsp-status", (e) => {
-        const { server_id, status, message } = e.payload;
+      const unlistenLsp = await listen<{ repo_id?: string; server_id: string; status: string; message: string }>("lsp-status", (e) => {
+        const { repo_id, server_id, status, message } = e.payload;
         // Update app-wide status bar
         const next = new Map(lspStatusMap);
-        next.set(server_id, { status, message });
+        next.set(server_id, { status, message, repo_id: repo_id ?? "" });
         lspStatusMap = next;
 
         // Toast for transitions
@@ -632,6 +632,10 @@
           const prev = lspStartToasts.get(server_id);
           if (prev) { removeToast(prev); lspStartToasts.delete(server_id); }
           addToast(message, "error");
+        } else if (status === "stopped") {
+          const prev = lspStartToasts.get(server_id);
+          if (prev) { removeToast(prev); lspStartToasts.delete(server_id); }
+          addToast(message, "info");
         }
       });
 
@@ -640,7 +644,7 @@
         if (servers.length > 0) {
           const next = new Map(lspStatusMap);
           for (const s of servers) {
-            next.set(s.server_id, { status: s.status, message: `${s.server_id} ${s.status}` });
+            next.set(s.server_id, { status: s.status, message: `${s.server_id} ${s.status}`, repo_id: s.repo_id ?? "" });
           }
           lspStatusMap = next;
         }
@@ -2619,6 +2623,8 @@
         repoId={activeRepo.id}
         repoName={activeRepo.display_name}
         repoPath={activeRepo.path}
+        {lspStatusMap}
+        workspaceId={selectedWsId}
         onClose={() => {
           showSettings = false;
           if (activeRepo) {
@@ -2638,7 +2644,7 @@
       <div class="statusbar-left">
         {#each [...lspStatusMap] as [serverId, info]}
           {@const busy = info.status === "starting" || info.status === "indexing"}
-          <span class="lsp-pill" class:busy class:error={info.status === "error"} class:ready={info.status === "ready"}>
+          <span class="lsp-pill" class:busy class:error={info.status === "error"} class:ready={info.status === "ready"} class:stopped={info.status === "stopped"}>
             {#if busy}<span class="lsp-pill-spinner"></span>{/if}
             {serverId}
           </span>
@@ -3223,6 +3229,11 @@
   .lsp-pill.ready {
     background: color-mix(in srgb, var(--status-ok, #6a4) 12%, transparent);
     color: var(--status-ok, #6a4);
+  }
+
+  .lsp-pill.stopped {
+    background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+    color: var(--text-dim);
   }
 
   .lsp-pill-spinner {

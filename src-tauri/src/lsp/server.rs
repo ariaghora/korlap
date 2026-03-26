@@ -122,6 +122,7 @@ impl LspServerPool {
                 let mut handle = handle_arc.lock().ok()?;
                 if matches!(handle.child.try_wait(), Ok(None)) {
                     Some(serde_json::json!({
+                        "repo_id": key.repo_id,
                         "server_id": key.server_id,
                         "status": if handle.initialized { "ready" } else { "starting" },
                     }))
@@ -183,6 +184,18 @@ impl LspServerPool {
         }
         for key in keys_to_remove {
             self.servers.remove(&key);
+        }
+    }
+
+    /// Shut down a single server by key. Returns true if it was running.
+    pub fn stop_server(&mut self, key: &LspServerKey) -> bool {
+        if let Some(handle_arc) = self.servers.remove(key) {
+            if let Ok(mut handle) = handle_arc.lock() {
+                let _ = shutdown_server(&mut handle);
+            }
+            true
+        } else {
+            false
         }
     }
 

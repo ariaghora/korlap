@@ -643,8 +643,18 @@ export async function lspStartServer(workspaceId: string): Promise<void> {
   return invoke("lsp_start_server", { workspaceId });
 }
 
+/** Stop a single LSP server by repo + server ID. */
+export async function lspStopServer(repoId: string, serverId: string): Promise<void> {
+  return invoke("lsp_stop_server", { repoId, serverId });
+}
+
+/** Stop and restart a single LSP server. Needs workspaceId to resolve worktree path. */
+export async function lspRestartServer(repoId: string, serverId: string, workspaceId: string): Promise<void> {
+  return invoke("lsp_restart_server", { repoId, serverId, workspaceId });
+}
+
 /** Query current LSP server status (for populating status bar on mount). */
-export async function lspGetStatus(): Promise<{ server_id: string; status: string }[]> {
+export async function lspGetStatus(): Promise<{ repo_id: string; server_id: string; status: string }[]> {
   return invoke("lsp_get_status");
 }
 
