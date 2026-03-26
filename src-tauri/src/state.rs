@@ -69,6 +69,10 @@ pub struct RepoSettings {
     pub default_plan: bool,
     #[serde(default)]
     pub system_prompt: String,
+    /// User-configured LSP servers. Merged with built-in defaults at runtime.
+    /// Key is a server id (e.g. "rust", "svelte"). See lsp::types::LspServerConfig.
+    #[serde(default)]
+    pub lsp_servers: std::collections::HashMap<String, crate::lsp::types::LspServerConfig>,
 }
 
 impl RepoSettings {

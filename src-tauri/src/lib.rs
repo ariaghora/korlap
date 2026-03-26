@@ -1,4 +1,5 @@
 mod commands;
+mod lsp;
 mod mcp_api;
 mod state;
 #[cfg(target_os = "macos")]
@@ -50,11 +51,17 @@ pub fn run() {
             }
 
             let state = std::sync::Arc::new(Mutex::new(app_state));
-            let port = mcp_api::start_api(app.handle().clone(), state.clone());
+            let lsp_manager = std::sync::Arc::new(Mutex::new(lsp::server::LspServerPool::new()));
+            let port = mcp_api::start_api(
+                app.handle().clone(),
+                state.clone(),
+                lsp_manager.clone(),
+            );
             state.lock().unwrap().mcp_api_port = port;
 
             // Tauri commands use State<'_, Arc<Mutex<AppState>>>
             app.manage(state);
+            app.manage(lsp_manager);
 
             #[cfg(target_os = "macos")]
             {
@@ -162,6 +169,13 @@ pub fn run() {
             commands::context::write_context_file,
             commands::context::draft_contradiction_resolution,
             commands::context::resolve_contradiction,
+            // lsp
+            commands::lsp::lsp_start_server,
+            commands::lsp::lsp_get_status,
+            commands::lsp::lsp_hover,
+            commands::lsp::lsp_goto_definition,
+            commands::lsp::lsp_diagnostics,
+            commands::lsp::lsp_rename,
             // system
             commands::system::get_system_resources,
         ])

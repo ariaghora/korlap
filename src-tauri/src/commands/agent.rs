@@ -32,7 +32,9 @@ pub fn list_models() -> Result<Vec<ModelOption>, String> {
 /// EnterWorktree creates worktrees from origin/<default> of the MAIN repo,
 /// completely bypassing workspace isolation. Requires no permission so
 /// --permission-mode alone cannot stop it. --disallowedTools is the only fix.
-const DISALLOWED_WORKTREE_TOOLS: &str = "EnterWorktree,ExitWorktree";
+/// LSP is disabled because Korlap manages shared LSP servers centrally — one per
+/// (repo, language) instead of per-agent — saving significant memory with 7-10 agents.
+const DISALLOWED_WORKTREE_TOOLS: &str = "EnterWorktree,ExitWorktree,LSP";
 
 // ── Agent event types (sent to frontend via Channel) ─────────────────
 
@@ -437,7 +439,10 @@ pub fn send_message(
     // --dangerously-skip-permissions ignores --disallowedTools, so we use --permission-mode instead.
     if plan_mode {
         cmd.args(["--permission-mode", "plan"]);
-        cmd.args(["--allowedTools", "mcp__korlap__rename_branch,WebSearch,WebFetch"]);
+        cmd.args(["--allowedTools", "mcp__korlap__rename_branch,WebSearch,WebFetch,\
+            mcp__korlap__lsp_goto_definition,mcp__korlap__lsp_find_references,\
+            mcp__korlap__lsp_hover,mcp__korlap__lsp_workspace_symbols,\
+            mcp__korlap__lsp_diagnostics"]);
     } else {
         cmd.args(["--permission-mode", "bypassPermissions"]);
         cmd.args(["--disallowedTools", DISALLOWED_WORKTREE_TOOLS]);
@@ -485,7 +490,18 @@ pub fn send_message(
              You have access to Korlap tools via MCP. Use the rename_branch tool to give your branch a meaningful name based on the task. Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
              IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. Parse the user's request, pick a name, and rename immediately.\n\
              If the task scope changes mid-conversation, rename the branch again to reflect the new direction.\n\
-             Keep all changes on the target branch. Do not modify other branches.",
+             Keep all changes on the target branch. Do not modify other branches.\n\
+             \n\
+             You have LSP tools for compiler-accurate code navigation:\n\
+             • lsp_goto_definition — find where a symbol is defined\n\
+             • lsp_find_references — find all usages of a symbol\n\
+             • lsp_hover — get type info and docs for a symbol\n\
+             • lsp_workspace_symbols — search symbols by name across the workspace\n\
+             • lsp_diagnostics — get compiler errors/warnings for a file\n\
+             • lsp_rename — rename a symbol across all files (applies edits automatically)\n\
+             Use these instead of grep when you need precise code navigation. All positions are 1-based (line and character).\n\
+             After editing files, call lsp_diagnostics to check for compiler errors.\n\
+             For renaming symbols, prefer lsp_rename over find-and-replace — it handles all references correctly.",
         );
         // Inject warm context from knowledge base (if built)
         if context_dir.exists() {

@@ -1,7 +1,10 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection } from "@codemirror/view";
-  import { EditorState, Compartment, type Extension } from "@codemirror/state";
+  import { listen } from "@tauri-apps/api/event";
+  import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, hoverTooltip, Decoration, type DecorationSet } from "@codemirror/view";
+  import { EditorState, Compartment, StateField, StateEffect, type Extension, RangeSetBuilder } from "@codemirror/state";
+  import { lspHover, lspGotoDefinition, lspDiagnostics, type LspDiagnostic } from "$lib/ipc";
+  import { renderMarkdown } from "$lib/markdown";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
   import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, HighlightStyle } from "@codemirror/language";
@@ -30,9 +33,11 @@
     readonly?: boolean;
     initialLine?: number | null;
     onchange?: (content: string) => void;
+    /** LSP context — when provided, enables hover tooltips, cmd+click go-to-definition, and diagnostics. */
+    lsp?: { workspaceId: string; filePath: string; onGotoDef?: (filePath: string, line: number) => void } | null;
   }
 
-  let { content, filename, readonly = false, initialLine = null, onchange }: Props = $props();
+  let { content, filename, readonly = false, initialLine = null, onchange, lsp = null }: Props = $props();
 
   let container: HTMLDivElement | undefined = $state();
 
@@ -42,9 +47,12 @@
   let readonlyCompartment = new Compartment();
   let editableCompartment = new Compartment();
   let themeCompartment = new Compartment();
+  let lspCompartment = new Compartment();
 
   // Guard: skip content sync when the change came from the editor itself
   let suppressContentSync = false;
+
+  let diagnosticCount = $state(0);
 
   // ── Theme builders ──────────────────────────────────────
 
@@ -290,6 +298,160 @@
     ];
   }
 
+  // ── LSP extensions ────────────────────────────────────
+
+  // Diagnostic underline decorations
+  const setDiagnostics = StateEffect.define<LspDiagnostic[]>();
+  const diagnosticField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(value, tr) {
+      for (const e of tr.effects) {
+        if (e.is(setDiagnostics)) {
+          const builder = new RangeSetBuilder<Decoration>();
+          const sorted = [...e.value].sort((a, b) => a.line - b.line || a.character - b.character);
+          for (const d of sorted) {
+            try {
+              const line = tr.state.doc.line(Math.min(d.line, tr.state.doc.lines));
+              const from = line.from + Math.min(d.character - 1, line.length);
+              const endLine = tr.state.doc.line(Math.min(d.end_line, tr.state.doc.lines));
+              let to = endLine.from + Math.min(d.end_character - 1, endLine.length);
+              if (to <= from) to = Math.min(from + 1, line.to); // at least 1 char
+              const cls = d.severity === "error" ? "cm-lsp-error" : d.severity === "warning" ? "cm-lsp-warning" : "cm-lsp-info";
+              builder.add(from, to, Decoration.mark({ class: cls, attributes: { title: d.message } }));
+            } catch { /* skip invalid ranges */ }
+          }
+          return builder.finish();
+        }
+      }
+      return value;
+    },
+    provide: f => EditorView.decorations.from(f),
+  });
+
+  function buildLspExtensions(ctx: NonNullable<typeof lsp>): Extension[] {
+    const { workspaceId, filePath, onGotoDef } = ctx;
+
+    // Hover tooltip
+    const hover = hoverTooltip(async (view, pos) => {
+      const line = view.state.doc.lineAt(pos);
+      const lineNum = line.number;
+      const col = pos - line.from + 1;
+      try {
+        const result = await lspHover(workspaceId, filePath, lineNum, col);
+        if (!result) return null;
+        return {
+          pos,
+          above: true,
+          create: () => {
+            const dom = document.createElement("div");
+            dom.className = "cm-lsp-hover";
+            if (result.kind === "markdown") {
+              dom.innerHTML = renderMarkdown(result.text);
+            } else {
+              const pre = document.createElement("pre");
+              pre.textContent = result.text;
+              dom.appendChild(pre);
+            }
+            return { dom };
+          },
+        };
+      } catch { return null; }
+    }, { hoverTime: 400 });
+
+    // Cmd+click go-to-definition + cmd-hold underline
+    let cmdLinkMark: DecorationSet = Decoration.none;
+    const cmdLinkEffect = StateEffect.define<{ from: number; to: number } | null>();
+    const cmdLinkField = StateField.define<DecorationSet>({
+      create: () => Decoration.none,
+      update(value, tr) {
+        for (const e of tr.effects) {
+          if (e.is(cmdLinkEffect)) {
+            if (e.value) {
+              return Decoration.set([
+                Decoration.mark({ class: "cm-lsp-link" }).range(e.value.from, e.value.to),
+              ]);
+            }
+            return Decoration.none;
+          }
+        }
+        return value;
+      },
+      provide: f => EditorView.decorations.from(f),
+    });
+
+    function wordRangeAt(view: EditorView, pos: number): { from: number; to: number } | null {
+      const line = view.state.doc.lineAt(pos);
+      const text = line.text;
+      const col = pos - line.from;
+      if (col >= text.length) return null;
+      const wordChar = /[\w$]/;
+      if (!wordChar.test(text[col])) return null;
+      let from = col;
+      let to = col;
+      while (from > 0 && wordChar.test(text[from - 1])) from--;
+      while (to < text.length && wordChar.test(text[to])) to++;
+      return { from: line.from + from, to: line.from + to };
+    }
+
+    const gotoDefHandler = EditorView.domEventHandlers({
+      click: (event, view) => {
+        if (!(event.metaKey || event.ctrlKey)) return false;
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (pos == null) return false;
+        // Clear underline
+        view.dispatch({ effects: cmdLinkEffect.of(null) });
+        const line = view.state.doc.lineAt(pos);
+        const lineNum = line.number;
+        const col = pos - line.from + 1;
+        lspGotoDefinition(workspaceId, filePath, lineNum, col).then((loc) => {
+          if (loc && onGotoDef) {
+            onGotoDef(loc.file_path, loc.line);
+          }
+        }).catch(() => {});
+        return true;
+      },
+      mousemove: (event, view) => {
+        if (!(event.metaKey || event.ctrlKey)) {
+          view.dispatch({ effects: cmdLinkEffect.of(null) });
+          return false;
+        }
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (pos == null) {
+          view.dispatch({ effects: cmdLinkEffect.of(null) });
+          return false;
+        }
+        const range = wordRangeAt(view, pos);
+        view.dispatch({ effects: cmdLinkEffect.of(range) });
+        return false;
+      },
+      keydown: (event, view) => {
+        if (event.key === "Meta" || event.key === "Control") {
+          view.dom.classList.add("cm-lsp-cmd-held");
+        }
+        return false;
+      },
+      keyup: (event, view) => {
+        if (event.key === "Meta" || event.key === "Control") {
+          view.dom.classList.remove("cm-lsp-cmd-held");
+          view.dispatch({ effects: cmdLinkEffect.of(null) });
+        }
+        return false;
+      },
+    });
+
+    return [hover, gotoDefHandler, cmdLinkField, diagnosticField];
+  }
+
+  /** Fetch and apply diagnostics from LSP. */
+  async function refreshDiagnostics() {
+    if (!lsp || !view) return;
+    try {
+      const diags = await lspDiagnostics(lsp.workspaceId, lsp.filePath);
+      diagnosticCount = diags.length;
+      view.dispatch({ effects: setDiagnostics.of(diags) });
+    } catch { /* silent — LSP may not be available */ }
+  }
+
   // ── Language detection ─────────────────────────────────
 
   function languageFromFilename(name: string): Extension[] {
@@ -373,6 +535,7 @@
         // Theme — reconfigured dynamically via compartment
         themeCompartment.of(buildCurrentTheme()),
         // Dynamic compartments
+        lspCompartment.of(lsp ? buildLspExtensions(lsp) : []),
         langCompartment.of(languageFromFilename(initialFilename)),
         readonlyCompartment.of(EditorState.readOnly.of(initialReadonly)),
         editableCompartment.of(EditorView.editable.of(!initialReadonly)),
@@ -458,6 +621,31 @@
     });
   });
 
+  // ── Sync LSP context ────────────────────────────────────
+
+  $effect(() => {
+    const ctx = lsp;
+    if (!view) return;
+    view.dispatch({
+      effects: lspCompartment.reconfigure(ctx ? buildLspExtensions(ctx) : []),
+    });
+    untrack(() => { diagnosticCount = 0; });
+  });
+
+  // Fetch diagnostics when LSP server becomes ready
+  $effect(() => {
+    if (!lsp) return;
+    let unlisten: (() => void) | undefined;
+
+    listen<{ server_id: string; status: string; message: string }>("lsp-status", (e) => {
+      if (e.payload.status === "ready") {
+        refreshDiagnostics();
+      }
+    }).then((fn) => { unlisten = fn; });
+
+    return () => { unlisten?.(); };
+  });
+
   // ── Public methods ────────────────────────────────────
 
   export function goToLine(line: number) {
@@ -491,5 +679,106 @@
   .code-editor :global(.cm-editor) {
     flex: 1;
     min-height: 0;
+  }
+
+  /* LSP hover tooltip — rendered markdown */
+  .code-editor :global(.cm-lsp-hover) {
+    max-width: 520px;
+    max-height: 350px;
+    overflow: auto;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.73rem;
+    line-height: 1.55;
+    color: var(--text-primary);
+  }
+
+  .code-editor :global(.cm-lsp-hover p) {
+    margin: 0.3rem 0;
+  }
+
+  .code-editor :global(.cm-lsp-hover p:first-child) {
+    margin-top: 0;
+  }
+
+  .code-editor :global(.cm-lsp-hover p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .code-editor :global(.cm-lsp-hover pre) {
+    margin: 0.35rem 0;
+    padding: 0.35rem 0.5rem;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    overflow-x: auto;
+  }
+
+  .code-editor :global(.cm-lsp-hover code) {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .code-editor :global(.cm-lsp-hover pre code) {
+    background: none;
+    padding: 0;
+  }
+
+  .code-editor :global(.cm-lsp-hover :not(pre) > code) {
+    background: rgba(0, 0, 0, 0.1);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+  }
+
+  .code-editor :global(.cm-lsp-hover hr) {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0.4rem 0;
+  }
+
+  .code-editor :global(.cm-lsp-hover a) {
+    color: var(--accent);
+  }
+
+  .code-editor :global(.cm-lsp-hover ul),
+  .code-editor :global(.cm-lsp-hover ol) {
+    margin: 0.3rem 0;
+    padding-left: 1.2rem;
+  }
+
+  .code-editor :global(.cm-lsp-hover h1),
+  .code-editor :global(.cm-lsp-hover h2),
+  .code-editor :global(.cm-lsp-hover h3) {
+    font-size: 0.78rem;
+    margin: 0.4rem 0 0.2rem;
+  }
+
+  /* LSP diagnostic underlines */
+  .code-editor :global(.cm-lsp-error) {
+    text-decoration: wavy underline var(--status-error, #e55);
+    text-decoration-skip-ink: none;
+    text-underline-offset: 3px;
+  }
+
+  .code-editor :global(.cm-lsp-warning) {
+    text-decoration: wavy underline var(--status-warning, #da3);
+    text-decoration-skip-ink: none;
+    text-underline-offset: 3px;
+  }
+
+  .code-editor :global(.cm-lsp-info) {
+    text-decoration: wavy underline var(--text-muted, #888);
+    text-decoration-skip-ink: none;
+    text-underline-offset: 3px;
+  }
+
+  /* Cmd-hold: pointer cursor */
+  .code-editor :global(.cm-lsp-cmd-held) {
+    cursor: pointer;
+  }
+
+  /* Cmd-hover: underline the word under cursor */
+  .code-editor :global(.cm-lsp-link) {
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+    cursor: pointer;
   }
 </style>

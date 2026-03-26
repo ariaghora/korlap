@@ -20,7 +20,16 @@ pub fn add_repo(path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<
 }
 
 #[tauri::command]
-pub fn remove_repo(repo_id: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+pub fn remove_repo(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+    lsp_manager: State<'_, Arc<Mutex<crate::lsp::server::LspServerPool>>>,
+) -> Result<(), String> {
+    // Shut down all LSP servers for this repo
+    if let Ok(mut mgr) = lsp_manager.lock() {
+        mgr.shutdown_repo(&repo_id);
+    }
+
     let mut state = state.lock().map_err(|e| e.to_string())?;
     state.repos.remove(&repo_id).ok_or("Repo not found")?;
     state.workspaces.retain(|_, w| w.repo_id != repo_id);
