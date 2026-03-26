@@ -251,6 +251,7 @@ pub async fn create_workspace(
 pub async fn remove_workspace(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    lsp_manager: State<'_, Arc<Mutex<crate::lsp::server::LspManager>>>,
 ) -> Result<(), String> {
     let (worktree_path, repo_path, ws_name, repo_id) = {
         let mut st = state.lock().map_err(|e| e.to_string())?;
@@ -271,6 +272,11 @@ pub async fn remove_workspace(
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
         (ws.worktree_path.clone(), repo.path.clone(), ws.name.clone(), ws.repo_id.clone())
     };
+
+    // Remove worktree from LSP servers (shuts down server if no folders remain)
+    if let Ok(mut mgr) = lsp_manager.lock() {
+        mgr.remove_worktree(&repo_id, &worktree_path);
+    }
 
     // Run remove script if configured
     {

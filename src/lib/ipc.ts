@@ -600,6 +600,16 @@ export interface NamedScript {
   command: string;
 }
 
+export interface LspServerConfig {
+  command: string;
+  args: string[];
+  extensions: string[];
+  detect_files: string[];
+  language_id: string;
+  install_hint: string;
+  project_roots: string[];
+}
+
 export interface RepoSettings {
   setup_script: string;
   run_scripts: NamedScript[];
@@ -609,6 +619,7 @@ export interface RepoSettings {
   default_thinking: boolean;
   default_plan: boolean;
   system_prompt: string;
+  lsp_servers: Record<string, LspServerConfig>;
 }
 
 export async function getRepoSettings(repoId: string): Promise<RepoSettings> {
@@ -620,6 +631,80 @@ export async function saveRepoSettings(
   settings: RepoSettings,
 ): Promise<void> {
   return invoke("save_repo_settings", { repoId, settings });
+}
+
+// ── LSP ─────────────────────────────────────────────────────────────
+
+/** Start LSP servers for a workspace in the background. Returns immediately. */
+export async function lspStartServer(workspaceId: string): Promise<void> {
+  return invoke("lsp_start_server", { workspaceId });
+}
+
+/** Query current LSP server status (for populating status bar on mount). */
+export async function lspGetStatus(): Promise<{ server_id: string; status: string }[]> {
+  return invoke("lsp_get_status");
+}
+
+export interface LspLocation {
+  file_path: string;
+  line: number;
+  character: number;
+}
+
+export interface LspDiagnostic {
+  line: number;
+  character: number;
+  end_line: number;
+  end_character: number;
+  severity: string;
+  message: string;
+  source: string;
+}
+
+export interface LspHoverResult {
+  kind: "markdown" | "plaintext";
+  text: string;
+}
+
+export async function lspHover(
+  workspaceId: string,
+  filePath: string,
+  line: number,
+  character: number,
+): Promise<LspHoverResult | null> {
+  return invoke<LspHoverResult | null>("lsp_hover", { workspaceId, filePath, line, character });
+}
+
+export async function lspGotoDefinition(
+  workspaceId: string,
+  filePath: string,
+  line: number,
+  character: number,
+): Promise<LspLocation | null> {
+  return invoke<LspLocation | null>("lsp_goto_definition", { workspaceId, filePath, line, character });
+}
+
+export async function lspDiagnostics(
+  workspaceId: string,
+  filePath: string,
+): Promise<LspDiagnostic[]> {
+  return invoke<LspDiagnostic[]>("lsp_diagnostics", { workspaceId, filePath });
+}
+
+export interface LspRenameResult {
+  files_changed: number;
+  edits_applied: number;
+  details: { file_path: string; edit_count: number }[];
+}
+
+export async function lspRename(
+  workspaceId: string,
+  filePath: string,
+  line: number,
+  character: number,
+  newName: string,
+): Promise<LspRenameResult> {
+  return invoke<LspRenameResult>("lsp_rename", { workspaceId, filePath, line, character, newName });
 }
 
 // ── Script Runner ───────────────────────────────────────────────────

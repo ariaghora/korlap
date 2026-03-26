@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
   import { Folder, FolderOpen, File as FileIcon, Search, FileSearch } from "lucide-svelte";
-  import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, searchWorkspaceFiles, searchRepoFiles, type FileEntry, type FileSearchResult } from "$lib/ipc";
+  import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, searchWorkspaceFiles, searchRepoFiles, lspStartServer, type FileEntry, type FileSearchResult } from "$lib/ipc";
   import { tooltip } from "$lib/actions";
   import ResizeHandle from "./ResizeHandle.svelte";
   import CodeEditor from "./CodeEditor.svelte";
@@ -240,6 +240,11 @@
     isEditing = false;
     expandedPaths.clear();
 
+    // Start LSP servers in background when file browser opens for a workspace
+    if (scope.type === "workspace") {
+      lspStartServer(scope.workspaceId).catch(() => {});
+    }
+
     doListDirectory("")
       .then((entries) => {
         rootEntries = entries.map(toNode);
@@ -297,6 +302,15 @@
     } finally {
       fileLoading = false;
     }
+  }
+
+  /** Navigate to a file+line from LSP go-to-definition (Cmd+click). */
+  async function handleGotoDef(filePath: string, line: number) {
+    await selectFile(filePath);
+    // Wait a tick for the editor to mount with new content, then jump to line
+    requestAnimationFrame(() => {
+      editorRef?.goToLine(line);
+    });
   }
 
   function startEditing() {
@@ -610,6 +624,7 @@
                 filename={selectedPath}
                 readonly={false}
                 onchange={(c) => { editContent = c; }}
+                lsp={scope.type === "workspace" && selectedPath ? { workspaceId: scope.workspaceId, filePath: selectedPath, onGotoDef: handleGotoDef } : null}
               />
             {:else}
               <CodeEditor
@@ -617,6 +632,7 @@
                 content={fileContent}
                 filename={selectedPath}
                 readonly={true}
+                lsp={scope.type === "workspace" && selectedPath ? { workspaceId: scope.workspaceId, filePath: selectedPath, onGotoDef: handleGotoDef } : null}
               />
             {/if}
           </div>

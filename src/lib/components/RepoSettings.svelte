@@ -1,12 +1,12 @@
 <script lang="ts">
   import {
-    getRepoSettings, saveRepoSettings, type RepoSettings, type NamedScript,
+    getRepoSettings, saveRepoSettings, type RepoSettings, type NamedScript, type LspServerConfig,
     getContextMeta, saveContextScope, buildKnowledgeBase, stopContextBuild,
     readContextFile, writeContextFile, draftContradictionResolution, resolveContradiction, updateKnowledgeBaseIncremental,
     type ContextMeta, type ContextBuildStatus, type AgentEvent,
   } from "$lib/ipc";
   import { onMount } from "svelte";
-  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown, Sun, Moon, Monitor } from "lucide-svelte";
+  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown, Sun, Moon, Monitor, Braces, Plus, RotateCcw } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
   import { themeList, getPreviewColors, type ThemeId } from "$lib/themes";
   import { getThemeId, setTheme, getColorMode, setColorMode, type ColorMode } from "$lib/stores/theme.svelte";
@@ -21,7 +21,7 @@
 
   let { repoId, repoName, repoPath, onClose }: Props = $props();
 
-  type Section = "scripts" | "agent" | "knowledge" | "appearance";
+  type Section = "scripts" | "agent" | "lsp" | "knowledge" | "appearance";
   let activeSection = $state<Section>("scripts");
   let currentThemeId = $state<ThemeId>(getThemeId());
   let currentColorMode = $state<ColorMode>(getColorMode());
@@ -34,6 +34,7 @@
     default_thinking: false,
     default_plan: false,
     system_prompt: "",
+    lsp_servers: {},
   });
 
   function addRunScript() {
@@ -138,6 +139,60 @@
         saveStatus = "idle";
       }
     }, 600);
+  }
+
+  // ── LSP state ──────────────────────────────────────────────────────
+  const BUILTIN_LSP: Record<string, LspServerConfig> = {
+    rust: { command: "rust-analyzer", args: [], extensions: ["rs"], detect_files: ["Cargo.toml"], language_id: "rust", install_hint: "rustup component add rust-analyzer", project_roots: [] },
+    typescript: { command: "typescript-language-server", args: ["--stdio"], extensions: ["ts","tsx","js","jsx","mts","mjs","cts","cjs"], detect_files: ["tsconfig.json","package.json"], language_id: "typescript", install_hint: "bun i -g typescript-language-server typescript", project_roots: [] },
+    go: { command: "gopls", args: ["serve"], extensions: ["go"], detect_files: ["go.mod"], language_id: "go", install_hint: "go install golang.org/x/tools/gopls@latest", project_roots: [] },
+    python: { command: "pyright-langserver", args: ["--stdio"], extensions: ["py","pyi"], detect_files: ["pyproject.toml","requirements.txt","setup.py"], language_id: "python", install_hint: "pip install pyright", project_roots: [] },
+  };
+
+  let addingLsp = $state(false);
+  let newLspId = $state("");
+  let newLspConfig = $state<LspServerConfig>({ command: "", args: [], extensions: [], language_id: "", detect_files: [], install_hint: "", project_roots: [] });
+
+  /** Merged view: built-in defaults + user overrides. */
+  function getLspEntries(): { id: string; config: LspServerConfig; isOverride: boolean; isCustom: boolean }[] {
+    const merged = { ...BUILTIN_LSP };
+    const overrides = settings.lsp_servers ?? {};
+    for (const [k, v] of Object.entries(overrides)) {
+      merged[k] = v;
+    }
+    return Object.entries(merged).map(([id, config]) => ({
+      id,
+      config,
+      isOverride: id in BUILTIN_LSP && id in overrides,
+      isCustom: !(id in BUILTIN_LSP),
+    }));
+  }
+
+  function removeLspServer(id: string) {
+    const next = { ...settings.lsp_servers };
+    delete next[id];
+    settings.lsp_servers = next;
+    scheduleAutosave();
+  }
+
+  function resetLspServer(id: string) {
+    // Remove user override so built-in default takes effect
+    removeLspServer(id);
+  }
+
+  function saveLspOverride(id: string, config: LspServerConfig) {
+    settings.lsp_servers = { ...settings.lsp_servers, [id]: config };
+    scheduleAutosave();
+  }
+
+  function addLspServer() {
+    const id = newLspId.trim().toLowerCase().replace(/\s+/g, "-");
+    if (!id || !newLspConfig.command.trim()) return;
+    settings.lsp_servers = { ...settings.lsp_servers, [id]: { ...newLspConfig } };
+    scheduleAutosave();
+    addingLsp = false;
+    newLspId = "";
+    newLspConfig = { command: "", args: [], extensions: [], language_id: "", detect_files: [], install_hint: "", project_roots: [] };
   }
 
   function scheduleScopeSave() {
@@ -447,6 +502,7 @@
   const repoSections: { id: Section; label: string; icon: typeof Terminal }[] = [
     { id: "scripts", label: "Scripts", icon: Terminal },
     { id: "agent", label: "Agent", icon: Bot },
+    { id: "lsp", label: "Language Servers", icon: Braces },
     { id: "knowledge", label: "Knowledge", icon: BookOpen },
   ];
 
@@ -702,6 +758,125 @@
           <code>{"{{pr_title}}"}</code>
         </div>
       </div>
+
+    {:else if activeSection === "lsp"}
+      <div class="section-header">
+        <h1>Language Servers</h1>
+        <span class="autosave-status" class:visible={saveStatus !== "idle"}>
+          {saveStatus === "saving" ? "Saving..." : "Saved"}
+        </span>
+      </div>
+
+      <p class="section-desc">
+        LSP servers give agents compiler-accurate code navigation — go-to-definition, find-references, hover, diagnostics. One shared server per language per repo, across all workspaces.
+      </p>
+
+      {#each getLspEntries() as { id, config, isOverride, isCustom }}
+        <div class="lsp-card">
+          <div class="lsp-card-header">
+            <span class="lsp-id">{id}</span>
+            <div class="lsp-badges">
+              {#if isOverride}
+                <span class="lsp-badge override">override</span>
+              {:else if isCustom}
+                <span class="lsp-badge custom">custom</span>
+              {:else}
+                <span class="lsp-badge builtin">built-in</span>
+              {/if}
+            </div>
+            <div class="lsp-actions">
+              {#if isOverride}
+                <button class="lsp-action-btn" use:tooltip={{ text: "Reset to default" }} onclick={() => resetLspServer(id)}>
+                  <RotateCcw size={12} />
+                </button>
+              {/if}
+              {#if isCustom || isOverride}
+                <button class="lsp-action-btn danger" use:tooltip={{ text: "Remove" }} onclick={() => removeLspServer(id)}>
+                  <Trash2 size={12} />
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          <div class="lsp-fields">
+            <label class="lsp-field">
+              <span>Command</span>
+              <input type="text" value={config.command} oninput={(e) => saveLspOverride(id, { ...config, command: (e.target as HTMLInputElement).value })} spellcheck="false" />
+            </label>
+            <label class="lsp-field">
+              <span>Args</span>
+              <input type="text" value={config.args.join(" ")} oninput={(e) => saveLspOverride(id, { ...config, args: (e.target as HTMLInputElement).value.split(" ").filter(Boolean) })} spellcheck="false" placeholder="--stdio" />
+            </label>
+            <label class="lsp-field">
+              <span>Extensions</span>
+              <input type="text" value={config.extensions.join(", ")} oninput={(e) => saveLspOverride(id, { ...config, extensions: (e.target as HTMLInputElement).value.split(",").map(s => s.trim()).filter(Boolean) })} spellcheck="false" placeholder="rs, ts, go" />
+            </label>
+            <label class="lsp-field">
+              <span>Detect files</span>
+              <input type="text" value={config.detect_files.join(", ")} oninput={(e) => saveLspOverride(id, { ...config, detect_files: (e.target as HTMLInputElement).value.split(",").map(s => s.trim()).filter(Boolean) })} spellcheck="false" placeholder="Cargo.toml, package.json" />
+            </label>
+            <label class="lsp-field">
+              <span>Language ID</span>
+              <input type="text" value={config.language_id} oninput={(e) => saveLspOverride(id, { ...config, language_id: (e.target as HTMLInputElement).value })} spellcheck="false" />
+            </label>
+            <label class="lsp-field">
+              <span>Install hint</span>
+              <input type="text" value={config.install_hint} oninput={(e) => saveLspOverride(id, { ...config, install_hint: (e.target as HTMLInputElement).value })} spellcheck="false" />
+            </label>
+            <label class="lsp-field">
+              <span>Project roots</span>
+              <input type="text" value={(config.project_roots ?? []).join(", ")} oninput={(e) => saveLspOverride(id, { ...config, project_roots: (e.target as HTMLInputElement).value.split(",").map(s => s.trim()).filter(Boolean) })} spellcheck="false" placeholder="auto-detect (leave empty)" />
+            </label>
+          </div>
+        </div>
+      {/each}
+
+      {#if addingLsp}
+        <div class="lsp-card adding">
+          <div class="lsp-fields">
+            <label class="lsp-field">
+              <span>Server ID</span>
+              <input type="text" bind:value={newLspId} spellcheck="false" placeholder="e.g. svelte, zig, elixir" />
+            </label>
+            <label class="lsp-field">
+              <span>Command</span>
+              <input type="text" bind:value={newLspConfig.command} spellcheck="false" placeholder="svelteserver" />
+            </label>
+            <label class="lsp-field">
+              <span>Args</span>
+              <input type="text" value={newLspConfig.args.join(" ")} oninput={(e) => newLspConfig = { ...newLspConfig, args: (e.target as HTMLInputElement).value.split(" ").filter(Boolean) }} spellcheck="false" placeholder="--stdio" />
+            </label>
+            <label class="lsp-field">
+              <span>Extensions</span>
+              <input type="text" value={newLspConfig.extensions.join(", ")} oninput={(e) => newLspConfig = { ...newLspConfig, extensions: (e.target as HTMLInputElement).value.split(",").map(s => s.trim()).filter(Boolean) }} spellcheck="false" placeholder="svelte" />
+            </label>
+            <label class="lsp-field">
+              <span>Detect files</span>
+              <input type="text" value={newLspConfig.detect_files.join(", ")} oninput={(e) => newLspConfig = { ...newLspConfig, detect_files: (e.target as HTMLInputElement).value.split(",").map(s => s.trim()).filter(Boolean) }} spellcheck="false" placeholder="svelte.config.js" />
+            </label>
+            <label class="lsp-field">
+              <span>Language ID</span>
+              <input type="text" bind:value={newLspConfig.language_id} spellcheck="false" placeholder="svelte" />
+            </label>
+            <label class="lsp-field">
+              <span>Install hint</span>
+              <input type="text" bind:value={newLspConfig.install_hint} spellcheck="false" placeholder="bun i -g svelte-language-server" />
+            </label>
+            <label class="lsp-field">
+              <span>Project roots</span>
+              <input type="text" value={newLspConfig.project_roots.join(", ")} oninput={(e) => newLspConfig = { ...newLspConfig, project_roots: (e.target as HTMLInputElement).value.split(",").map(s => s.trim()).filter(Boolean) }} spellcheck="false" placeholder="auto-detect (leave empty)" />
+            </label>
+          </div>
+          <div class="lsp-add-actions">
+            <button class="lsp-save-btn" onclick={addLspServer}>Add server</button>
+            <button class="lsp-cancel-btn" onclick={() => { addingLsp = false; }}>Cancel</button>
+          </div>
+        </div>
+      {:else}
+        <button class="add-script-btn" onclick={() => { addingLsp = true; }}>
+          <Plus size={13} /> Add language server
+        </button>
+      {/if}
 
     {:else if activeSection === "knowledge"}
       <div class="section-header">
@@ -1417,6 +1592,161 @@
   .add-script-btn:hover {
     border-color: var(--accent);
     color: var(--accent);
+  }
+
+  /* ── LSP ──────────────────────────────── */
+
+  .section-desc {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 1.5rem;
+  }
+
+  .lsp-card {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .lsp-card.adding {
+    border-color: var(--accent);
+    border-style: dashed;
+  }
+
+  .lsp-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.65rem;
+  }
+
+  .lsp-id {
+    font-weight: 600;
+    font-size: 0.82rem;
+    color: var(--text-bright);
+  }
+
+  .lsp-badges {
+    display: flex;
+    gap: 0.3rem;
+    flex: 1;
+  }
+
+  .lsp-badge {
+    font-size: 0.62rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-weight: 500;
+  }
+
+  .lsp-badge.builtin {
+    background: var(--bg-dim);
+    color: var(--text-dim);
+  }
+
+  .lsp-badge.override {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+  }
+
+  .lsp-badge.custom {
+    background: color-mix(in srgb, var(--status-ok) 15%, transparent);
+    color: var(--status-ok);
+  }
+
+  .lsp-actions {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .lsp-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .lsp-action-btn:hover {
+    color: var(--text-bright);
+    border-color: var(--border-light);
+  }
+
+  .lsp-action-btn.danger:hover {
+    color: var(--status-error);
+    border-color: var(--status-error);
+  }
+
+  .lsp-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem 0.65rem;
+  }
+
+  .lsp-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .lsp-field span {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .lsp-field input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.3rem 0.45rem;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    font-family: var(--font-mono, monospace);
+  }
+
+  .lsp-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .lsp-add-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.65rem;
+  }
+
+  .lsp-save-btn {
+    padding: 0.3rem 0.75rem;
+    background: var(--accent);
+    color: var(--on-accent, #fff);
+    border: none;
+    border-radius: 5px;
+    font-size: 0.73rem;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .lsp-cancel-btn {
+    padding: 0.3rem 0.75rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-muted);
+    font-size: 0.73rem;
+    cursor: pointer;
+    font-family: inherit;
   }
 
   /* ── Env hint ────────────────────────── */

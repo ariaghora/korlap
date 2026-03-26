@@ -1,10 +1,11 @@
-mod helpers;
+pub(crate) mod helpers;
 
 pub mod agent;
 pub mod context;
 pub mod files;
 pub mod git;
 pub mod github;
+pub mod lsp;
 pub mod persistence;
 pub mod repo;
 pub mod scripts;

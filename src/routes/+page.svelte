@@ -54,6 +54,8 @@
     getContextMeta,
     checkInvariants,
     updateContextAfterMerge,
+    lspStartServer,
+    lspGetStatus,
     type ContextBuildStatus,
   } from "$lib/ipc";
   import {
@@ -85,7 +87,7 @@
   import { Plus } from "lucide-svelte";
   import { type ReviewState } from "$lib/components/ReviewPill.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
-  import { addToast } from "$lib/stores/toasts.svelte";
+  import { addToast, removeToast } from "$lib/stores/toasts.svelte";
   import { DEFAULT_REVIEW_PROMPT } from "$lib/review-prompt";
   import {
     hydratePrStatusFromCache,
@@ -105,6 +107,9 @@
   let activeTab = $state<PanelTab>("diff");
   let chatExpanded = $state(true);
   let terminalPaneVisible = $state(false);
+
+  // App-wide LSP status tracking
+  let lspStatusMap = $state(new Map<string, { status: string; message: string }>());
   let diffRefreshTrigger = $state(0);
   let showSettings = $state(false);
   let creatingWsId = $state<string | null>(null);
@@ -605,6 +610,41 @@
           workspaces[idx] = updated;
         }
       });
+
+      // LSP server lifecycle events → status bar + toast notifications
+      const lspStartToasts = new Map<string, string>();
+      const unlistenLsp = await listen<{ server_id: string; status: string; message: string }>("lsp-status", (e) => {
+        const { server_id, status, message } = e.payload;
+        // Update app-wide status bar
+        const next = new Map(lspStatusMap);
+        next.set(server_id, { status, message });
+        lspStatusMap = next;
+
+        // Toast for transitions
+        if (status === "starting") {
+          const tid = addToast(message, "info", 60_000);
+          lspStartToasts.set(server_id, tid);
+        } else if (status === "ready") {
+          const prev = lspStartToasts.get(server_id);
+          if (prev) { removeToast(prev); lspStartToasts.delete(server_id); }
+          addToast(message, "success");
+        } else if (status === "error") {
+          const prev = lspStartToasts.get(server_id);
+          if (prev) { removeToast(prev); lspStartToasts.delete(server_id); }
+          addToast(message, "error");
+        }
+      });
+
+      // Populate status bar with already-running servers (events may have fired before mount)
+      lspGetStatus().then((servers) => {
+        if (servers.length > 0) {
+          const next = new Map(lspStatusMap);
+          for (const s of servers) {
+            next.set(s.server_id, { status: s.status, message: `${s.server_id} ${s.status}` });
+          }
+          lspStatusMap = next;
+        }
+      }).catch(() => {});
     })();
 
     function handleKeydown(e: KeyboardEvent) {
@@ -2070,6 +2110,8 @@
     // Refresh PR status in background so it's current when the user lands on the workspace
     refreshPrStatus(wsId);
     refreshBaseUpdates(wsId);
+    // Start LSP servers in background (non-blocking)
+    lspStartServer(wsId).catch(() => {});
   }
 </script>
 
@@ -2528,6 +2570,20 @@
         }}
       />
     {/if}
+
+    <!-- App-wide status bar -->
+    <div class="app-statusbar">
+      <div class="statusbar-left">
+        {#each [...lspStatusMap] as [serverId, info]}
+          {@const busy = info.status === "starting" || info.status === "indexing"}
+          <span class="lsp-pill" class:busy class:error={info.status === "error"} class:ready={info.status === "ready"}>
+            {#if busy}<span class="lsp-pill-spinner"></span>{/if}
+            {serverId}
+          </span>
+        {/each}
+      </div>
+      <div class="statusbar-right"></div>
+    </div>
   </div>
 {/if}
 
@@ -3054,6 +3110,71 @@
     display: flex;
     gap: 0.5rem;
     justify-content: flex-end;
+  }
+
+  /* ── App-wide status bar ────────────────────────── */
+
+  .app-statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0.6rem;
+    height: 22px;
+    background: var(--bg-sidebar);
+    border-top: 1px solid var(--border);
+    font-size: 0.64rem;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    gap: 0.5rem;
+    user-select: none;
+  }
+
+  .statusbar-left, .statusbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .lsp-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 9px;
+    font-size: 0.6rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    background: color-mix(in srgb, var(--status-ok, #6a4) 12%, transparent);
+    color: var(--status-ok, #6a4);
+  }
+
+  .lsp-pill.busy {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+  }
+
+  .lsp-pill.error {
+    background: color-mix(in srgb, var(--status-error) 12%, transparent);
+    color: var(--status-error);
+  }
+
+  .lsp-pill.ready {
+    background: color-mix(in srgb, var(--status-ok, #6a4) 12%, transparent);
+    color: var(--status-ok, #6a4);
+  }
+
+  .lsp-pill-spinner {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border: 1.5px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: lsp-pill-spin 0.8s linear infinite;
+  }
+
+  @keyframes lsp-pill-spin {
+    to { transform: rotate(360deg); }
   }
 
   /* ── App layout ──────────────────────────────────── */

@@ -151,6 +151,188 @@ server.tool(
   },
 );
 
+// ── LSP Tools ───────────────────────────────────────────────────────
+
+server.tool(
+  "lsp_goto_definition",
+  "Find where a symbol is defined. Provide the file path (relative to workspace root), line number (1-based), and character position (1-based).",
+  {
+    file_path: z
+      .string()
+      .describe("File path relative to workspace root, e.g. 'src/main.rs'"),
+    line: z.number().int().positive().describe("Line number (1-based)"),
+    character: z
+      .number()
+      .int()
+      .positive()
+      .describe("Character position (1-based)"),
+  },
+  async ({ file_path, line, character }) => {
+    const { ok, data } = await apiCall("POST", "/lsp/goto-definition", {
+      workspace_id: WORKSPACE_ID,
+      file_path,
+      line,
+      character,
+    });
+
+    const text = ok
+      ? (data as { text: string }).text
+      : `LSP error: ${JSON.stringify(data)}`;
+    return {
+      content: [{ type: "text" as const, text }],
+      isError: !ok,
+    };
+  },
+);
+
+server.tool(
+  "lsp_find_references",
+  "Find all references to a symbol across the workspace. Use this to understand how a function/type/variable is used before modifying it.",
+  {
+    file_path: z
+      .string()
+      .describe("File path relative to workspace root"),
+    line: z.number().int().positive().describe("Line number (1-based)"),
+    character: z
+      .number()
+      .int()
+      .positive()
+      .describe("Character position (1-based)"),
+  },
+  async ({ file_path, line, character }) => {
+    const { ok, data } = await apiCall("POST", "/lsp/references", {
+      workspace_id: WORKSPACE_ID,
+      file_path,
+      line,
+      character,
+    });
+
+    const text = ok
+      ? (data as { text: string }).text
+      : `LSP error: ${JSON.stringify(data)}`;
+    return {
+      content: [{ type: "text" as const, text }],
+      isError: !ok,
+    };
+  },
+);
+
+server.tool(
+  "lsp_hover",
+  "Get type information and documentation for a symbol at a position. Use this to check a function's signature or a variable's type without opening the file.",
+  {
+    file_path: z
+      .string()
+      .describe("File path relative to workspace root"),
+    line: z.number().int().positive().describe("Line number (1-based)"),
+    character: z
+      .number()
+      .int()
+      .positive()
+      .describe("Character position (1-based)"),
+  },
+  async ({ file_path, line, character }) => {
+    const { ok, data } = await apiCall("POST", "/lsp/hover", {
+      workspace_id: WORKSPACE_ID,
+      file_path,
+      line,
+      character,
+    });
+
+    const text = ok
+      ? (data as { text: string }).text
+      : `LSP error: ${JSON.stringify(data)}`;
+    return {
+      content: [{ type: "text" as const, text }],
+      isError: !ok,
+    };
+  },
+);
+
+server.tool(
+  "lsp_workspace_symbols",
+  "Search for symbols (functions, classes, types, variables) across the workspace by name. Use this to find where something is defined when you know its name but not its file.",
+  {
+    query: z
+      .string()
+      .describe("Symbol name or partial name to search for"),
+  },
+  async ({ query }) => {
+    const { ok, data } = await apiCall("POST", "/lsp/workspace-symbols", {
+      workspace_id: WORKSPACE_ID,
+      query,
+    });
+
+    const text = ok
+      ? (data as { text: string }).text
+      : `LSP error: ${JSON.stringify(data)}`;
+    return {
+      content: [{ type: "text" as const, text }],
+      isError: !ok,
+    };
+  },
+);
+
+server.tool(
+  "lsp_diagnostics",
+  "Get compiler errors and warnings for a file. Use this after making changes to check if the code compiles correctly.",
+  {
+    file_path: z
+      .string()
+      .describe("File path relative to workspace root"),
+  },
+  async ({ file_path }) => {
+    const { ok, data } = await apiCall("POST", "/lsp/diagnostics", {
+      workspace_id: WORKSPACE_ID,
+      file_path,
+    });
+
+    const text = ok
+      ? (data as { text: string }).text
+      : `LSP error: ${JSON.stringify(data)}`;
+    return {
+      content: [{ type: "text" as const, text }],
+      isError: !ok,
+    };
+  },
+);
+
+server.tool(
+  "lsp_rename",
+  "Rename a symbol across the entire workspace. Applies changes to all files automatically. Use this for safe, compiler-accurate renames of functions, variables, types, etc.",
+  {
+    file_path: z
+      .string()
+      .describe("File path relative to workspace root"),
+    line: z.number().int().positive().describe("Line number (1-based)"),
+    character: z
+      .number()
+      .int()
+      .positive()
+      .describe("Character position (1-based)"),
+    new_name: z
+      .string()
+      .describe("The new name for the symbol"),
+  },
+  async ({ file_path, line, character, new_name }) => {
+    const { ok, data } = await apiCall("POST", "/lsp/rename", {
+      workspace_id: WORKSPACE_ID,
+      file_path,
+      line,
+      character,
+      new_name,
+    });
+
+    const text = ok
+      ? (data as { text: string }).text
+      : `LSP error: ${JSON.stringify(data)}`;
+    return {
+      content: [{ type: "text" as const, text }],
+      isError: !ok,
+    };
+  },
+);
+
 // ── Start ───────────────────────────────────────────────────────────
 
 async function main() {
