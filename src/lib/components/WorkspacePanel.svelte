@@ -386,13 +386,35 @@
 
 <main class="panel">
   {#if selectedWs}
-    <!-- Action bar: breadcrumb + Run + PR actions -->
+    <!-- Unified toolbar: [Diff|Files] + breadcrumb + Run + PR actions + terminal toggle -->
     <div class="action-bar">
+      {#each availableTabs as tab}
+        <button
+          class="pane-tab"
+          class:active={activeTab === tab}
+          onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") { fileNavigatePath = null; fileNavigateLine = null; } }}
+        >
+          {tab.charAt(0).toUpperCase() + tab.slice(1)}
+          {#if tab === "diff" && changeCounts.get(selectedWs.id)}
+            {@const cc = changeCounts.get(selectedWs.id)}
+            {#if cc && (cc.additions > 0 || cc.deletions > 0)}
+              <span class="diff-badge">
+                <span class="diff-add">+{cc.additions}</span>
+                <span class="diff-del">-{cc.deletions}</span>
+              </span>
+            {/if}
+          {/if}
+        </button>
+      {/each}
+
       <span class="breadcrumb">
         <span class="breadcrumb-branch">{selectedWs.branch}</span>
         <span class="breadcrumb-sep">›</span>
         <span class="breadcrumb-base">{defaultBranch}</span>
       </span>
+
+      <div class="action-bar-spacer"></div>
+
       {#if hasRunScripts}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="run-script-wrapper" onclick={(e) => e.stopPropagation()}>
@@ -487,6 +509,17 @@
         </div>
       {/if}
 
+      <button
+        class="terminal-toggle-btn"
+        class:active={terminalPaneVisible}
+        onclick={() => { terminalPaneVisible = !terminalPaneVisible; }}
+        use:tooltip={{ text: "Toggle terminal", shortcut: "⌘`" }}
+      >
+        <Terminal size={13} />
+      </button>
+
+      <div class="action-bar-spacer"></div>
+
       <div class="tab-actions">
         {#if baseBehindBy > 0}
           <button
@@ -546,35 +579,6 @@
     <div class="tab-content">
       <!-- Left pane: Diff / Files -->
       <div class="content-left">
-        <div class="pane-tabs">
-          {#each availableTabs as tab}
-            <button
-              class="pane-tab"
-              class:active={activeTab === tab}
-              onclick={() => { activeTab = tab as PanelTab; if (tab !== "files") { fileNavigatePath = null; fileNavigateLine = null; } }}
-            >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              {#if tab === "diff" && changeCounts.get(selectedWs.id)}
-                {@const cc = changeCounts.get(selectedWs.id)}
-                {#if cc && (cc.additions > 0 || cc.deletions > 0)}
-                  <span class="diff-badge">
-                    <span class="diff-add">+{cc.additions}</span>
-                    <span class="diff-del">-{cc.deletions}</span>
-                  </span>
-                {/if}
-              {/if}
-            </button>
-          {/each}
-          <div class="pane-tabs-spacer"></div>
-          <button
-            class="terminal-toggle-btn"
-            class:active={terminalPaneVisible}
-            onclick={() => { terminalPaneVisible = !terminalPaneVisible; }}
-            use:tooltip={{ text: "Toggle terminal", shortcut: "⌘`" }}
-          >
-            <Terminal size={13} />
-          </button>
-        </div>
         <div class="content-left-body">
           {#if selectedWs}
             <div class="ws-tab-container active-layer" style:display={activeTab === "diff" ? undefined : "none"}>
@@ -837,6 +841,10 @@
     flex-shrink: 0;
   }
 
+  .action-bar-spacer {
+    flex: 1;
+  }
+
   /* ── Pane tab bars (shared by left + right panes) ── */
 
   .pane-tabs {
@@ -889,10 +897,6 @@
     background: var(--border);
   }
 
-  .pane-tabs-spacer {
-    flex: 1;
-  }
-
   .terminal-toggle-btn {
     display: flex;
     align-items: center;
@@ -902,7 +906,7 @@
     padding: 0;
     background: transparent;
     border: 1px solid var(--border-light);
-    border-radius: 4px;
+    border-radius: 5px;
     color: var(--text-dim);
     cursor: pointer;
     flex-shrink: 0;
@@ -942,10 +946,10 @@
     justify-content: center;
     gap: 0.25rem;
     padding: 0 0.55rem;
-    height: 26px;
+    height: 22px;
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-    border-radius: 6px;
+    border-radius: 5px;
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--accent);
@@ -1012,7 +1016,7 @@
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     border-left: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-    border-radius: 0 6px 6px 0;
+    border-radius: 0 5px 5px 0;
     color: var(--accent);
     cursor: pointer;
     flex-shrink: 0;
