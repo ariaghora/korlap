@@ -500,9 +500,19 @@ fn reader_loop(stdout: std::process::ChildStdout, handle: Arc<Mutex<LspServerHan
 
         // Dispatch: response (has "id" + "result"/"error") vs notification (no "id" but has "method")
         if let Some(id) = msg.get("id").and_then(|v| v.as_i64()) {
-            // Response to a request we sent
             if msg.get("method").is_some() {
-                // Server-initiated request (e.g. window/workDoneProgress/create) — ignore
+                // Server-initiated request (e.g. window/workDoneProgress/create,
+                // client/registerCapability). We MUST respond or the server deadlocks.
+                let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
+                tracing::debug!("LSP: responding to server request: {} (id={})", method, id);
+                if let Ok(mut h) = handle.lock() {
+                    let response = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": null
+                    });
+                    let _ = write_message(&mut h.stdin, &response);
+                }
                 continue;
             }
             if let Ok(mut h) = handle.lock() {
