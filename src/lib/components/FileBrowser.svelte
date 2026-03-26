@@ -182,8 +182,8 @@
   // Cmd+F / Cmd+Shift+F handler — only when this file browser is visible
   function handleGlobalKeydown(e: KeyboardEvent) {
     if (e.key === "f" && e.metaKey) {
-      // Check if this component is visible (not display:none)
-      if (browserEl && browserEl.offsetParent !== null) {
+      // Check if this component is visible (not display:none, not in inert container)
+      if (browserEl && browserEl.offsetParent !== null && !browserEl.closest("[inert]")) {
         e.preventDefault();
         e.stopPropagation();
         if (e.shiftKey) {
