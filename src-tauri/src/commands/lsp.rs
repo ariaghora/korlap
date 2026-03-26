@@ -33,7 +33,7 @@ fn get_running_server(
         .and_then(|e| e.to_str())
         .unwrap_or("");
 
-    let (repo_id, _repo_path, worktree_path) = resolve_ws(state, workspace_id)?;
+    let (repo_id, repo_path, worktree_path) = resolve_ws(state, workspace_id)?;
 
     let user_overrides = state
         .lock()
@@ -64,8 +64,22 @@ fn get_running_server(
     };
     drop(mgr);
 
-    // Ensure this worktree is registered with the server
-    let _ = lsp::add_worktree(&handle, &worktree_path);
+    // Detect project subdirectory and register the corresponding worktree path
+    let project_root = lsp::detect::detect_project_root(&repo_path, config);
+    let worktree_project_dir = if let Some(ref pr) = project_root {
+        if let Ok(subdir) = pr.strip_prefix(&repo_path) {
+            if !subdir.as_os_str().is_empty() {
+                worktree_path.join(subdir)
+            } else {
+                worktree_path.clone()
+            }
+        } else {
+            worktree_path.clone()
+        }
+    } else {
+        worktree_path.clone()
+    };
+    let _ = lsp::add_worktree(&handle, &worktree_project_dir);
 
     let abs_path = worktree_path.join(file_path);
     Ok(Some((handle, worktree_path, abs_path, language_id)))
@@ -300,7 +314,18 @@ pub async fn lsp_start_server(
 
         let config_owned = config.clone();
         let project_root = project_root.clone();
-        let worktree_path = worktree_path.clone();
+        // Compute worktree project dir: if project is in a subdirectory (e.g., "backend/"),
+        // register <worktree>/backend/ instead of just <worktree>/ so the LSP server
+        // can find pyproject.toml, source roots, etc. in the worktree too.
+        let worktree_project_dir = if let Ok(subdir) = project_root.strip_prefix(&repo_path) {
+            if !subdir.as_os_str().is_empty() {
+                worktree_path.join(subdir)
+            } else {
+                worktree_path.clone()
+            }
+        } else {
+            worktree_path.clone()
+        };
         let lsp_mgr = lsp_mgr.clone();
         let app = app.clone();
 
@@ -352,7 +377,7 @@ pub async fn lsp_start_server(
 
             match result {
                 Ok(handle) => {
-                    let _ = lsp::add_worktree(&handle, &worktree_path);
+                    let _ = lsp::add_worktree(&handle, &worktree_project_dir);
 
                     // 3. Brief mutex hold: insert handle — now visible to UI via get_existing
                     if let Ok(mut mgr) = lsp_mgr.lock() {

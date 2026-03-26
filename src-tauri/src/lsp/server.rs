@@ -234,6 +234,29 @@ pub fn start_server(
     cmd.current_dir(repo_root);
     inject_shell_env(&mut cmd);
 
+    // Auto-detect Python virtual environment in the project root.
+    // Setting VIRTUAL_ENV tells pyright (and other Python tools) which
+    // venv to use for import resolution — critical for worktrees where
+    // .venv is gitignored and doesn't exist locally.
+    for venv_dir in [".venv", "venv"] {
+        let venv_path = repo_root.join(venv_dir);
+        if venv_path.join("pyvenv.cfg").exists() {
+            tracing::info!(
+                "Detected Python venv at {}, injecting VIRTUAL_ENV",
+                venv_path.display()
+            );
+            cmd.env("VIRTUAL_ENV", &venv_path);
+            // Prepend venv bin to PATH so pyright finds the right Python
+            let venv_bin = venv_path.join("bin");
+            if let Some(existing_path) = std::env::var("PATH").ok() {
+                cmd.env("PATH", format!("{}:{}", venv_bin.display(), existing_path));
+            } else {
+                cmd.env("PATH", venv_bin);
+            }
+            break;
+        }
+    }
+
     let mut child = cmd.spawn().map_err(|e| {
         LspError::Transport(format!(
             "Failed to spawn {}: {}",

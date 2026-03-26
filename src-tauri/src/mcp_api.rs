@@ -322,6 +322,13 @@ fn get_lsp_server(
         mgr.is_running(&key)
     };
 
+    // Detect the correct project root (may be a subdirectory like "backend/")
+    // instead of using repo_path directly. This ensures rootUri points to where
+    // pyproject.toml/Cargo.toml/etc. actually lives, so the LSP server can find
+    // venvs, source roots, etc.
+    let project_root = lsp::detect::detect_project_root(&repo_path, &config_owned)
+        .unwrap_or_else(|| repo_path.clone());
+
     if !already_running {
         let _ = app.emit("lsp-status", serde_json::json!({
             "server_id": key.server_id,
@@ -334,7 +341,7 @@ fn get_lsp_server(
         let mut mgr = lsp_mgr.lock().map_err(|e| {
             ("500 Internal Server Error".to_string(), format!(r#"{{"error":"{}"}}"#, e))
         })?;
-        match mgr.get_or_start(&key, &config_owned, &repo_path) {
+        match mgr.get_or_start(&key, &config_owned, &project_root) {
             Ok(v) => v,
             Err(e) => {
                 let _ = app.emit("lsp-status", serde_json::json!({
@@ -358,7 +365,7 @@ fn get_lsp_server(
             "status": "indexing",
             "message": format!("{} indexing...", key.server_id),
         }));
-        let _ = lsp::server::wait_for_ready(&handle_arc, &repo_path);
+        let _ = lsp::server::wait_for_ready(&handle_arc, &project_root);
         let _ = app.emit("lsp-status", serde_json::json!({
             "server_id": key.server_id,
             "status": "ready",
@@ -366,8 +373,20 @@ fn get_lsp_server(
         }));
     }
 
-    // Ensure worktree is registered as a workspace folder
-    let _ = lsp::add_worktree(&handle_arc, &worktree_path);
+    // Ensure worktree is registered as a workspace folder.
+    // If the project lives in a subdirectory (e.g., "backend/"), register
+    // the corresponding subdirectory in the worktree so the LSP server
+    // can find pyproject.toml, source roots, etc. there too.
+    let worktree_project_dir = if let Ok(subdir) = project_root.strip_prefix(&repo_path) {
+        if !subdir.as_os_str().is_empty() {
+            worktree_path.join(subdir)
+        } else {
+            worktree_path.clone()
+        }
+    } else {
+        worktree_path.clone()
+    };
+    let _ = lsp::add_worktree(&handle_arc, &worktree_project_dir);
 
     let abs_path = worktree_path.join(file_path);
     Ok((handle_arc, worktree_path, abs_path, language_id))
@@ -544,7 +563,17 @@ fn handle_lsp_workspace_symbols(
                 Err(_) => continue, // skip servers whose binary isn't installed
             }
         };
-        let _ = lsp::add_worktree(&handle_arc, &worktree_path);
+        // Add worktree with subdirectory awareness
+        let worktree_project_dir = if let Ok(subdir) = project_root.strip_prefix(&repo_path) {
+            if !subdir.as_os_str().is_empty() {
+                worktree_path.join(subdir)
+            } else {
+                worktree_path.clone()
+            }
+        } else {
+            worktree_path.clone()
+        };
+        let _ = lsp::add_worktree(&handle_arc, &worktree_project_dir);
 
         if let Ok(result) = lsp::workspace_symbols(&handle_arc, query) {
             if let Some(arr) = result.as_array() {
