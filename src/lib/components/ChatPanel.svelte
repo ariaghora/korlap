@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, tokensByWorkspace, type Message } from "$lib/stores/messages.svelte";
   import { searchWorkspaceFiles, suggestReplies, getCachedModels, getModelLabel, type FileSearchResult } from "$lib/ipc";
-  import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil, ChevronDown, Zap } from "lucide-svelte";
+  import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil, ChevronDown } from "lucide-svelte";
   import { renderMarkdown, renderUserMarkdown } from "$lib/markdown";
   import { externalLinks, copyCodeBlocks, tooltip } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
@@ -637,9 +637,7 @@
                 class="queue-send-now"
                 onclick={() => onSendNow?.(item.id)}
                 use:tooltip={{ text: "Stop agent and send now" }}
-              >
-                <Zap size={11} strokeWidth={2.5} />
-              </button>
+              >Send now</button>
             {/if}
             <button
               type="button"
@@ -1396,20 +1394,21 @@
 
   .queue-send-now {
     background: none;
-    border: none;
+    border: 1px solid var(--accent);
     color: var(--accent);
     cursor: pointer;
-    padding: 0 0.2rem;
+    padding: 0.1rem 0.4rem;
     flex-shrink: 0;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    opacity: 0.7;
-    transition: opacity 0.1s;
+    font-size: 0.65rem;
+    font-weight: 500;
+    border-radius: 4px;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
   }
 
   .queue-send-now:hover {
-    opacity: 1;
+    background: var(--accent);
+    color: var(--bg-card);
   }
 
   .queue-remove {
