@@ -929,6 +929,44 @@
     });
   }
 
+  function handleManualCheckout(data: { branchName: string; description: string }) {
+    if (!activeRepo || creatingWsId) return;
+
+    const repoId = activeRepo.id;
+    const tempId = `creating-${crypto.randomUUID()}`;
+    const placeholder: WorkspaceInfo = {
+      id: tempId,
+      name: data.branchName,
+      branch: data.branchName,
+      worktree_path: "",
+      repo_id: repoId,
+      gh_profile: null,
+      status: "waiting",
+      created_at: Date.now() / 1000,
+      task_description: data.description || null,
+    };
+    creatingWsId = tempId;
+    workspaces.push(placeholder);
+    selectWorkspace(tempId);
+    appMode = "work";
+    chatExpanded = true;
+
+    createWorkspace(repoId, undefined, data.description || undefined, undefined, data.branchName)
+      .then((ws) => {
+        const idx = workspaces.findIndex((w) => w.id === tempId);
+        if (idx >= 0) workspaces[idx] = ws;
+        selectedWsId = ws.id;
+        creatingWsId = null;
+      })
+      .catch((e) => {
+        const failIdx = workspaces.findIndex((w) => w.id === tempId);
+        if (failIdx >= 0) workspaces.splice(failIdx, 1);
+        if (selectedWsId === tempId) selectedWsId = null;
+        creatingWsId = null;
+        addToast(String(e));
+      });
+  }
+
   // ── Todo handlers ──────────────────────────────────────
 
   function persistTodos() {
@@ -2492,6 +2530,7 @@
             onToggleReady={handleToggleReady}
             onRemoveWorkspace={handleRemove}
             onRemoveAllDone={handleRemoveAllDone}
+            onManualCheckout={handleManualCheckout}
             {autopilotEnabled}
             {autopilotEvents}
             autopilotActiveAgents={activeAgentCount}

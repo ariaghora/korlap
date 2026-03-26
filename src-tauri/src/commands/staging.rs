@@ -195,6 +195,7 @@ pub async fn create_staging_workspace(
         task_title: Some("Staging".to_string()),
         task_description: None,
         source_todo_id: None,
+        custom_branch: false,
     };
 
     let mut st = state.lock().map_err(|e| e.to_string())?;

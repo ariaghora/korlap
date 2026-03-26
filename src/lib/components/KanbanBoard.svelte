@@ -5,8 +5,9 @@
   import KanbanCard from "./KanbanCard.svelte";
   import CardDetailOverlay from "./CardDetailOverlay.svelte";
   import TaskPopover, { type TaskData } from "./TaskPopover.svelte";
+  import ManualCheckoutPopover, { type ManualCheckoutData } from "./ManualCheckoutPopover.svelte";
   import AutopilotPill, { type AutopilotEvent } from "./AutopilotPill.svelte";
-  import { Plus, Ellipsis, Trash2 } from "lucide-svelte";
+  import { Plus, Ellipsis, Trash2, GitBranch } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
 
   interface TodoItem {
@@ -45,6 +46,7 @@
     onToggleReady: (todoId: string) => void;
     onRemoveWorkspace: (wsId: string) => void;
     onRemoveAllDone: () => void;
+    onManualCheckout: (data: ManualCheckoutData) => void;
     autopilotEnabled?: boolean;
     autopilotEvents?: AutopilotEvent[];
     autopilotActiveAgents?: number;
@@ -77,6 +79,7 @@
     onToggleReady,
     onRemoveWorkspace,
     onRemoveAllDone,
+    onManualCheckout,
     autopilotEnabled = false,
     autopilotEvents = [],
     autopilotActiveAgents = 0,
@@ -89,6 +92,7 @@
   }: Props = $props();
 
   let showAddDialog = $state(false);
+  let showManualCheckout = $state(false);
   let editingTodo = $state<TodoItem | null>(null);
   let showDoneMenu = $state(false);
   let doneMenuBtnEl = $state<HTMLButtonElement | null>(null);
@@ -135,7 +139,7 @@
   function handleBoardKeydown(e: KeyboardEvent) {
     if (!active) return;
     if (e.defaultPrevented) return;
-    if (showAddDialog || editingTodo || detailWs || showDoneMenu) return;
+    if (showAddDialog || showManualCheckout || editingTodo || detailWs || showDoneMenu) return;
 
     const target = e.target as HTMLElement;
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
@@ -232,6 +236,11 @@
     showAddDialog = false;
   }
 
+  function handleManualCheckoutSubmit(data: ManualCheckoutData) {
+    onManualCheckout(data);
+    showManualCheckout = false;
+  }
+
   function handleEditSubmit(data: TaskData) {
     if (editingTodo) {
       onEditTodo(editingTodo.id, data);
@@ -268,9 +277,14 @@
       <div class="empty-hint">Add a task to get started</div>
     {/if}
     {#snippet footer()}
-      <button class="add-task-btn" onclick={() => { showAddDialog = true; }} use:tooltip={{ text: "New task", shortcut: "⌘N" }}>
-        <Plus size={12} /> New task
-      </button>
+      <div class="footer-buttons">
+        <button class="add-task-btn" onclick={() => { showAddDialog = true; }} use:tooltip={{ text: "New task", shortcut: "⌘N" }}>
+          <Plus size={12} /> New task
+        </button>
+        <button class="manual-checkout-btn" onclick={() => { showManualCheckout = true; }} use:tooltip={{ text: "Manual checkout" }}>
+          <GitBranch size={13} />
+        </button>
+      </div>
     {/snippet}
   </KanbanColumn>
 
@@ -364,6 +378,13 @@
   />
 {/if}
 
+{#if showManualCheckout}
+  <ManualCheckoutPopover
+    onSubmit={handleManualCheckoutSubmit}
+    onCancel={() => { showManualCheckout = false; }}
+  />
+{/if}
+
 {#if editingTodo}
   <TaskPopover
     {repoId}
@@ -431,8 +452,13 @@
     padding: 1.5rem 0.5rem;
   }
 
+  .footer-buttons {
+    display: flex;
+    gap: 0.35rem;
+  }
+
   .add-task-btn {
-    width: 100%;
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -452,6 +478,27 @@
   .add-task-btn:hover {
     background: color-mix(in srgb, var(--accent) 20%, transparent);
     border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .manual-checkout-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    flex-shrink: 0;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  .manual-checkout-btn:hover {
+    background: var(--border);
+    border-color: var(--border-light);
+    color: var(--text-secondary);
   }
 
   .column-menu-btn {
