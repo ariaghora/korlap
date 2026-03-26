@@ -56,8 +56,8 @@ pub async fn list_directory(
             let entry = entry.map_err(|e| format!("Error reading entry: {}", e))?;
             let name = entry.file_name().to_string_lossy().to_string();
 
-            // Skip hidden files/dirs (except common ones like .github)
-            if name.starts_with('.') && name != ".github" && name != ".gitignore" {
+            // Skip .git directory only — show all other dotfiles
+            if name == ".git" {
                 continue;
             }
 
@@ -268,8 +268,8 @@ pub async fn list_repo_directory(
             let entry = entry.map_err(|e| format!("Error reading entry: {}", e))?;
             let name = entry.file_name().to_string_lossy().to_string();
 
-            // Skip hidden files/dirs (except common ones like .github)
-            if name.starts_with('.') && name != ".github" && name != ".gitignore" {
+            // Skip .git directory only — show all other dotfiles
+            if name == ".git" {
                 continue;
             }
 
@@ -410,7 +410,7 @@ fn search_files_in_dir(
     let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let walker = ignore::WalkBuilder::new(root)
-        .hidden(true)
+        .hidden(false)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
@@ -429,9 +429,13 @@ fn search_files_in_dir(
             Err(_) => continue,
         };
 
-        // Skip the root itself and .git
+        // Skip the root itself and .git directory
         let rel_str = rel_path.to_string_lossy();
-        if rel_str.is_empty() || rel_str.starts_with(".git") {
+        if rel_str.is_empty()
+            || rel_str == ".git"
+            || rel_str.starts_with(".git/")
+            || rel_str.starts_with(".git\\")
+        {
             continue;
         }
 
@@ -601,7 +605,7 @@ fn grep_in_dir(
     let root_prefix = root.to_string_lossy().to_string();
 
     let walker = WalkBuilder::new(root)
-        .hidden(true)
+        .hidden(false)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
