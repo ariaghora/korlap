@@ -17,6 +17,8 @@ export interface RepoDetail {
   default_branch: string;
 }
 
+export type AgentProvider = "claude" | "codex";
+
 export interface WorkspaceInfo {
   id: string;
   name: string;
@@ -30,6 +32,14 @@ export interface WorkspaceInfo {
   task_description?: string | null;
   source_todo_id?: string | null;
   custom_branch?: boolean;
+  provider_override?: AgentProvider | null;
+}
+
+export interface ProviderInfo {
+  provider: AgentProvider;
+  supports_thinking: boolean;
+  supports_plan_mode: boolean;
+  models: ModelOption[];
 }
 
 export interface ToolUseInfo {
@@ -318,11 +328,13 @@ export interface ModelOption {
 
 const DEFAULT_MODELS: ModelOption[] = [{ value: "", label: "Default" }];
 let cachedModels: ModelOption[] | null = null;
+let cachedModelsRepoId: string | null = null;
 
-export async function listModels(): Promise<ModelOption[]> {
-  if (cachedModels) return cachedModels;
+export async function listModels(repoId?: string): Promise<ModelOption[]> {
+  if (cachedModels && cachedModelsRepoId === (repoId ?? null)) return cachedModels;
   try {
-    cachedModels = await invoke<ModelOption[]>("list_models");
+    cachedModels = await invoke<ModelOption[]>("list_models", { repoId: repoId ?? null });
+    cachedModelsRepoId = repoId ?? null;
     return cachedModels;
   } catch {
     return DEFAULT_MODELS;
@@ -336,6 +348,26 @@ export function getCachedModels(): ModelOption[] {
 export function getModelLabel(value: string): string {
   const models = cachedModels ?? DEFAULT_MODELS;
   return models.find((m) => m.value === value)?.label ?? (value || "Default");
+}
+
+export function invalidateModelCache(): void {
+  cachedModels = null;
+  cachedModelsRepoId = null;
+}
+
+export async function getProviderInfo(repoId: string): Promise<ProviderInfo> {
+  return invoke<ProviderInfo>("get_provider_info", { repoId });
+}
+
+export async function getWorkspaceProviderInfo(workspaceId: string): Promise<ProviderInfo> {
+  return invoke<ProviderInfo>("get_workspace_provider_info", { workspaceId });
+}
+
+export async function switchWorkspaceProvider(
+  workspaceId: string,
+  provider: AgentProvider,
+): Promise<void> {
+  return invoke("switch_workspace_provider", { workspaceId, provider });
 }
 
 export async function sendMessage(
@@ -633,6 +665,7 @@ export interface RepoSettings {
   system_prompt: string;
   lsp_servers: Record<string, LspServerConfig>;
   mcp_servers: Record<string, McpServerConfig>;
+  agent_provider: AgentProvider;
 }
 
 export async function getRepoSettings(repoId: string): Promise<RepoSettings> {

@@ -6,7 +6,7 @@
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi, type FileSearchResult } from "./MentionAutocomplete.svelte";
   import SearchModal from "./SearchModal.svelte";
-  import { searchRepoFiles, getCachedModels, getModelLabel } from "$lib/ipc";
+  import { searchRepoFiles, getCachedModels, getModelLabel, type ProviderInfo, type AgentProvider } from "$lib/ipc";
 
   export interface TaskData {
     title: string;
@@ -17,6 +17,7 @@
     planMode: boolean;
     thinkingMode: boolean;
     model: string;
+    provider?: AgentProvider;
   }
 
   interface Props {
@@ -28,6 +29,8 @@
     initialPlanMode?: boolean;
     initialThinkingMode?: boolean;
     initialModel?: string;
+    initialProvider?: AgentProvider;
+    providerInfo?: ProviderInfo | null;
     submitLabel?: string;
     onSubmit: (data: TaskData) => void;
     onSubmitAndStart?: (data: TaskData) => void;
@@ -43,6 +46,8 @@
     initialPlanMode = false,
     initialThinkingMode = false,
     initialModel = "",
+    initialProvider,
+    providerInfo = null,
     submitLabel = "Add",
     onSubmit,
     onSubmitAndStart,
@@ -56,7 +61,12 @@
   let planMode = $state(initialPlanMode);
   let thinkingMode = $state(initialThinkingMode);
   let model = $state(initialModel);
+  let provider = $state<AgentProvider>(initialProvider ?? providerInfo?.provider ?? "claude");
   let showModelDropdown = $state(false);
+  let showProviderDropdown = $state(false);
+  let effectiveModels = $derived(
+    provider === (providerInfo?.provider ?? "claude") ? (providerInfo?.models ?? getCachedModels()) : getCachedModels()
+  );
   let titleRef: HTMLInputElement | undefined = $state();
 
   // Mention input + autocomplete state
@@ -111,6 +121,7 @@
       planMode,
       thinkingMode,
       model,
+      provider,
     };
   }
 
@@ -377,6 +388,7 @@
     <div class="dialog-footer">
       <div class="footer-row">
       <div class="footer-left">
+        {#if provider !== "codex"}
         <button
           type="button"
           class="mode-pill"
@@ -387,6 +399,7 @@
           <Lightbulb size={13} strokeWidth={2} />
           Thinking
         </button>
+        {/if}
         <button
           type="button"
           class="mode-pill"
@@ -412,11 +425,37 @@
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="model-dropdown" onclick={(e) => e.stopPropagation()}>
-              {#each getCachedModels() as opt (opt.value)}
+              {#each effectiveModels as opt (opt.value)}
                 <button
                   class="model-option"
                   class:selected={model === opt.value}
                   onclick={() => selectModel(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="model-selector">
+          <button
+            type="button"
+            class="mode-pill"
+            onclick={(e) => { e.stopPropagation(); showProviderDropdown = !showProviderDropdown; }}
+            use:tooltip={{ text: "Agent provider" }}
+          >
+            {provider === "codex" ? "Codex" : "Claude"}
+            <ChevronDown size={11} strokeWidth={2} />
+          </button>
+          {#if showProviderDropdown}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="model-dropdown" onclick={(e) => e.stopPropagation()}>
+              {#each [{ value: "claude", label: "Claude" }, { value: "codex", label: "Codex" }] as opt (opt.value)}
+                <button
+                  class="model-option"
+                  class:selected={provider === opt.value}
+                  onclick={() => { provider = opt.value as AgentProvider; model = ""; showProviderDropdown = false; }}
                 >
                   {opt.label}
                 </button>

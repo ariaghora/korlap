@@ -57,6 +57,10 @@
     lspStartServer,
     lspGetStatus,
     type ContextBuildStatus,
+    type ProviderInfo,
+    type AgentProvider,
+    getWorkspaceProviderInfo,
+    switchWorkspaceProvider,
   } from "$lib/ipc";
   import {
     addUserMessage,
@@ -126,6 +130,7 @@
   let chatPanelApis = new SvelteMap<string, ChatPanelApi>();
   let reviewByWorkspace = new SvelteMap<string, ReviewState>();
   let agentTaskByWorkspace = new SvelteMap<string, string>();
+  let providerInfoByWorkspace = new SvelteMap<string, ProviderInfo>();
   let gitOpInProgress = new SvelteMap<string, boolean>();
   let baseBehindMap = new SvelteMap<string, number>();
   let updatingBranchMap = new SvelteMap<string, boolean>();
@@ -516,6 +521,7 @@
     planMode?: boolean;
     thinkingMode?: boolean;
     model?: string;
+    provider?: AgentProvider;
     ready?: boolean;
     depends_on?: string[];
     created_at: number;
@@ -577,7 +583,7 @@
     let unlistenWsUpdate: (() => void) | undefined;
 
     (async () => {
-      listModels().catch(() => {}); // pre-populate model cache
+      listModels(undefined).catch(() => {}); // pre-populate model cache
       listRepos().then((r) => {
         repos = r;
         if (r.length > 0) selectRepo(r[0]);
@@ -850,6 +856,10 @@
       ws.forEach((w) => {
         refreshChangeCounts(w.id);
         refreshPrStatus(w.id);
+        // Load provider info per workspace (non-blocking)
+        getWorkspaceProviderInfo(w.id).then((info) => {
+          providerInfoByWorkspace.set(w.id, info);
+        }).catch(() => {});
       });
     }).catch((e) => { addToast(String(e)); });
 
@@ -984,7 +994,7 @@
     return Promise.all(newImages.map((img) => saveImage(namespace, img.base64, img.extension)));
   }
 
-  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string }): Promise<string | null> {
+  async function handleNewTodo(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string; provider?: AgentProvider }): Promise<string | null> {
     if (!activeRepo) return null;
     if (!data.title.trim() && data.newImages.length === 0 && data.existingPaths.length === 0) return null;
     try {
@@ -1002,6 +1012,7 @@
         planMode: data.planMode || undefined,
         thinkingMode: data.thinkingMode || undefined,
         model: data.model || undefined,
+        provider: data.provider || undefined,
         created_at: Date.now() / 1000,
       });
       persistTodos();
@@ -1013,12 +1024,12 @@
     }
   }
 
-  async function handleNewTodoAndStart(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string }) {
+  async function handleNewTodoAndStart(data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string; provider?: AgentProvider }) {
     const todoId = await handleNewTodo(data);
     if (todoId) await handleSpawnFromTodo(todoId);
   }
 
-  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string }) {
+  async function handleEditTodo(todoId: string, data: { title: string; description: string; newImages: PastedImage[]; existingPaths: string[]; mentions?: Mention[]; planMode?: boolean; thinkingMode?: boolean; model?: string; provider?: AgentProvider }) {
     const todo = todos.find((t) => t.id === todoId);
     if (!todo) return;
     try {
@@ -1436,6 +1447,20 @@
       creatingWsId = null;
       if (todo.planMode) planModeByWorkspace.set(ws.id, true);
       if (todo.model) modelByWorkspace.set(ws.id, todo.model);
+
+      // Set provider override if task specifies a non-default provider
+      if (todo.provider) {
+        switchWorkspaceProvider(ws.id, todo.provider).then(() => {
+          getWorkspaceProviderInfo(ws.id).then((info) => {
+            providerInfoByWorkspace.set(ws.id, info);
+          }).catch(() => {});
+        }).catch(() => {});
+      } else {
+        // Load default provider info for the new workspace
+        getWorkspaceProviderInfo(ws.id).then((info) => {
+          providerInfoByWorkspace.set(ws.id, info);
+        }).catch(() => {});
+      }
 
       // Build prompt from title + description
       const promptText = todo.description
@@ -2006,6 +2031,21 @@
     }
   }
 
+  async function handleProviderSwitch(wsId: string, provider: AgentProvider) {
+    try {
+      await switchWorkspaceProvider(wsId, provider);
+      // Insert a divider message in chat
+      addActionMessage(wsId, crypto.randomUUID(), `Switched to ${provider === "codex" ? "Codex" : "Claude"}`);
+      // Refresh provider info for this workspace
+      const info = await getWorkspaceProviderInfo(wsId);
+      providerInfoByWorkspace.set(wsId, info);
+      // Reset model selection (models differ between providers)
+      modelByWorkspace.delete(wsId);
+    } catch (e) {
+      addToast(String(e));
+    }
+  }
+
   function formatToolTask(toolName: string, inputPreview?: string): string {
     const verbs: Record<string, string> = {
       Read: "Reading",
@@ -2464,6 +2504,8 @@
             stagingMergedCount={stagingMergedBranches.length}
             stagingConflictingCount={stagingConflictingBranches.length}
             contextWarning={contextBuildStatus !== "built"}
+            {providerInfoByWorkspace}
+            onProviderSwitch={handleProviderSwitch}
             onPrAction={handlePrAction}
             onUpdateBranch={handleUpdateBranch}
             onReview={handleReview}
