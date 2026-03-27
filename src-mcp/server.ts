@@ -151,6 +151,169 @@ server.tool(
   },
 );
 
+// ── Todo Tools ──────────────────────────────────────────────────────
+
+server.tool(
+  "create_todo",
+  "Create a new task on the Korlap kanban board's Todo column. Use this to add work items for the user or other agents to pick up.",
+  {
+    title: z.string().describe("Task title (required)"),
+    description: z
+      .string()
+      .optional()
+      .describe("Task description with details, context, or acceptance criteria"),
+  },
+  async ({ title, description }) => {
+    const { ok, data } = await apiCall("POST", "/todos/create", {
+      workspace_id: WORKSPACE_ID,
+      title,
+      description: description ?? "",
+    });
+
+    if (!ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to create todo: ${JSON.stringify(data)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const result = data as { id: string };
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Todo created with ID: ${result.id}`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "update_todo",
+  "Update an existing task on the kanban board. Use list_todos first to find the todo ID.",
+  {
+    todo_id: z.string().describe("The ID of the todo to update"),
+    title: z.string().optional().describe("New title (omit to keep current)"),
+    description: z
+      .string()
+      .optional()
+      .describe("New description (omit to keep current)"),
+  },
+  async ({ todo_id, title, description }) => {
+    const body: Record<string, unknown> = {
+      workspace_id: WORKSPACE_ID,
+      todo_id,
+    };
+    if (title !== undefined) body.title = title;
+    if (description !== undefined) body.description = description;
+
+    const { ok, data } = await apiCall("POST", "/todos/update", body);
+
+    if (!ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to update todo: ${JSON.stringify(data)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    return {
+      content: [
+        { type: "text" as const, text: `Todo ${todo_id} updated.` },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "delete_todo",
+  "Delete a task from the kanban board. Use list_todos first to find the todo ID.",
+  {
+    todo_id: z.string().describe("The ID of the todo to delete"),
+  },
+  async ({ todo_id }) => {
+    const { ok, data } = await apiCall("POST", "/todos/delete", {
+      workspace_id: WORKSPACE_ID,
+      todo_id,
+    });
+
+    if (!ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to delete todo: ${JSON.stringify(data)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    return {
+      content: [
+        { type: "text" as const, text: `Todo ${todo_id} deleted.` },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "list_todos",
+  "List all tasks in the kanban board's Todo column for the current repo. Returns IDs, titles, and descriptions.",
+  {},
+  async () => {
+    const { ok, data } = await apiCall(
+      "GET",
+      `/todos/list?workspace_id=${WORKSPACE_ID}`,
+    );
+
+    if (!ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to list todos: ${JSON.stringify(data)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const todos = data as Array<{
+      id: string;
+      title: string;
+      description: string;
+    }>;
+
+    if (todos.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: "No todos found." }],
+      };
+    }
+
+    const formatted = todos
+      .map(
+        (t, i) =>
+          `${i + 1}. [${t.id}] ${t.title}${t.description ? `\n   ${t.description}` : ""}`,
+      )
+      .join("\n");
+
+    return {
+      content: [{ type: "text" as const, text: formatted }],
+    };
+  },
+);
+
 // ── LSP Tools ───────────────────────────────────────────────────────
 
 server.tool(
