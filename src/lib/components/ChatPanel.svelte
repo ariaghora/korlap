@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messagesByWorkspace, sendingByWorkspace, tokensByWorkspace, type Message } from "$lib/stores/messages.svelte";
-  import { searchWorkspaceFiles, suggestReplies, getCachedModels, getModelLabel, type FileSearchResult } from "$lib/ipc";
-  import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil, ChevronDown } from "lucide-svelte";
+  import { searchWorkspaceFiles, suggestReplies, getCachedModels, getModelLabel, type FileSearchResult, type ProviderInfo } from "$lib/ipc";
+  import { Lightbulb, BookOpen, Play, ArrowUp, Square, Loader2, Timer, Settings, Pencil, ChevronDown, RefreshCw } from "lucide-svelte";
   import { renderMarkdown, renderUserMarkdown } from "$lib/markdown";
   import { externalLinks, copyCodeBlocks, tooltip } from "$lib/actions";
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
@@ -32,6 +32,7 @@
     model?: string;
     queue?: QueueDisplayItem[];
     contextWarning?: boolean;
+    providerInfo?: ProviderInfo | null;
     onSend: (prompt: string, images: PastedImage[], mentions: Mention[], planMode: boolean) => void;
     onSendImmediate?: (prompt: string) => void;
     onStop: () => void;
@@ -43,9 +44,34 @@
     onExecutePlan?: () => void;
     onMentionClick?: (path: string) => void;
     onReady?: (api: ChatPanelApi) => void;
+    onProviderSwitch?: (provider: import("$lib/ipc").AgentProvider) => void;
   }
 
-  let { workspaceId, creating = false, planMode = false, thinkingMode = false, model = "", queue = [], contextWarning = false, onSend, onSendImmediate, onStop, onSendNow, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onModelChange, onExecutePlan, onMentionClick, onReady }: Props = $props();
+  let { workspaceId, creating = false, planMode = false, thinkingMode = false, model = "", queue = [], contextWarning = false, providerInfo = null, onSend, onSendImmediate, onStop, onSendNow, onRemoveFromQueue, onPlanModeChange, onThinkingModeChange, onModelChange, onExecutePlan, onMentionClick, onReady, onProviderSwitch }: Props = $props();
+
+  let showProviderConfirm = $state(false);
+  let pendingProvider = $state<import("$lib/ipc").AgentProvider | null>(null);
+
+  function handleProviderToggle() {
+    if (sending) return;
+    const current = providerInfo?.provider ?? "claude";
+    const next = current === "claude" ? "codex" : "claude";
+    pendingProvider = next;
+    showProviderConfirm = true;
+  }
+
+  function confirmProviderSwitch() {
+    if (pendingProvider && onProviderSwitch) {
+      onProviderSwitch(pendingProvider);
+    }
+    showProviderConfirm = false;
+    pendingProvider = null;
+  }
+
+  function cancelProviderSwitch() {
+    showProviderConfirm = false;
+    pendingProvider = null;
+  }
 
   let messagesMap = $derived(messagesByWorkspace.get(workspaceId));
   let messages = $derived(messagesMap ? [...messagesMap.values()] : []);
@@ -93,7 +119,10 @@
   let modelPillEl: HTMLButtonElement | undefined = $state();
   let modelDropdownPos = $state<{ bottom: number; left: number } | null>(null);
 
-  let modelLabel = $derived(getModelLabel(model));
+  let availableModels = $derived(providerInfo?.models ?? getCachedModels());
+  let modelLabel = $derived(
+    availableModels.find((m) => m.value === model)?.label ?? getModelLabel(model)
+  );
 
   function toggleModelDropdown() {
     if (showModelDropdown) {
@@ -685,6 +714,7 @@
     />
     <div class="input-toolbar">
       <div class="toolbar-left">
+        {#if providerInfo?.supports_thinking !== false}
         <button
           type="button"
           class="mode-pill"
@@ -695,6 +725,7 @@
           <Lightbulb size={13} strokeWidth={2} />
           Thinking
         </button>
+        {/if}
         <button
           type="button"
           class="mode-pill"
@@ -716,6 +747,18 @@
           {modelLabel}
           <ChevronDown size={11} strokeWidth={2} />
         </button>
+        {#if onProviderSwitch}
+        <button
+          type="button"
+          class="mode-pill provider-pill"
+          onclick={handleProviderToggle}
+          disabled={sending}
+          use:tooltip={{ text: `Switch provider (currently ${providerInfo?.provider ?? "claude"})` }}
+        >
+          <RefreshCw size={11} strokeWidth={2} />
+          {(providerInfo?.provider ?? "claude").charAt(0).toUpperCase() + (providerInfo?.provider ?? "claude").slice(1)}
+        </button>
+        {/if}
       </div>
       {#if sending}
         <button type="button" class="stop-btn" onclick={onStop} use:tooltip={{ text: "Stop", shortcut: "Esc" }}>
@@ -750,7 +793,7 @@
       style="bottom: {modelDropdownPos.bottom}px; left: {modelDropdownPos.left}px;"
       onclick={(e) => e.stopPropagation()}
     >
-      {#each getCachedModels() as opt (opt.value)}
+      {#each availableModels as opt (opt.value)}
         <button
           class="model-option"
           class:selected={model === opt.value}
@@ -759,6 +802,28 @@
           {opt.label}
         </button>
       {/each}
+    </div>
+  </div>
+{/if}
+
+{#if showProviderConfirm}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="provider-confirm-backdrop" onclick={cancelProviderSwitch}>
+    <div class="provider-confirm-dialog" onclick={(e) => e.stopPropagation()}>
+      <h3>Switch to {pendingProvider === "codex" ? "Codex" : "Claude"}?</h3>
+      <div class="provider-confirm-warning">This CANNOT be undone cleanly. You will lose:</div>
+      <ul class="provider-confirm-list">
+        <li><strong>SESSION CONTEXT</strong> — The new provider starts blind. It has zero knowledge of what was discussed, decided, or attempted. A conversation summary is injected but it's lossy.</li>
+        <li><strong>RESUME CAPABILITY</strong> — The current session is abandoned. You cannot resume it. If you switch back, it starts a brand new session.</li>
+        <li><strong>TOOL CONTINUITY</strong> — In-progress work (uncommitted edits, partial refactors) may confuse the new provider. It sees files on disk but has no memory of why they're in that state.</li>
+        <li><strong>ONE-SHOT FEATURES</strong> — Commit message generation and reply suggestions stay on Claude regardless.</li>
+      </ul>
+      <div class="provider-confirm-note">Previous messages will remain visible but the new provider cannot reference them natively.</div>
+      <div class="provider-confirm-actions">
+        <button class="provider-confirm-cancel" onclick={cancelProviderSwitch}>Cancel</button>
+        <button class="provider-confirm-switch" onclick={confirmProviderSwitch}>Switch anyway</button>
+      </div>
     </div>
   </div>
 {/if}
@@ -1721,5 +1786,92 @@
     border-radius: 6px;
     margin: 0 0.5rem 0.35rem;
     text-align: center;
+  }
+
+  .provider-pill {
+    font-size: 10px;
+    opacity: 0.7;
+  }
+
+  .provider-confirm-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .provider-confirm-dialog {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    max-width: 480px;
+    width: 90%;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+  }
+
+  .provider-confirm-dialog h3 {
+    margin: 0 0 0.75rem;
+    font-size: 16px;
+    color: var(--text-primary);
+  }
+
+  .provider-confirm-warning {
+    color: var(--warning, #f59e0b);
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 0.5rem;
+  }
+
+  .provider-confirm-list {
+    margin: 0 0 0.75rem;
+    padding-left: 1.25rem;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .provider-confirm-list li {
+    margin-bottom: 0.5rem;
+  }
+
+  .provider-confirm-list strong {
+    color: var(--text-primary);
+  }
+
+  .provider-confirm-note {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-bottom: 1rem;
+  }
+
+  .provider-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .provider-confirm-cancel {
+    padding: 6px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .provider-confirm-switch {
+    padding: 6px 16px;
+    border-radius: 6px;
+    border: none;
+    background: var(--warning, #f59e0b);
+    color: #000;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
   }
 </style>

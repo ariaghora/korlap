@@ -231,6 +231,7 @@ pub async fn create_workspace(
         task_description,
         source_todo_id,
         custom_branch: custom_branch.is_some(),
+        provider_override: None,
     };
 
     // Check if there's a setup script to run

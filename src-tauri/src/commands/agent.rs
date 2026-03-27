@@ -1,9 +1,14 @@
-use crate::state::{AgentHandle, AppState, WorkspaceStatus};
+use crate::state::{effective_provider, AgentHandle, AgentProvider, AppState, WorkspaceStatus};
 use std::io::BufRead;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use super::agent_backend::{
+    build_mcp_server_map, claude_extract_usage, codex_extract_usage, codex_unregister_mcp_servers,
+    get_backend, ParsedEvent, SessionContext,
+};
 use super::helpers::{detect_default_branch, get_shell_env, inject_shell_env, strip_ansi};
 
 // ── Available models ─────────────────────────────────────────────────
@@ -15,26 +20,102 @@ pub struct ModelOption {
 }
 
 #[tauri::command]
-pub fn list_models() -> Result<Vec<ModelOption>, String> {
-    // The claude CLI accepts short aliases (e.g. "sonnet", "opus") that stay
-    // stable across version bumps — no date-stamped IDs needed.
-    // There is no `claude --list-models` command, so a static list is the
-    // best we can do. Update this when Anthropic ships new model families.
-    Ok(vec![
-        ModelOption { value: String::new(), label: "Default".into() },
-        ModelOption { value: "sonnet".into(), label: "Sonnet".into() },
-        ModelOption { value: "opus".into(), label: "Opus".into() },
-        ModelOption { value: "haiku".into(), label: "Haiku".into() },
-    ])
+pub fn list_models(
+    repo_id: Option<String>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<ModelOption>, String> {
+    let provider = if let Some(ref repo_id) = repo_id {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.repo_settings
+            .get(repo_id)
+            .map(|s| s.agent_provider)
+            .unwrap_or_default()
+    } else {
+        AgentProvider::default()
+    };
+    Ok(get_backend(provider).list_models())
 }
 
-/// Tools blocked to prevent agent from escaping Korlap worktree isolation.
-/// EnterWorktree creates worktrees from origin/<default> of the MAIN repo,
-/// completely bypassing workspace isolation. Requires no permission so
-/// --permission-mode alone cannot stop it. --disallowedTools is the only fix.
-/// LSP is disabled because Korlap manages shared LSP servers centrally — one per
-/// (repo, language) instead of per-agent — saving significant memory with 7-10 agents.
-const DISALLOWED_WORKTREE_TOOLS: &str = "EnterWorktree,ExitWorktree,LSP";
+#[derive(Clone, serde::Serialize)]
+pub struct ProviderInfo {
+    pub provider: AgentProvider,
+    pub supports_thinking: bool,
+    pub supports_plan_mode: bool,
+    pub models: Vec<ModelOption>,
+}
+
+#[tauri::command]
+pub fn get_provider_info(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<ProviderInfo, String> {
+    let provider = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.repo_settings
+            .get(&repo_id)
+            .map(|s| s.agent_provider)
+            .unwrap_or_default()
+    };
+    let backend = get_backend(provider);
+    Ok(ProviderInfo {
+        provider,
+        supports_thinking: backend.supports_thinking(),
+        supports_plan_mode: backend.supports_plan_mode(),
+        models: backend.list_models(),
+    })
+}
+
+#[tauri::command]
+pub fn get_workspace_provider_info(
+    workspace_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<ProviderInfo, String> {
+    let provider = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
+        let settings = st.repo_settings.get(&ws.repo_id);
+        let default_settings = crate::state::RepoSettings::default();
+        effective_provider(ws, settings.unwrap_or(&default_settings))
+    };
+    let backend = get_backend(provider);
+    Ok(ProviderInfo {
+        provider,
+        supports_thinking: backend.supports_thinking(),
+        supports_plan_mode: backend.supports_plan_mode(),
+        models: backend.list_models(),
+    })
+}
+
+#[tauri::command]
+pub fn switch_workspace_provider(
+    workspace_id: String,
+    provider: AgentProvider,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+
+    // Don't allow switching while agent is running
+    if st.agents.contains_key(&workspace_id) {
+        return Err("Cannot switch provider while agent is running. Stop the agent first.".into());
+    }
+
+    let ws = st
+        .workspaces
+        .get_mut(&workspace_id)
+        .ok_or("Workspace not found")?;
+    ws.provider_override = Some(provider);
+
+    // Clear session — the new provider can't resume the old one
+    st.session_ids.remove(&workspace_id);
+
+    st.save_workspaces()?;
+    tracing::info!(
+        "Switched workspace {} to provider {:?}",
+        workspace_id,
+        provider
+    );
+    Ok(())
+}
 
 // ── Agent event types (sent to frontend via Channel) ─────────────────
 
@@ -76,246 +157,6 @@ pub enum AgentEvent {
     Error { message: String },
 }
 
-/// Extract total input and output tokens from a usage JSON object.
-/// Claude Code splits input across input_tokens, cache_creation_input_tokens,
-/// and cache_read_input_tokens — sum all three for the real total.
-fn extract_usage(usage: &serde_json::Value) -> (u64, u64) {
-    let input = usage
-        .get("input_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let cache_create = usage
-        .get("cache_creation_input_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let cache_read = usage
-        .get("cache_read_input_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let output = usage
-        .get("output_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    (input + cache_create + cache_read, output)
-}
-
-fn parse_stream_line(
-    line: &str,
-    on_event: &Channel<AgentEvent>,
-    session_id: &mut Option<String>,
-    worktree_path: &str,
-) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-        return;
-    };
-    let Some(msg_type) = v.get("type").and_then(|t| t.as_str()) else {
-        return;
-    };
-
-    match msg_type {
-        "system" => {
-            if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
-                *session_id = Some(sid.to_string());
-            }
-        }
-        "assistant" => {
-            let Some(message) = v.get("message") else {
-                return;
-            };
-            let Some(content) = message.get("content").and_then(|c| c.as_array()) else {
-                return;
-            };
-
-            let mut text_parts = Vec::new();
-            let mut tool_uses = Vec::new();
-            let mut thinking_parts = Vec::new();
-
-            for block in content {
-                match block.get("type").and_then(|t| t.as_str()) {
-                    Some("text") => {
-                        if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                            text_parts.push(t.to_string());
-                        }
-                    }
-                    Some("tool_use") => {
-                        let name = block
-                            .get("name")
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-
-                        let file_path = block
-                            .get("input")
-                            .and_then(|input| input.get("file_path"))
-                            .and_then(|f| f.as_str())
-                            .map(|s| {
-                                let with_slash = format!("{}/", worktree_path);
-                                s.replace(&with_slash, "./").replace(worktree_path, ".")
-                            });
-
-                        let input_preview = extract_input_preview(block, &name, worktree_path);
-
-                        // Extract old_string/new_string for Edit tool calls
-                        let (old_string, new_string) = if name == "Edit" || name == "edit" {
-                            let old = block
-                                .get("input")
-                                .and_then(|input| input.get("old_string"))
-                                .and_then(|s| s.as_str())
-                                .map(|s| s.to_string());
-                            let new = block
-                                .get("input")
-                                .and_then(|input| input.get("new_string"))
-                                .and_then(|s| s.as_str())
-                                .map(|s| s.to_string());
-                            (old, new)
-                        } else {
-                            (None, None)
-                        };
-
-                        // ExitPlanMode carries the full plan in input.plan —
-                        // extract it as a text block so the plan renders in the chat.
-                        if name == "ExitPlanMode" {
-                            if let Some(plan) = block
-                                .get("input")
-                                .and_then(|input| input.get("plan"))
-                                .and_then(|p| p.as_str())
-                            {
-                                let plan = plan.trim();
-                                if !plan.is_empty() {
-                                    text_parts.push(plan.to_string());
-                                }
-                            }
-                        }
-
-                        tool_uses.push(ToolUseInfo {
-                            name,
-                            input_preview,
-                            file_path,
-                            old_string,
-                            new_string,
-                        });
-                    }
-                    Some("thinking") => {
-                        if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
-                            if !t.is_empty() {
-                                thinking_parts.push(t.to_string());
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            let text = text_parts.join("\n");
-            let thinking = if thinking_parts.is_empty() {
-                None
-            } else {
-                Some(thinking_parts.join("\n"))
-            };
-            if !text.is_empty() || !tool_uses.is_empty() || thinking.is_some() {
-                let _ = on_event.send(AgentEvent::AssistantMessage { text, tool_uses, thinking });
-            }
-
-            // Extract per-call token usage from message.usage
-            if let Some(usage) = message.get("usage") {
-                let (input, output) = extract_usage(usage);
-                if input > 0 || output > 0 {
-                    let _ = on_event.send(AgentEvent::Usage {
-                        input_tokens: input,
-                        output_tokens: output,
-                        cumulative: false,
-                    });
-                }
-            }
-        }
-        "result" => {
-            if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
-                *session_id = Some(sid.to_string());
-            }
-
-            // Extract cumulative session usage from result event (authoritative)
-            if let Some(usage) = v.get("usage") {
-                let (input, output) = extract_usage(usage);
-                if input > 0 || output > 0 {
-                    let _ = on_event.send(AgentEvent::Usage {
-                        input_tokens: input,
-                        output_tokens: output,
-                        cumulative: true,
-                    });
-                }
-            }
-
-            let _ = on_event.send(AgentEvent::Done);
-        }
-        _ => {}
-    }
-}
-
-/// Extract a human-readable preview from a tool_use input block.
-fn extract_input_preview(
-    block: &serde_json::Value,
-    name: &str,
-    worktree_path: &str,
-) -> Option<String> {
-    block.get("input").and_then(|input| {
-        let strip = |s: &str| -> String {
-            let with_slash = format!("{}/", worktree_path);
-            s.replace(&with_slash, "./").replace(worktree_path, ".")
-        };
-        // AskUserQuestion: pass the raw questions JSON so the frontend
-        // can render interactive options
-        if name == "AskUserQuestion" {
-            if let Some(questions) = input.get("questions") {
-                return Some(questions.to_string());
-            }
-        }
-        // TodoWrite: pass the full todos array for rich progress rendering
-        if name == "TodoWrite" {
-            if let Some(todos) = input.get("todos") {
-                return Some(todos.to_string());
-            }
-        }
-        if let Some(fp) = input.get("file_path").and_then(|f| f.as_str()) {
-            Some(strip(fp))
-        } else if let Some(cmd) = input.get("command").and_then(|c| c.as_str()) {
-            // Strip worktree path AND collapse redundant "cd" prefixes
-            let cleaned = strip(cmd);
-            let cleaned = if cleaned.starts_with("cd ./ && ") {
-                cleaned[9..].to_string()
-            } else if cleaned.starts_with("cd . && ") {
-                cleaned[8..].to_string()
-            } else if cleaned.starts_with("cd ./ ; ") {
-                cleaned[8..].to_string()
-            } else if cleaned.starts_with("cd . ; ") {
-                cleaned[7..].to_string()
-            } else if cleaned == "cd ." || cleaned == "cd ./" {
-                return None;
-            } else {
-                cleaned
-            };
-            Some(cleaned.chars().take(120).collect())
-        } else if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
-            Some(strip(pattern))
-        } else if let Some(query) = input.get("query").and_then(|q| q.as_str()) {
-            Some(strip(query).chars().take(120).collect())
-        } else if let Some(desc) = input.get("description").and_then(|d| d.as_str()) {
-            Some(strip(desc).chars().take(120).collect())
-        } else if let Some(skill) = input.get("skill").and_then(|s| s.as_str()) {
-            Some(strip(skill))
-        } else if let Some(url) = input.get("url").and_then(|u| u.as_str()) {
-            Some(url.chars().take(120).collect())
-        } else {
-            // Fallback: use first short string value from input
-            input.as_object().and_then(|obj| {
-                obj.values()
-                    .filter_map(|v| v.as_str())
-                    .find(|s| !s.is_empty() && s.len() < 200)
-                    .map(|s| strip(s).chars().take(120).collect())
-            })
-        }
-    })
-}
-
 // ── Agent commands ───────────────────────────────────────────────────
 
 #[tauri::command]
@@ -331,7 +172,22 @@ pub fn send_message(
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
     let thinking_mode = thinking_mode.unwrap_or(false);
-    let (worktree_path, gh_profile, _repo_id, ws_branch, repo_path, user_system_prompt, context_dir, is_custom_branch, user_mcp_servers) = {
+
+    // Extract all needed data from state in one lock
+    let (
+        worktree_path,
+        gh_profile,
+        ws_branch,
+        repo_path,
+        user_system_prompt,
+        context_dir,
+        is_custom_branch,
+        user_mcp_servers,
+        provider,
+        mcp_api_port,
+        data_dir,
+        session_id,
+    ) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
             return Err("Agent is already processing a message".into());
@@ -341,59 +197,36 @@ pub fn send_message(
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        let default_settings = crate::state::RepoSettings::default();
         let repo_settings = st.repo_settings.get(&ws.repo_id);
-        let user_sp = repo_settings
-            .map(|s| s.system_prompt.clone())
-            .unwrap_or_default();
-        let mcp_servers = repo_settings
-            .map(|s| s.mcp_servers.clone())
-            .unwrap_or_default();
+        let settings = repo_settings.unwrap_or(&default_settings);
+        let user_sp = settings.system_prompt.clone();
+        let mcp_servers = settings.mcp_servers.clone();
+        let prov = effective_provider(ws, settings);
         let ctx_dir = st.context_dir(&ws.repo_id);
+        let sid = st.session_ids.get(&workspace_id).cloned();
         (
             ws.worktree_path.clone(),
             repo.gh_profile.clone(),
-            ws.repo_id.clone(),
             ws.branch.clone(),
             repo.path.clone(),
             user_sp,
             ctx_dir,
             ws.custom_branch,
             mcp_servers,
+            prov,
+            st.mcp_api_port,
+            st.data_dir.clone(),
+            sid,
         )
     };
 
-    // Get session_id for resume (if continuing a conversation)
-    let session_id = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        st.session_ids.get(&workspace_id).cloned()
-    };
+    let backend = get_backend(provider);
 
     // Get GH token per-profile (never switch global auth)
-    let gh_token = if let Some(ref profile) = gh_profile {
-        let mut gh_auth_cmd = std::process::Command::new("gh");
-        gh_auth_cmd.args(["auth", "token", "--user", profile]);
-        inject_shell_env(&mut gh_auth_cmd);
-        let output = gh_auth_cmd.output();
-        match output {
-            Ok(o) if o.status.success() => {
-                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-            }
-            _ => {
-                tracing::warn!("Could not get GH token for profile {:?}", profile);
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let gh_token = super::helpers::resolve_gh_token(&gh_profile);
 
-    // Prepare MCP config — written to app data dir, not the worktree
-    let (mcp_api_port, data_dir) = {
-        let st = state.lock().map_err(|e| e.to_string())?;
-        (st.mcp_api_port, st.data_dir.clone())
-    };
-
-    // Resolve MCP server script: dev source tree first (compile-time, no I/O), then bundled.
+    // Resolve MCP server script path
     let mcp_dir = data_dir.join("mcp");
     let mcp_server_path = {
         let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -404,257 +237,71 @@ pub fn send_message(
             Some(dev_path)
         } else {
             let bundled = mcp_dir.join("server.ts");
-            if bundled.exists() { Some(bundled) } else { None }
+            if bundled.exists() {
+                Some(bundled)
+            } else {
+                None
+            }
         }
     };
-    let mcp_config_path = if let Some(ref mcp_server_path) = mcp_server_path {
-        let mut servers = serde_json::Map::new();
 
-        // Built-in korlap server (always present)
-        servers.insert("korlap".to_string(), serde_json::json!({
-            "type": "stdio",
-            "command": "bun",
-            "args": ["run", mcp_server_path.to_string_lossy()],
-            "env": {
-                "KORLAP_API_PORT": mcp_api_port.to_string(),
-                "KORLAP_WORKSPACE_ID": workspace_id.clone()
-            }
-        }));
+    // Build merged MCP server map (shared across providers)
+    let mcp_servers = build_mcp_server_map(
+        mcp_server_path.as_deref(),
+        mcp_api_port,
+        &workspace_id,
+        plan_mode,
+        &user_mcp_servers,
+    );
 
-        // User-configured 3rd-party MCP servers (work mode only)
-        if !plan_mode {
-            for (name, config) in &user_mcp_servers {
-                if name == "korlap" {
-                    continue; // never overwrite built-in
-                }
-                let entry = if config.server_type == "sse" {
-                    if config.url.is_empty() {
-                        tracing::warn!("MCP server '{}' has empty URL, skipping", name);
-                        continue;
-                    }
-                    let mut entry = serde_json::json!({ "type": "sse", "url": config.url });
-                    if !config.headers.is_empty() {
-                        if let Ok(h) = serde_json::to_value(&config.headers) {
-                            entry["headers"] = h;
-                        }
-                    }
-                    entry
-                } else {
-                    if config.command.is_empty() {
-                        tracing::warn!("MCP server '{}' has empty command, skipping", name);
-                        continue;
-                    }
-                    let mut entry = serde_json::json!({
-                        "type": "stdio",
-                        "command": config.command,
-                        "args": config.args
-                    });
-                    if !config.env.is_empty() {
-                        if let Ok(env_val) = serde_json::to_value(&config.env) {
-                            entry["env"] = env_val;
-                        }
-                    }
-                    entry
-                };
-                servers.insert(name.clone(), entry);
-            }
-        }
-
-        let mcp_config = serde_json::json!({ "mcpServers": servers });
-        let _ = std::fs::create_dir_all(&mcp_dir);
-        let config_path = mcp_dir.join(format!("{}.json", workspace_id));
-        let _ = std::fs::write(
-            &config_path,
-            serde_json::to_string(&mcp_config).unwrap_or_default(),
-        );
-        Some(config_path)
+    // Build system prompt (only on first message — resume inherits it)
+    let system_prompt = if session_id.is_none() {
+        Some(build_system_prompt(
+            &worktree_path,
+            &repo_path,
+            &ws_branch,
+            is_custom_branch,
+            &context_dir,
+            &prompt,
+            &user_system_prompt,
+        ))
     } else {
         None
     };
 
-    // Build claude command — use resolved absolute path when available
-    let claude_bin = get_shell_env()
-        .claude_path
-        .as_deref()
-        .unwrap_or("claude");
-    let mut cmd = std::process::Command::new(claude_bin);
-    cmd.arg("-p").arg(&prompt);
-    cmd.args(["--output-format", "stream-json", "--verbose"]);
-    // Permission mode: plan = read-only, otherwise bypassPermissions for non-interactive pipe mode.
-    // --dangerously-skip-permissions ignores --disallowedTools, so we use --permission-mode instead.
-    if plan_mode {
-        cmd.args(["--permission-mode", "plan"]);
-        cmd.args(["--allowedTools", "mcp__korlap__rename_branch,WebSearch,WebFetch,\
-            mcp__korlap__lsp_goto_definition,mcp__korlap__lsp_find_references,\
-            mcp__korlap__lsp_hover,mcp__korlap__lsp_workspace_symbols,\
-            mcp__korlap__lsp_diagnostics"]);
-    } else {
-        cmd.args(["--permission-mode", "bypassPermissions"]);
-        cmd.args(["--disallowedTools", DISALLOWED_WORKTREE_TOOLS]);
-    }
-
-    // Grant agent access to the images directory so it can read pasted images
     let images_dir = data_dir.join("images");
-    cmd.arg("--add-dir").arg(&images_dir);
+    let ctx = SessionContext {
+        prompt,
+        worktree_path: worktree_path.clone(),
+        repo_path,
+        session_id,
+        plan_mode,
+        thinking_mode,
+        model,
+        system_prompt,
+        mcp_servers,
+        mcp_dir,
+        workspace_id: workspace_id.clone(),
+        images_dir,
+        gh_token,
+        disallowed_tools: super::agent_backend::DISALLOWED_WORKTREE_TOOLS,
+    };
 
-    // Model override: let the user pick a specific model
-    if let Some(ref model_id) = model {
-        if !model_id.is_empty() {
-            cmd.args(["--model", model_id]);
-        }
-    }
-
-    // Thinking mode: use high effort for deeper reasoning
-    if thinking_mode {
-        cmd.args(["--effort", "high"]);
-    }
-
-    if let Some(ref sid) = session_id {
-        cmd.arg("--resume").arg(sid);
-    } else {
-        // Inject system prompt only on first message (resume inherits it)
-        let base_branch = detect_default_branch(&repo_path)
-            .unwrap_or_else(|_| "main".to_string());
-        let wt_display = worktree_path.to_string_lossy();
-        let repo_display = repo_path.to_string_lossy();
-        let rename_instruction = if !is_custom_branch {
-            "Use the rename_branch tool to give your branch a meaningful name based on the task. \
-             Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
-             IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. \
-             Parse the user's request, pick a name, and rename immediately.\n\
-             If the task scope changes mid-conversation, rename the branch again to reflect the new direction."
-        } else {
-            "The branch was manually named by the user. Do NOT rename it unless the user explicitly asks you to."
-        };
-        let mut system_prompt = format!(
-            "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
-             Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
-             Target branch: {ws_branch}\n\
-             Base branch: {base_branch}\n\
-             \n\
-             CRITICAL — workspace isolation:\n\
-             • Your workspace is a git worktree at: {wt_display}\n\
-             • The main repository lives at: {repo_display} — NEVER read, write, or cd into it.\n\
-             • ALL file operations (Read, Edit, Write, Bash) MUST use paths under {wt_display}.\n\
-             • The .git file in the worktree references the main repo — that is normal for worktrees. Do NOT follow it.\n\
-             • EnterWorktree and ExitWorktree are DISABLED — you are already in the correct worktree.\n\
-             • Do NOT use the Agent tool with isolation: \"worktree\" — it will create a worktree from the wrong repo.\n\
-             • If you discover paths outside {wt_display}, ignore them. You have no business there.\n\
-             \n\
-             You have access to Korlap tools via MCP.\n\
-             {rename_instruction}\n\
-             Keep all changes on the target branch. Do not modify other branches.\n\
-             \n\
-             You have LSP tools for compiler-accurate code navigation:\n\
-             • lsp_goto_definition — find where a symbol is defined\n\
-             • lsp_find_references — find all usages of a symbol\n\
-             • lsp_hover — get type info and docs for a symbol\n\
-             • lsp_workspace_symbols — search symbols by name across the workspace\n\
-             • lsp_diagnostics — get compiler errors/warnings for a file\n\
-             • lsp_rename — rename a symbol across all files (applies edits automatically)\n\
-             Use these instead of grep when you need precise code navigation. All positions are 1-based (line and character).\n\
-             After editing files, call lsp_diagnostics to check for compiler errors.\n\
-             For renaming symbols, prefer lsp_rename over find-and-replace — it handles all references correctly.",
-        );
-        // Inject warm context from knowledge base (if built)
-        if context_dir.exists() {
-            let max_context_chars: usize = 20_000;
-            let mut injected = 0usize;
-
-            // 1. Invariants — always inject in full (highest priority)
-            if let Ok(inv) = std::fs::read_to_string(context_dir.join("invariants.md")) {
-                let inv = inv.trim();
-                if !inv.is_empty() && injected + inv.len() < max_context_chars {
-                    system_prompt.push_str("\n\n## Repository Invariants (MUST follow)\n\n");
-                    system_prompt.push_str(inv);
-                    injected += inv.len();
-                }
-            }
-
-            // 2. Hot context — live state (second priority)
-            if let Ok(hot) = std::fs::read_to_string(context_dir.join("hot.md")) {
-                let hot = hot.trim();
-                if !hot.is_empty() && injected + hot.len() < max_context_chars {
-                    system_prompt.push_str("\n\n");
-                    system_prompt.push_str(hot);
-                    injected += hot.len();
-                }
-            }
-
-            // 3. Facts — abbreviated (third priority)
-            if let Ok(facts) = std::fs::read_to_string(context_dir.join("facts.md")) {
-                let facts = facts.trim();
-                if !facts.is_empty() {
-                    let abbreviated: String = facts.lines().take(80).collect::<Vec<_>>().join("\n");
-                    if injected + abbreviated.len() < max_context_chars {
-                        system_prompt.push_str("\n\n## Repository Facts\n\n");
-                        system_prompt.push_str(&abbreviated);
-                        injected += abbreviated.len();
-                    }
-                }
-            }
-
-            // 4. Context entries matching files mentioned in the prompt (lowest priority)
-            if let Ok(index) = std::fs::read_to_string(context_dir.join("index.md")) {
-                if let Ok(context_md) = std::fs::read_to_string(context_dir.join("context.md")) {
-                    let relevant_ids = find_relevant_context_ids(&index, &prompt);
-                    if !relevant_ids.is_empty() {
-                        let relevant = super::context::extract_entries_by_id(&context_md, &relevant_ids);
-                        if !relevant.is_empty() && injected + relevant.len() < max_context_chars {
-                            system_prompt.push_str("\n\n## Relevant Context\n\n");
-                            system_prompt.push_str(&relevant);
-                            let _ = relevant.len(); // already last context block
-                        }
-                    }
-                }
-            }
-        }
-
-        if !user_system_prompt.is_empty() {
-            system_prompt.push_str("\n\nUser preferences:\n");
-            system_prompt.push_str(&user_system_prompt);
-        }
-        cmd.arg("--system-prompt").arg(&system_prompt);
-    }
-
-    // Pass MCP config file to claude
-    if let Some(ref config_path) = mcp_config_path {
-        cmd.arg("--mcp-config").arg(config_path);
-    }
-
-    cmd.current_dir(&worktree_path);
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    // Forward SSH agent and common env for git operations
-    inject_shell_env(&mut cmd);
-
-    if let Some(ref token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-        cmd.env(
-            "GIT_CONFIG_PARAMETERS",
-            format!(
-                "'url.https://oauth2:{}@github.com/.insteadOf=git@github.com:'",
-                token
-            ),
-        );
-    }
-
+    let (mut cmd, mcp_cleanup_names) = backend.build_session_command(&ctx)?;
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to spawn claude: {}", e))?;
+        .map_err(|e| format!("Failed to spawn {}: {}", backend.binary_name(), e))?;
 
-    // Take stdout/stderr before storing child handle
     let stdout = child
         .stdout
         .take()
-        .ok_or("Failed to capture claude stdout")?;
+        .ok_or_else(|| format!("Failed to capture {} stdout", backend.binary_name()))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or("Failed to capture claude stderr")?;
+        .ok_or_else(|| format!("Failed to capture {} stderr", backend.binary_name()))?;
 
-    // Store child handle for stop_agent
+    // Store child handle
     {
         let mut st = state.lock().map_err(|e| e.to_string())?;
         st.agents
@@ -673,20 +320,109 @@ pub fn send_message(
         }),
     );
 
-    // Read stdout in background thread
+    // Read stdout in background thread — provider-agnostic via backend.parse_stream_line()
     let ws_id = workspace_id.clone();
     let app_clone = app.clone();
     let wt_path_str = worktree_path.to_string_lossy().to_string();
+    let is_claude = provider == AgentProvider::Claude;
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
         let mut new_session_id: Option<String> = None;
+        let mut any_event_sent = false;
 
         for line in reader.lines() {
             match line {
                 Ok(line) if !line.is_empty() => {
-                    parse_stream_line(&line, &on_event, &mut new_session_id, &wt_path_str);
+                    // Use the backend's parser
+                    if let Some(event) = backend.parse_stream_line(&line, &wt_path_str) {
+                        any_event_sent = true;
+                        match event {
+                            ParsedEvent::SessionId(sid) => {
+                                new_session_id = Some(sid);
+                            }
+                            ParsedEvent::AssistantMessage {
+                                text,
+                                tool_uses,
+                                thinking,
+                            } => {
+                                let _ = on_event.send(AgentEvent::AssistantMessage {
+                                    text,
+                                    tool_uses,
+                                    thinking,
+                                });
+                            }
+                            ParsedEvent::Usage {
+                                input_tokens,
+                                output_tokens,
+                                cumulative,
+                            } => {
+                                let _ = on_event.send(AgentEvent::Usage {
+                                    input_tokens,
+                                    output_tokens,
+                                    cumulative,
+                                });
+                            }
+                            ParsedEvent::Done => {
+                                let _ = on_event.send(AgentEvent::Done);
+                            }
+                        }
+                    }
+
+                    // Provider-specific: extract usage and session info that the
+                    // trait parser doesn't emit (to keep ParsedEvent simple).
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                        let msg_type = v.get("type").and_then(|t| t.as_str());
+                        if is_claude {
+                            match msg_type {
+                                Some("assistant") => {
+                                    if let Some(usage) =
+                                        v.get("message").and_then(|m| m.get("usage"))
+                                    {
+                                        let (input, output) = claude_extract_usage(usage);
+                                        if input > 0 || output > 0 {
+                                            let _ = on_event.send(AgentEvent::Usage {
+                                                input_tokens: input,
+                                                output_tokens: output,
+                                                cumulative: false,
+                                            });
+                                        }
+                                    }
+                                }
+                                Some("result") => {
+                                    if let Some(sid) =
+                                        v.get("session_id").and_then(|s| s.as_str())
+                                    {
+                                        new_session_id = Some(sid.to_string());
+                                    }
+                                    if let Some(usage) = v.get("usage") {
+                                        let (input, output) = claude_extract_usage(usage);
+                                        if input > 0 || output > 0 {
+                                            let _ = on_event.send(AgentEvent::Usage {
+                                                input_tokens: input,
+                                                output_tokens: output,
+                                                cumulative: true,
+                                            });
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            // Codex: extract usage from turn.completed
+                            if msg_type == Some("turn.completed") {
+                                let (input, output) = codex_extract_usage(&v);
+                                if input > 0 || output > 0 {
+                                    let _ = on_event.send(AgentEvent::Usage {
+                                        input_tokens: input,
+                                        output_tokens: output,
+                                        cumulative: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
-                Ok(_) => {} // empty line, skip
+                Ok(_) => {}
                 Err(e) => {
                     tracing::debug!("stdout read error for {}: {}", ws_id, e);
                     break;
@@ -694,32 +430,42 @@ pub fn send_message(
             }
         }
 
-        // Read any stderr for error reporting
+        // Read stderr and surface errors to the user
         let stderr_output = {
             let mut buf = String::new();
             let mut stderr_reader = std::io::BufReader::new(stderr);
             let _ = std::io::Read::read_to_string(&mut stderr_reader, &mut buf);
             buf
         };
+        let stderr_trimmed = stderr_output.trim();
+        if !stderr_trimmed.is_empty() {
+            tracing::warn!("{} stderr for {}: {}", backend.binary_name(), ws_id, stderr_trimmed);
+        }
 
-        if !stderr_output.trim().is_empty() {
-            tracing::debug!("claude stderr for {}: {}", ws_id, stderr_output.trim());
+        // If we got no events and there's stderr output, show it as an error in chat
+        if !any_event_sent {
+            let error_msg = if !stderr_trimmed.is_empty() {
+                format!("{} error: {}", backend.binary_name(), stderr_trimmed)
+            } else {
+                format!("{} exited without producing any output", backend.binary_name())
+            };
+            let _ = on_event.send(AgentEvent::AssistantMessage {
+                text: error_msg,
+                tool_uses: vec![],
+                thinking: None,
+            });
+            let _ = on_event.send(AgentEvent::Done);
         }
 
         // Clean up state
         let state: State<'_, Arc<Mutex<AppState>>> = app_clone.state();
         if let Ok(mut st) = state.lock() {
-            // Wait for child to finish
             if let Some(mut handle) = st.agents.remove(&ws_id) {
                 let _ = handle.child.wait();
             }
-
-            // Store session_id for future resume
             if let Some(sid) = new_session_id {
                 st.session_ids.insert(ws_id.clone(), sid);
             }
-
-            // Update workspace status
             if let Some(ws) = st.workspaces.get_mut(&ws_id) {
                 ws.status = WorkspaceStatus::Waiting;
                 let _ = st.save_workspaces();
@@ -734,11 +480,133 @@ pub fn send_message(
             }),
         );
 
+        // Clean up Codex MCP server registrations from global config
+        if !mcp_cleanup_names.is_empty() {
+            let codex_bin = get_shell_env()
+                .codex_path
+                .as_deref()
+                .unwrap_or("codex");
+            codex_unregister_mcp_servers(codex_bin, &mcp_cleanup_names);
+        }
+
         tracing::info!("Agent finished for workspace {}", ws_id);
     });
 
-    tracing::info!("Spawned agent for workspace {}", workspace_id);
+    tracing::info!("Spawned {} agent for workspace {}", backend.binary_name(), workspace_id);
     Ok(())
+}
+
+/// Build the system prompt for a new session (shared across providers).
+fn build_system_prompt(
+    worktree_path: &Path,
+    repo_path: &Path,
+    ws_branch: &str,
+    is_custom_branch: bool,
+    context_dir: &Path,
+    prompt: &str,
+    user_system_prompt: &str,
+) -> String {
+    let base_branch =
+        detect_default_branch(repo_path).unwrap_or_else(|_| "main".to_string());
+    let wt_display = worktree_path.to_string_lossy();
+    let repo_display = repo_path.to_string_lossy();
+    let rename_instruction = if !is_custom_branch {
+        "Use the rename_branch tool to give your branch a meaningful name based on the task. \
+         Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
+         IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. \
+         Parse the user's request, pick a name, and rename immediately.\n\
+         If the task scope changes mid-conversation, rename the branch again to reflect the new direction."
+    } else {
+        "The branch was manually named by the user. Do NOT rename it unless the user explicitly asks you to."
+    };
+    let mut system_prompt = format!(
+        "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
+         Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
+         Target branch: {ws_branch}\n\
+         Base branch: {base_branch}\n\
+         \n\
+         CRITICAL — workspace isolation:\n\
+         • Your workspace is a git worktree at: {wt_display}\n\
+         • The main repository lives at: {repo_display} — NEVER read, write, or cd into it.\n\
+         • ALL file operations (Read, Edit, Write, Bash) MUST use paths under {wt_display}.\n\
+         • The .git file in the worktree references the main repo — that is normal for worktrees. Do NOT follow it.\n\
+         • EnterWorktree and ExitWorktree are DISABLED — you are already in the correct worktree.\n\
+         • Do NOT use the Agent tool with isolation: \"worktree\" — it will create a worktree from the wrong repo.\n\
+         • If you discover paths outside {wt_display}, ignore them. You have no business there.\n\
+         \n\
+         You have access to Korlap tools via MCP.\n\
+         {rename_instruction}\n\
+         Keep all changes on the target branch. Do not modify other branches.\n\
+         \n\
+         You have LSP tools for compiler-accurate code navigation:\n\
+         • lsp_goto_definition — find where a symbol is defined\n\
+         • lsp_find_references — find all usages of a symbol\n\
+         • lsp_hover — get type info and docs for a symbol\n\
+         • lsp_workspace_symbols — search symbols by name across the workspace\n\
+         • lsp_diagnostics — get compiler errors/warnings for a file\n\
+         • lsp_rename — rename a symbol across all files (applies edits automatically)\n\
+         Use these instead of grep when you need precise code navigation. All positions are 1-based (line and character).\n\
+         After editing files, call lsp_diagnostics to check for compiler errors.\n\
+         For renaming symbols, prefer lsp_rename over find-and-replace — it handles all references correctly.",
+    );
+
+    // Inject warm context from knowledge base (if built)
+    if context_dir.exists() {
+        let max_context_chars: usize = 20_000;
+        let mut injected = 0usize;
+
+        if let Ok(inv) = std::fs::read_to_string(context_dir.join("invariants.md")) {
+            let inv = inv.trim();
+            if !inv.is_empty() && injected + inv.len() < max_context_chars {
+                system_prompt.push_str("\n\n## Repository Invariants (MUST follow)\n\n");
+                system_prompt.push_str(inv);
+                injected += inv.len();
+            }
+        }
+
+        if let Ok(hot) = std::fs::read_to_string(context_dir.join("hot.md")) {
+            let hot = hot.trim();
+            if !hot.is_empty() && injected + hot.len() < max_context_chars {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(hot);
+                injected += hot.len();
+            }
+        }
+
+        if let Ok(facts) = std::fs::read_to_string(context_dir.join("facts.md")) {
+            let facts = facts.trim();
+            if !facts.is_empty() {
+                let abbreviated: String =
+                    facts.lines().take(80).collect::<Vec<_>>().join("\n");
+                if injected + abbreviated.len() < max_context_chars {
+                    system_prompt.push_str("\n\n## Repository Facts\n\n");
+                    system_prompt.push_str(&abbreviated);
+                    injected += abbreviated.len();
+                }
+            }
+        }
+
+        if let Ok(index) = std::fs::read_to_string(context_dir.join("index.md")) {
+            if let Ok(context_md) = std::fs::read_to_string(context_dir.join("context.md")) {
+                let relevant_ids = find_relevant_context_ids(&index, prompt);
+                if !relevant_ids.is_empty() {
+                    let relevant =
+                        super::context::extract_entries_by_id(&context_md, &relevant_ids);
+                    if !relevant.is_empty() && injected + relevant.len() < max_context_chars {
+                        system_prompt.push_str("\n\n## Relevant Context\n\n");
+                        system_prompt.push_str(&relevant);
+                    }
+                }
+            }
+        }
+    }
+
+    if !user_system_prompt.is_empty() {
+        system_prompt.push_str("\n\nUser preferences:\n");
+        system_prompt.push_str(user_system_prompt);
+    }
+
+    system_prompt
 }
 
 #[tauri::command]
@@ -884,7 +752,7 @@ pub async fn generate_commit_message(
         let mut cmd = std::process::Command::new(claude_bin);
         cmd.arg("-p").arg(&prompt);
         cmd.args(["--output-format", "text"]);
-        cmd.args(["--disallowedTools", DISALLOWED_WORKTREE_TOOLS]);
+        cmd.args(["--disallowedTools", super::agent_backend::DISALLOWED_WORKTREE_TOOLS]);
         cmd.current_dir(&worktree_path);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::null());

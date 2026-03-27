@@ -7,6 +7,7 @@ import {
 // ── Tool icon mapping ────────────────────────────────────────────────
 
 export const toolIcons: Record<string, typeof Settings> = {
+  // Claude tools
   Read: FileText,
   Edit: Pencil,
   Write: FilePlus,
@@ -20,6 +21,11 @@ export const toolIcons: Record<string, typeof Settings> = {
   ToolSearch: Settings,
   AskUserQuestion: MessageCircleQuestion,
   TodoWrite: ListChecks,
+  // Codex tools
+  shell: Terminal,
+  file_read: FileText,
+  file_write: FilePlus,
+  file_edit: Pencil,
 };
 
 // ── Shared types ─────────────────────────────────────────────────────

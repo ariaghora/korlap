@@ -1,6 +1,7 @@
 pub(crate) mod helpers;
 
 pub mod agent;
+pub mod agent_backend;
 pub mod context;
 pub mod files;
 pub mod git;

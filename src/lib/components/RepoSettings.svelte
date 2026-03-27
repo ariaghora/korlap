@@ -40,6 +40,7 @@
     system_prompt: "",
     lsp_servers: {},
     mcp_servers: {},
+    agent_provider: "claude",
   });
 
   function addRunScript() {
