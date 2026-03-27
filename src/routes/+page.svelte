@@ -14,6 +14,7 @@
     saveImage,
     onAgentStatus,
     onWorkspaceUpdated,
+    onTodosChanged,
     stopAgent,
     renameBranch,
     getRepoSettings,
@@ -575,6 +576,7 @@
   onMount(() => {
     let unlistenStatus: (() => void) | undefined;
     let unlistenWsUpdate: (() => void) | undefined;
+    let unlistenTodos: (() => void) | undefined;
 
     (async () => {
       listModels().catch(() => {}); // pre-populate model cache
@@ -608,6 +610,14 @@
         const idx = workspaces.findIndex((w) => w.id === updated.id);
         if (idx >= 0) {
           workspaces[idx] = updated;
+        }
+      });
+
+      unlistenTodos = await onTodosChanged(({ repo_id }) => {
+        if (activeRepo && repo_id === activeRepo.id) {
+          loadTodos(repo_id).then((raw) => {
+            todos = (raw as TodoItem[]) ?? [];
+          }).catch(() => {});
         }
       });
 
@@ -814,6 +824,7 @@
     return () => {
       unlistenStatus?.();
       unlistenWsUpdate?.();
+      unlistenTodos?.();
       clearInterval(prPollInterval);
       clearInterval(basePollInterval);
       window.removeEventListener("keydown", handleKeydown);

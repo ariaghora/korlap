@@ -92,6 +92,11 @@ fn handle_request(
         ("POST", "/lsp/workspace-symbols") => handle_lsp_workspace_symbols(&body, state, lsp_mgr, app),
         ("POST", "/lsp/diagnostics") => handle_lsp_diagnostics(&body, state, lsp_mgr, app),
         ("POST", "/lsp/rename") => handle_lsp_rename(&body, state, lsp_mgr, app),
+        // Todo routes
+        ("POST", "/todos/create") => handle_todo_create(&body, state, app),
+        ("POST", "/todos/update") => handle_todo_update(&body, state, app),
+        ("POST", "/todos/delete") => handle_todo_delete(&body, state, app),
+        ("GET", p) if p.starts_with("/todos/list") => handle_todo_list(&request_line, state),
         _ => ("404 Not Found".to_string(), r#"{"error":"not found"}"#.to_string()),
     };
 
@@ -210,6 +215,19 @@ fn handle_notify(body: &[u8], app: &AppHandle) -> (String, String) {
 }
 
 // ── LSP handlers ────────────────────────────────────────────────────
+
+/// Resolve workspace_id → repo_id only.
+fn resolve_workspace_repo_id(
+    state: &Arc<Mutex<AppState>>,
+    workspace_id: &str,
+) -> Result<String, String> {
+    let st = state.lock().map_err(|e| e.to_string())?;
+    let ws = st
+        .workspaces
+        .get(workspace_id)
+        .ok_or_else(|| "workspace not found".to_string())?;
+    Ok(ws.repo_id.clone())
+}
 
 /// Resolve workspace_id → (repo_id, repo_path, worktree_path).
 fn resolve_workspace(
@@ -700,4 +718,218 @@ fn handle_lsp_rename(
             format!(r#"{{"error":"Failed to apply rename: {}"}}"#, e),
         ),
     }
+}
+
+// ── Todo handlers ───────────────────────────────────────────────────
+
+/// Read the todos JSON file for a repo, returning an array of todo objects.
+fn read_todos(state: &Arc<Mutex<AppState>>, repo_id: &str) -> Result<Vec<serde_json::Value>, String> {
+    let todos_file = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.todos_dir().join(format!("{}.json", repo_id))
+    };
+    if !todos_file.exists() {
+        return Ok(Vec::new());
+    }
+    let data = std::fs::read_to_string(&todos_file).map_err(|e| e.to_string())?;
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    Ok(arr)
+}
+
+/// Write the todos array back to disk.
+fn write_todos(state: &Arc<Mutex<AppState>>, repo_id: &str, todos: &[serde_json::Value]) -> Result<(), String> {
+    let todos_dir = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.todos_dir()
+    };
+    std::fs::create_dir_all(&todos_dir).map_err(|e| e.to_string())?;
+    let todos_file = todos_dir.join(format!("{}.json", repo_id));
+    let data = serde_json::to_string(todos).map_err(|e| e.to_string())?;
+    std::fs::write(&todos_file, data).map_err(|e| e.to_string())
+}
+
+fn handle_todo_create(
+    body: &[u8],
+    state: &Arc<Mutex<AppState>>,
+    app: &AppHandle,
+) -> (String, String) {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return ("400 Bad Request".into(), r#"{"error":"invalid json"}"#.into());
+    };
+
+    let workspace_id = match v.get("workspace_id").and_then(|s| s.as_str()) {
+        Some(s) => s.to_string(),
+        None => return ("400 Bad Request".into(), r#"{"error":"missing workspace_id"}"#.into()),
+    };
+    let title = match v.get("title").and_then(|s| s.as_str()) {
+        Some(s) => s.to_string(),
+        None => return ("400 Bad Request".into(), r#"{"error":"missing title"}"#.into()),
+    };
+    let description = v.get("description").and_then(|s| s.as_str()).unwrap_or("").to_string();
+
+    let repo_id = match resolve_workspace_repo_id(state, &workspace_id) {
+        Ok(id) => id,
+        Err(e) => return ("404 Not Found".into(), format!(r#"{{"error":"{}"}}"#, e)),
+    };
+
+    let mut todos = match read_todos(state, &repo_id) {
+        Ok(t) => t,
+        Err(e) => return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e)),
+    };
+
+    let todo_id = uuid::Uuid::new_v4().to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+
+    let todo = serde_json::json!({
+        "id": todo_id,
+        "repo_id": repo_id,
+        "title": title,
+        "description": description,
+        "created_at": now,
+    });
+    todos.push(todo);
+
+    if let Err(e) = write_todos(state, &repo_id, &todos) {
+        return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e));
+    }
+
+    let _ = app.emit("todos-changed", serde_json::json!({ "repo_id": repo_id }));
+
+    (
+        "200 OK".into(),
+        serde_json::json!({ "ok": true, "id": todo_id }).to_string(),
+    )
+}
+
+fn handle_todo_update(
+    body: &[u8],
+    state: &Arc<Mutex<AppState>>,
+    app: &AppHandle,
+) -> (String, String) {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return ("400 Bad Request".into(), r#"{"error":"invalid json"}"#.into());
+    };
+
+    let workspace_id = match v.get("workspace_id").and_then(|s| s.as_str()) {
+        Some(s) => s.to_string(),
+        None => return ("400 Bad Request".into(), r#"{"error":"missing workspace_id"}"#.into()),
+    };
+    let todo_id = match v.get("todo_id").and_then(|s| s.as_str()) {
+        Some(s) => s.to_string(),
+        None => return ("400 Bad Request".into(), r#"{"error":"missing todo_id"}"#.into()),
+    };
+
+    let repo_id = match resolve_workspace_repo_id(state, &workspace_id) {
+        Ok(id) => id,
+        Err(e) => return ("404 Not Found".into(), format!(r#"{{"error":"{}"}}"#, e)),
+    };
+
+    let mut todos = match read_todos(state, &repo_id) {
+        Ok(t) => t,
+        Err(e) => return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e)),
+    };
+
+    let Some(todo) = todos.iter_mut().find(|t| t.get("id").and_then(|i| i.as_str()) == Some(&todo_id)) else {
+        return ("404 Not Found".into(), r#"{"error":"todo not found"}"#.into());
+    };
+
+    // Apply partial updates
+    if let Some(title) = v.get("title").and_then(|s| s.as_str()) {
+        todo["title"] = serde_json::Value::String(title.to_string());
+    }
+    if let Some(desc) = v.get("description").and_then(|s| s.as_str()) {
+        todo["description"] = serde_json::Value::String(desc.to_string());
+    }
+
+    if let Err(e) = write_todos(state, &repo_id, &todos) {
+        return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e));
+    }
+
+    let _ = app.emit("todos-changed", serde_json::json!({ "repo_id": repo_id }));
+
+    ("200 OK".into(), r#"{"ok":true}"#.into())
+}
+
+fn handle_todo_delete(
+    body: &[u8],
+    state: &Arc<Mutex<AppState>>,
+    app: &AppHandle,
+) -> (String, String) {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return ("400 Bad Request".into(), r#"{"error":"invalid json"}"#.into());
+    };
+
+    let workspace_id = match v.get("workspace_id").and_then(|s| s.as_str()) {
+        Some(s) => s.to_string(),
+        None => return ("400 Bad Request".into(), r#"{"error":"missing workspace_id"}"#.into()),
+    };
+    let todo_id = match v.get("todo_id").and_then(|s| s.as_str()) {
+        Some(s) => s.to_string(),
+        None => return ("400 Bad Request".into(), r#"{"error":"missing todo_id"}"#.into()),
+    };
+
+    let repo_id = match resolve_workspace_repo_id(state, &workspace_id) {
+        Ok(id) => id,
+        Err(e) => return ("404 Not Found".into(), format!(r#"{{"error":"{}"}}"#, e)),
+    };
+
+    let mut todos = match read_todos(state, &repo_id) {
+        Ok(t) => t,
+        Err(e) => return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e)),
+    };
+
+    let before_len = todos.len();
+    todos.retain(|t| t.get("id").and_then(|i| i.as_str()) != Some(&todo_id));
+
+    if todos.len() == before_len {
+        return ("404 Not Found".into(), r#"{"error":"todo not found"}"#.into());
+    }
+
+    if let Err(e) = write_todos(state, &repo_id, &todos) {
+        return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e));
+    }
+
+    let _ = app.emit("todos-changed", serde_json::json!({ "repo_id": repo_id }));
+
+    ("200 OK".into(), r#"{"ok":true}"#.into())
+}
+
+fn handle_todo_list(
+    request_line: &str,
+    state: &Arc<Mutex<AppState>>,
+) -> (String, String) {
+    let workspace_id = request_line
+        .split('?')
+        .nth(1)
+        .and_then(|qs| {
+            qs.split('&').find_map(|param| {
+                let mut kv = param.split('=');
+                if kv.next()? == "workspace_id" {
+                    kv.next().map(|v| v.split_whitespace().next().unwrap_or(v).to_string())
+                } else {
+                    None
+                }
+            })
+        });
+
+    let workspace_id = match workspace_id {
+        Some(id) => id,
+        None => return ("400 Bad Request".into(), r#"{"error":"missing workspace_id"}"#.into()),
+    };
+
+    let repo_id = match resolve_workspace_repo_id(state, &workspace_id) {
+        Ok(id) => id,
+        Err(e) => return ("404 Not Found".into(), format!(r#"{{"error":"{}"}}"#, e)),
+    };
+
+    let todos = match read_todos(state, &repo_id) {
+        Ok(t) => t,
+        Err(e) => return ("500 Internal Server Error".into(), format!(r#"{{"error":"{}"}}"#, e)),
+    };
+
+    let json = serde_json::to_string(&todos).unwrap_or_else(|_| "[]".to_string());
+    ("200 OK".into(), json)
 }

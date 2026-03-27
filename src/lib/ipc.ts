@@ -787,6 +787,12 @@ export function onWorkspaceUpdated(
   return listen<WorkspaceInfo>("workspace-updated", (e) => callback(e.payload));
 }
 
+export function onTodosChanged(
+  callback: (event: { repo_id: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ repo_id: string }>("todos-changed", (e) => callback(e.payload));
+}
+
 // ── Suggested replies ────────────────────────────────────────────────
 
 export async function suggestReplies(text: string): Promise<string[]> {
