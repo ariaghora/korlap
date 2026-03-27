@@ -153,6 +153,9 @@ pub fn run() {
             commands::persistence::save_repo_settings,
             commands::persistence::save_todos,
             commands::persistence::load_todos,
+            commands::persistence::test_mcp_server,
+            // oauth
+            commands::oauth::mcp_oauth_start,
             // staging
             commands::staging::create_staging_workspace,
             commands::staging::remove_staging_workspace,
