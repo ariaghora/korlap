@@ -75,6 +75,37 @@ pub struct RepoSettings {
     /// Key is a server id (e.g. "rust", "svelte"). See lsp::types::LspServerConfig.
     #[serde(default)]
     pub lsp_servers: std::collections::HashMap<String, crate::lsp::types::LspServerConfig>,
+    /// User-configured 3rd-party MCP servers. Merged with built-in "korlap" server at agent spawn.
+    /// Key is the server name (e.g. "jira", "slack"). Must not be "korlap".
+    #[serde(default)]
+    pub mcp_servers: std::collections::HashMap<String, McpServerConfig>,
+}
+
+/// Configuration for a 3rd-party MCP server (stdio or SSE transport).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    /// "stdio" or "sse"
+    #[serde(default = "default_mcp_type")]
+    pub server_type: String,
+    /// stdio: binary to run
+    #[serde(default)]
+    pub command: String,
+    /// stdio: CLI arguments
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// stdio: environment variables (API keys, etc.)
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+    /// sse: server URL
+    #[serde(default)]
+    pub url: String,
+    /// sse: HTTP headers (e.g. Authorization). Stored as key→value pairs.
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
+}
+
+fn default_mcp_type() -> String {
+    "stdio".into()
 }
 
 impl RepoSettings {

@@ -1,13 +1,14 @@
 <script lang="ts">
   import {
-    getRepoSettings, saveRepoSettings, type RepoSettings, type NamedScript, type LspServerConfig,
+    getRepoSettings, saveRepoSettings, type RepoSettings, type NamedScript, type LspServerConfig, type McpServerConfig,
+    testMcpServer, mcpOauthStart,
     getContextMeta, saveContextScope, buildKnowledgeBase, stopContextBuild,
     readContextFile, writeContextFile, draftContradictionResolution, resolveContradiction, updateKnowledgeBaseIncremental,
     lspStopServer, lspRestartServer,
     type ContextMeta, type ContextBuildStatus, type AgentEvent,
   } from "$lib/ipc";
   import { onMount } from "svelte";
-  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown, Sun, Moon, Monitor, Braces, Plus, RotateCcw, Square, RefreshCw } from "lucide-svelte";
+  import { ArrowLeft, Terminal, Bot, Palette, BookOpen, Loader2, Pencil, Trash2, ChevronDown, Sun, Moon, Monitor, Braces, Plus, RotateCcw, Square, RefreshCw, Blocks, Zap, LogIn, ShieldCheck } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
   import { themeList, getPreviewColors, type ThemeId } from "$lib/themes";
   import { getThemeId, setTheme, getColorMode, setColorMode, type ColorMode } from "$lib/stores/theme.svelte";
@@ -24,7 +25,7 @@
 
   let { repoId, repoName, repoPath, lspStatusMap, workspaceId, onClose }: Props = $props();
 
-  type Section = "scripts" | "agent" | "lsp" | "knowledge" | "appearance";
+  type Section = "scripts" | "agent" | "lsp" | "mcp" | "knowledge" | "appearance";
   let activeSection = $state<Section>("scripts");
   let currentThemeId = $state<ThemeId>(getThemeId());
   let currentColorMode = $state<ColorMode>(getColorMode());
@@ -38,6 +39,7 @@
     default_plan: false,
     system_prompt: "",
     lsp_servers: {},
+    mcp_servers: {},
   });
 
   function addRunScript() {
@@ -234,6 +236,113 @@
     // Only show status for current repo
     if (info.repo_id && info.repo_id !== repoId) return null;
     return info;
+  }
+
+  // ── MCP state ─────────────────────────────────────────────────────
+  let addingMcp = $state(false);
+  let newMcpId = $state("");
+  let newMcpType = $state<"stdio" | "sse">("stdio");
+  let newMcpCommand = $state("");
+  let newMcpArgs = $state("");
+  let newMcpEnv = $state("");
+  let newMcpUrl = $state("");
+  let mcpNameError = $state("");
+  let mcpTestStatus = $state<Record<string, "idle" | "testing" | "success" | "error">>({});
+  let mcpTestResult = $state<Record<string, string>>({});
+
+  async function testMcpConnection(id: string, config: McpServerConfig) {
+    mcpTestStatus = { ...mcpTestStatus, [id]: "testing" };
+    mcpTestResult = { ...mcpTestResult, [id]: "" };
+    try {
+      const result = await testMcpServer(config);
+      mcpTestStatus = { ...mcpTestStatus, [id]: "success" };
+      mcpTestResult = { ...mcpTestResult, [id]: result };
+    } catch (e) {
+      mcpTestStatus = { ...mcpTestStatus, [id]: "error" };
+      mcpTestResult = { ...mcpTestResult, [id]: String(e) };
+    }
+  }
+
+  let mcpOauthStatus = $state<Record<string, "idle" | "authenticating" | "done" | "error">>({});
+  let mcpOauthResult = $state<Record<string, string>>({});
+
+  async function startOauthFlow(id: string, config: McpServerConfig) {
+    if (!config.url.trim()) return;
+    mcpOauthStatus = { ...mcpOauthStatus, [id]: "authenticating" };
+    mcpOauthResult = { ...mcpOauthResult, [id]: "" };
+    try {
+      const result = await mcpOauthStart(config.url);
+      mcpOauthStatus = { ...mcpOauthStatus, [id]: "done" };
+      mcpOauthResult = { ...mcpOauthResult, [id]: result };
+    } catch (e) {
+      mcpOauthStatus = { ...mcpOauthStatus, [id]: "error" };
+      mcpOauthResult = { ...mcpOauthResult, [id]: String(e) };
+    }
+  }
+
+  function getMcpEntries(): [string, McpServerConfig][] {
+    const servers = settings.mcp_servers ?? {};
+    return Object.entries(servers).sort(([a], [b]) => a.localeCompare(b));
+  }
+
+  function removeMcpServer(id: string) {
+    const next = { ...settings.mcp_servers };
+    delete next[id];
+    settings.mcp_servers = next;
+    scheduleAutosave();
+  }
+
+  function saveMcpServer(id: string, config: McpServerConfig) {
+    settings.mcp_servers = { ...settings.mcp_servers, [id]: config };
+    scheduleAutosave();
+  }
+
+  function addMcpServer() {
+    const id = newMcpId.trim().toLowerCase().replace(/\s+/g, "-");
+    if (!id) { mcpNameError = "Name is required"; return; }
+    if (id === "korlap") { mcpNameError = "\"korlap\" is reserved"; return; }
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) { mcpNameError = "Lowercase letters, numbers, and hyphens only"; return; }
+    if (settings.mcp_servers?.[id]) { mcpNameError = "Server already exists"; return; }
+    if (newMcpType === "stdio" && !newMcpCommand.trim()) { mcpNameError = "Command is required"; return; }
+    if (newMcpType === "sse" && !newMcpUrl.trim()) { mcpNameError = "URL is required"; return; }
+
+    const config: McpServerConfig = {
+      server_type: newMcpType,
+      command: newMcpType === "stdio" ? newMcpCommand.trim() : "",
+      args: newMcpType === "stdio" ? newMcpArgs.split(" ").filter(Boolean) : [],
+      env: newMcpType === "stdio" ? parseEnvText(newMcpEnv) : {},
+      url: newMcpType === "sse" ? newMcpUrl.trim() : "",
+      headers: {},
+    };
+    settings.mcp_servers = { ...settings.mcp_servers, [id]: config };
+    scheduleAutosave();
+    addingMcp = false;
+    resetMcpForm();
+  }
+
+  function resetMcpForm() {
+    newMcpId = "";
+    newMcpType = "stdio";
+    newMcpCommand = "";
+    newMcpArgs = "";
+    newMcpEnv = "";
+    newMcpUrl = "";
+    mcpNameError = "";
+  }
+
+  function parseEnvText(text: string): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const line of text.split("\n")) {
+      const eq = line.indexOf("=");
+      if (eq > 0) {
+        env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+      }
+    }
+    return env;
+  }
+
+  function envToText(env: Record<string, string>): string {
+    return Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n");
   }
 
   function scheduleScopeSave() {
@@ -544,6 +653,7 @@
     { id: "scripts", label: "Scripts", icon: Terminal },
     { id: "agent", label: "Agent", icon: Bot },
     { id: "lsp", label: "Language Servers", icon: Braces },
+    { id: "mcp", label: "MCP Servers", icon: Blocks },
     { id: "knowledge", label: "Knowledge", icon: BookOpen },
   ];
 
@@ -936,6 +1046,152 @@
       {:else}
         <button class="add-script-btn" onclick={() => { addingLsp = true; }}>
           <Plus size={13} /> Add language server
+        </button>
+      {/if}
+
+    {:else if activeSection === "mcp"}
+      <div class="section-header">
+        <h1>MCP Servers</h1>
+        <span class="autosave-status" class:visible={saveStatus !== "idle"}>
+          {saveStatus === "saving" ? "Saving..." : "Saved"}
+        </span>
+      </div>
+
+      <p class="section-desc">
+        Connect 3rd-party MCP servers so agents can interact with external services like Jira, Slack, databases, and more. Servers are available in work mode only.
+      </p>
+
+      {#each getMcpEntries() as [id, config]}
+        <div class="lsp-card">
+          <div class="lsp-card-header">
+            <span class="lsp-id">{id}</span>
+            <div class="lsp-badges">
+              <span class="lsp-badge" class:custom={config.server_type === "stdio"} class:override={config.server_type === "sse"}>
+                {config.server_type}
+              </span>
+            </div>
+            <div class="lsp-actions">
+              <button class="lsp-action-btn" use:tooltip={{ text: "Test connection" }} onclick={() => testMcpConnection(id, config)} disabled={mcpTestStatus[id] === "testing"}>
+                {#if mcpTestStatus[id] === "testing"}
+                  <Loader2 size={12} class="lsp-spin" />
+                {:else}
+                  <Zap size={12} />
+                {/if}
+              </button>
+              <button class="lsp-action-btn danger" use:tooltip={{ text: "Remove" }} onclick={() => removeMcpServer(id)}>
+                <Trash2 size={12} />
+              </button>
+            </div>
+          </div>
+
+          {#if config.server_type === "sse"}
+            <div class="lsp-fields">
+              <label class="lsp-field" style="grid-column: 1 / -1">
+                <span>URL</span>
+                <input type="text" value={config.url} oninput={(e) => saveMcpServer(id, { ...config, url: (e.target as HTMLInputElement).value })} spellcheck="false" placeholder="https://mcp.example.com/sse" />
+              </label>
+            </div>
+            <div class="mcp-auth-row">
+              <button
+                class="mcp-auth-btn"
+                onclick={() => startOauthFlow(id, config)}
+                disabled={mcpOauthStatus[id] === "authenticating" || !config.url.trim()}
+              >
+                {#if mcpOauthStatus[id] === "authenticating"}
+                  <Loader2 size={12} class="lsp-spin" /> Authenticating...
+                {:else}
+                  <LogIn size={12} /> Authenticate with OAuth
+                {/if}
+              </button>
+            </div>
+            {#if mcpOauthStatus[id] === "done"}
+              <div class="mcp-test-result success">{mcpOauthResult[id]}</div>
+            {:else if mcpOauthStatus[id] === "error"}
+              <div class="mcp-test-result error">{mcpOauthResult[id]}</div>
+            {/if}
+          {:else}
+            <div class="lsp-fields">
+              <label class="lsp-field">
+                <span>Command</span>
+                <input type="text" value={config.command} oninput={(e) => saveMcpServer(id, { ...config, command: (e.target as HTMLInputElement).value })} spellcheck="false" />
+              </label>
+              <label class="lsp-field">
+                <span>Args</span>
+                <input type="text" value={config.args.join(" ")} oninput={(e) => saveMcpServer(id, { ...config, args: (e.target as HTMLInputElement).value.split(" ").filter(Boolean) })} spellcheck="false" />
+              </label>
+              <label class="lsp-field" style="grid-column: 1 / -1">
+                <span>Environment variables</span>
+                <textarea
+                  class="mcp-env-textarea"
+                  value={envToText(config.env)}
+                  oninput={(e) => saveMcpServer(id, { ...config, env: parseEnvText((e.target as HTMLTextAreaElement).value) })}
+                  spellcheck="false"
+                  placeholder="JIRA_API_TOKEN=abc123&#10;JIRA_URL=https://myorg.atlassian.net"
+                  rows="3"
+                ></textarea>
+              </label>
+            </div>
+          {/if}
+
+          {#if mcpTestStatus[id] === "success"}
+            <div class="mcp-test-result success">{mcpTestResult[id]}</div>
+          {:else if mcpTestStatus[id] === "error"}
+            <div class="mcp-test-result error">{mcpTestResult[id]}</div>
+          {/if}
+        </div>
+      {/each}
+
+      {#if addingMcp}
+        <div class="lsp-card adding">
+          <div class="lsp-fields">
+            <label class="lsp-field">
+              <span>Server name</span>
+              <input type="text" bind:value={newMcpId} oninput={() => { mcpNameError = ""; }} spellcheck="false" placeholder="e.g. jira, slack, linear" />
+            </label>
+            <label class="lsp-field">
+              <span>Type</span>
+              <div class="mcp-type-toggle">
+                <button class:active={newMcpType === "stdio"} onclick={() => { newMcpType = "stdio"; }}>stdio</button>
+                <button class:active={newMcpType === "sse"} onclick={() => { newMcpType = "sse"; }}>sse</button>
+              </div>
+            </label>
+            {#if newMcpType === "stdio"}
+              <label class="lsp-field">
+                <span>Command</span>
+                <input type="text" bind:value={newMcpCommand} spellcheck="false" placeholder="npx, bunx, uvx, docker..." />
+              </label>
+              <label class="lsp-field">
+                <span>Args</span>
+                <input type="text" bind:value={newMcpArgs} spellcheck="false" placeholder="-y @modelcontextprotocol/server-github" />
+              </label>
+              <label class="lsp-field" style="grid-column: 1 / -1">
+                <span>Environment variables</span>
+                <textarea
+                  class="mcp-env-textarea"
+                  bind:value={newMcpEnv}
+                  spellcheck="false"
+                  placeholder="JIRA_API_TOKEN=abc123&#10;JIRA_URL=https://myorg.atlassian.net"
+                  rows="3"
+                ></textarea>
+              </label>
+            {:else}
+              <label class="lsp-field" style="grid-column: 1 / -1">
+                <span>URL</span>
+                <input type="text" bind:value={newMcpUrl} spellcheck="false" placeholder="https://mcp.example.com/sse" />
+              </label>
+            {/if}
+          </div>
+          {#if mcpNameError}
+            <p class="mcp-error">{mcpNameError}</p>
+          {/if}
+          <div class="lsp-add-actions">
+            <button class="lsp-save-btn" onclick={addMcpServer}>Add server</button>
+            <button class="lsp-cancel-btn" onclick={() => { addingMcp = false; resetMcpForm(); }}>Cancel</button>
+          </div>
+        </div>
+      {:else}
+        <button class="add-script-btn" onclick={() => { addingMcp = true; }}>
+          <Plus size={13} /> Add MCP server
         </button>
       {/if}
 
@@ -1842,6 +2098,113 @@
     font-size: 0.73rem;
     cursor: pointer;
     font-family: inherit;
+  }
+
+  /* ── MCP ──────────────────────────────── */
+
+  .mcp-env-textarea {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.3rem 0.45rem;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    font-family: var(--font-mono, monospace);
+    resize: vertical;
+    min-height: 2.5rem;
+    width: 100%;
+  }
+
+  .mcp-env-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .mcp-type-toggle {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  .mcp-type-toggle button {
+    flex: 1;
+    padding: 0.25rem 0.6rem;
+    background: none;
+    border: none;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: var(--font-mono, monospace);
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .mcp-type-toggle button.active {
+    background: var(--accent);
+    color: var(--on-accent, #fff);
+  }
+
+  .mcp-error {
+    font-size: 0.72rem;
+    color: var(--status-error);
+    margin: 0.4rem 0 0;
+  }
+
+  .mcp-test-result {
+    font-size: 0.7rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+  }
+
+  .mcp-test-result.success {
+    background: color-mix(in srgb, var(--status-ok) 12%, transparent);
+    color: var(--status-ok);
+  }
+
+  .mcp-test-result.error {
+    background: color-mix(in srgb, var(--status-error) 12%, transparent);
+    color: var(--status-error);
+  }
+
+  .mcp-auth-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .mcp-auth-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.7rem;
+    background: var(--accent);
+    color: var(--on-accent, #fff);
+    border: none;
+    border-radius: 5px;
+    font-size: 0.72rem;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .mcp-auth-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .mcp-auth-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .mcp-auth-badge.authenticated {
+    background: color-mix(in srgb, var(--status-ok) 12%, transparent);
+    color: var(--status-ok);
   }
 
   /* ── Env hint ────────────────────────── */

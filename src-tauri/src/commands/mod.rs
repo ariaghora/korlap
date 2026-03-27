@@ -6,6 +6,7 @@ pub mod files;
 pub mod git;
 pub mod github;
 pub mod lsp;
+pub mod oauth;
 pub mod persistence;
 pub mod repo;
 pub mod scripts;

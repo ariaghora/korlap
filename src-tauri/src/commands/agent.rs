@@ -331,7 +331,7 @@ pub fn send_message(
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
     let thinking_mode = thinking_mode.unwrap_or(false);
-    let (worktree_path, gh_profile, _repo_id, ws_branch, repo_path, user_system_prompt, context_dir, is_custom_branch) = {
+    let (worktree_path, gh_profile, _repo_id, ws_branch, repo_path, user_system_prompt, context_dir, is_custom_branch, user_mcp_servers) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
             return Err("Agent is already processing a message".into());
@@ -341,9 +341,12 @@ pub fn send_message(
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        let user_sp = st.repo_settings
-            .get(&ws.repo_id)
+        let repo_settings = st.repo_settings.get(&ws.repo_id);
+        let user_sp = repo_settings
             .map(|s| s.system_prompt.clone())
+            .unwrap_or_default();
+        let mcp_servers = repo_settings
+            .map(|s| s.mcp_servers.clone())
             .unwrap_or_default();
         let ctx_dir = st.context_dir(&ws.repo_id);
         (
@@ -355,6 +358,7 @@ pub fn send_message(
             user_sp,
             ctx_dir,
             ws.custom_branch,
+            mcp_servers,
         )
     };
 
@@ -404,19 +408,59 @@ pub fn send_message(
         }
     };
     let mcp_config_path = if let Some(ref mcp_server_path) = mcp_server_path {
-        let mcp_config = serde_json::json!({
-            "mcpServers": {
-                "korlap": {
-                    "type": "stdio",
-                    "command": "bun",
-                    "args": ["run", mcp_server_path.to_string_lossy()],
-                    "env": {
-                        "KORLAP_API_PORT": mcp_api_port.to_string(),
-                        "KORLAP_WORKSPACE_ID": workspace_id.clone()
-                    }
-                }
+        let mut servers = serde_json::Map::new();
+
+        // Built-in korlap server (always present)
+        servers.insert("korlap".to_string(), serde_json::json!({
+            "type": "stdio",
+            "command": "bun",
+            "args": ["run", mcp_server_path.to_string_lossy()],
+            "env": {
+                "KORLAP_API_PORT": mcp_api_port.to_string(),
+                "KORLAP_WORKSPACE_ID": workspace_id.clone()
             }
-        });
+        }));
+
+        // User-configured 3rd-party MCP servers (work mode only)
+        if !plan_mode {
+            for (name, config) in &user_mcp_servers {
+                if name == "korlap" {
+                    continue; // never overwrite built-in
+                }
+                let entry = if config.server_type == "sse" {
+                    if config.url.is_empty() {
+                        tracing::warn!("MCP server '{}' has empty URL, skipping", name);
+                        continue;
+                    }
+                    let mut entry = serde_json::json!({ "type": "sse", "url": config.url });
+                    if !config.headers.is_empty() {
+                        if let Ok(h) = serde_json::to_value(&config.headers) {
+                            entry["headers"] = h;
+                        }
+                    }
+                    entry
+                } else {
+                    if config.command.is_empty() {
+                        tracing::warn!("MCP server '{}' has empty command, skipping", name);
+                        continue;
+                    }
+                    let mut entry = serde_json::json!({
+                        "type": "stdio",
+                        "command": config.command,
+                        "args": config.args
+                    });
+                    if !config.env.is_empty() {
+                        if let Ok(env_val) = serde_json::to_value(&config.env) {
+                            entry["env"] = env_val;
+                        }
+                    }
+                    entry
+                };
+                servers.insert(name.clone(), entry);
+            }
+        }
+
+        let mcp_config = serde_json::json!({ "mcpServers": servers });
         let _ = std::fs::create_dir_all(&mcp_dir);
         let config_path = mcp_dir.join(format!("{}.json", workspace_id));
         let _ = std::fs::write(

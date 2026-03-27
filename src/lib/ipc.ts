@@ -613,6 +613,15 @@ export interface LspServerConfig {
   project_roots: string[];
 }
 
+export interface McpServerConfig {
+  server_type: "stdio" | "sse";
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  url: string;
+  headers: Record<string, string>;
+}
+
 export interface RepoSettings {
   setup_script: string;
   run_scripts: NamedScript[];
@@ -623,6 +632,7 @@ export interface RepoSettings {
   default_plan: boolean;
   system_prompt: string;
   lsp_servers: Record<string, LspServerConfig>;
+  mcp_servers: Record<string, McpServerConfig>;
 }
 
 export async function getRepoSettings(repoId: string): Promise<RepoSettings> {
@@ -634,6 +644,15 @@ export async function saveRepoSettings(
   settings: RepoSettings,
 ): Promise<void> {
   return invoke("save_repo_settings", { repoId, settings });
+}
+
+export async function testMcpServer(config: McpServerConfig): Promise<string> {
+  return invoke<string>("test_mcp_server", { config });
+}
+
+/** Trigger OAuth for a remote MCP server by spawning Claude CLI interactively. */
+export async function mcpOauthStart(url: string): Promise<string> {
+  return invoke<string>("mcp_oauth_start", { url });
 }
 
 // ── LSP ─────────────────────────────────────────────────────────────
