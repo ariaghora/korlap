@@ -122,6 +122,8 @@ pub fn run() {
             commands::github::get_pr_status,
             commands::github::get_pr_template,
             commands::github::gh_pr_merge,
+            // jira
+            commands::jira::get_jira_issues,
             // agent
             commands::agent::list_models,
             commands::agent::get_provider_info,

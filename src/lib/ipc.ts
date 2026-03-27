@@ -61,6 +61,14 @@ export interface AgentStatusEvent {
   status: string;
 }
 
+export interface JiraIssue {
+  key: string;
+  summary: string;
+  description: string | null;
+  status: string;
+  issue_type: string;
+}
+
 // ── Repository ───────────────────────────────────────────────────────
 
 export async function addRepo(path: string): Promise<RepoDetail> {
@@ -164,6 +172,12 @@ export async function checkRepoGhAccess(
   profiles: string[],
 ): Promise<string | null> {
   return invoke<string | null>("check_repo_gh_access", { path, profiles });
+}
+
+// ── Jira ─────────────────────────────────────────────────────────────
+
+export async function getJiraIssues(): Promise<JiraIssue[]> {
+  return invoke<JiraIssue[]>("get_jira_issues");
 }
 
 // ── Repo Branch ─────────────────────────────────────────────────────

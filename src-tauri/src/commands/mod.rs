@@ -6,6 +6,7 @@ pub mod context;
 pub mod files;
 pub mod git;
 pub mod github;
+pub mod jira;
 pub mod lsp;
 pub mod oauth;
 pub mod persistence;

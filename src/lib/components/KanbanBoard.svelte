@@ -6,8 +6,9 @@
   import CardDetailOverlay from "./CardDetailOverlay.svelte";
   import TaskPopover, { type TaskData } from "./TaskPopover.svelte";
   import ManualCheckoutPopover, { type ManualCheckoutData } from "./ManualCheckoutPopover.svelte";
+  import JiraImportPopover, { type JiraTaskData } from "./JiraImportPopover.svelte";
   import AutopilotPill, { type AutopilotEvent } from "./AutopilotPill.svelte";
-  import { Plus, Ellipsis, Trash2, GitBranch } from "lucide-svelte";
+  import { Plus, Ellipsis, Trash2, GitBranch, Download } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
 
   interface TodoItem {
@@ -93,10 +94,14 @@
 
   let showAddDialog = $state(false);
   let showManualCheckout = $state(false);
+  let showJiraImport = $state(false);
   let editingTodo = $state<TodoItem | null>(null);
   let showDoneMenu = $state(false);
   let doneMenuBtnEl = $state<HTMLButtonElement | null>(null);
   let doneMenuPos = $state({ top: 0, left: 0 });
+  let showMoreMenu = $state(false);
+  let moreMenuBtnEl = $state<HTMLButtonElement | null>(null);
+  let moreMenuPos = $state({ top: 0, left: 0 });
   let detailWs = $state<WorkspaceInfo | null>(null);
 
   export function openNewTask() {
@@ -226,6 +231,15 @@
     showDoneMenu = !showDoneMenu;
   }
 
+  function openMoreMenu(e: MouseEvent) {
+    e.stopPropagation();
+    if (moreMenuBtnEl) {
+      const rect = moreMenuBtnEl.getBoundingClientRect();
+      moreMenuPos = { top: rect.top - 4, left: rect.left };
+    }
+    showMoreMenu = !showMoreMenu;
+  }
+
   function handleAddSubmit(data: TaskData) {
     onNewTodo(data);
     showAddDialog = false;
@@ -239,6 +253,13 @@
   function handleManualCheckoutSubmit(data: ManualCheckoutData) {
     onManualCheckout(data);
     showManualCheckout = false;
+  }
+
+  function handleJiraImportSubmit(tasks: JiraTaskData[]) {
+    for (const task of tasks) {
+      onNewTodo(task);
+    }
+    showJiraImport = false;
   }
 
   function handleEditSubmit(data: TaskData) {
@@ -281,8 +302,8 @@
         <button class="add-task-btn" onclick={() => { showAddDialog = true; }} use:tooltip={{ text: "New task", shortcut: "⌘N" }}>
           <Plus size={12} /> New task
         </button>
-        <button class="manual-checkout-btn" onclick={() => { showManualCheckout = true; }} use:tooltip={{ text: "Manual checkout" }}>
-          <GitBranch size={13} />
+        <button class="more-btn" bind:this={moreMenuBtnEl} onclick={openMoreMenu} use:tooltip={{ text: "More options" }}>
+          <Ellipsis size={14} />
         </button>
       </div>
     {/snippet}
@@ -385,6 +406,13 @@
   />
 {/if}
 
+{#if showJiraImport}
+  <JiraImportPopover
+    onSubmit={handleJiraImportSubmit}
+    onCancel={() => { showJiraImport = false; }}
+  />
+{/if}
+
 {#if editingTodo}
   <TaskPopover
     {repoId}
@@ -423,6 +451,27 @@
     >
       <Trash2 size={12} />
       Remove all
+    </button>
+  </div>
+{/if}
+
+{#if showMoreMenu}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="dropdown-backdrop" onmousedown={() => { showMoreMenu = false; }}></div>
+  <div class="dropdown-menu dropdown-menu-up" style="top: {moreMenuPos.top}px; left: {moreMenuPos.left}px;">
+    <button
+      class="dropdown-item"
+      onclick={() => { showMoreMenu = false; showManualCheckout = true; }}
+    >
+      <GitBranch size={12} />
+      Manual checkout
+    </button>
+    <button
+      class="dropdown-item"
+      onclick={() => { showMoreMenu = false; showJiraImport = true; }}
+    >
+      <Download size={12} />
+      Import from Jira
     </button>
   </div>
 {/if}
@@ -480,7 +529,7 @@
     border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
-  .manual-checkout-btn {
+  .more-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -495,7 +544,7 @@
     transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
 
-  .manual-checkout-btn:hover {
+  .more-btn:hover {
     background: var(--border);
     border-color: var(--border-light);
     color: var(--text-secondary);
@@ -529,7 +578,6 @@
 
   .dropdown-menu {
     position: fixed;
-    transform: translateX(-100%);
     min-width: 140px;
     background: var(--bg-sidebar);
     border: 1px solid var(--border);
@@ -537,6 +585,10 @@
     padding: 4px;
     z-index: 100;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+
+  .dropdown-menu-up {
+    transform: translateY(-100%);
   }
 
   .dropdown-item {
