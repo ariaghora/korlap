@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::helpers::inject_shell_env;
+
 #[derive(Debug, Deserialize)]
 struct JiraApiIssue {
     key: String,
@@ -81,9 +83,11 @@ fn extract_text_from_description(val: &serde_json::Value) -> Option<String> {
 
 #[tauri::command]
 pub fn get_jira_issues() -> Result<Vec<JiraIssue>, String> {
-    let output = std::process::Command::new("zsh")
-        .arg("-c")
-        .arg("jira issue list --raw")
+    let mut cmd = std::process::Command::new("zsh");
+    cmd.arg("-c");
+    cmd.arg("jira issue list --raw");
+    inject_shell_env(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run jira command: {}", e))?;
 
