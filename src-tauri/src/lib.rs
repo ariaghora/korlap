@@ -126,6 +126,9 @@ pub fn run() {
             commands::jira::get_jira_issues,
             // agent
             commands::agent::list_models,
+            commands::agent::get_provider_info,
+            commands::agent::get_workspace_provider_info,
+            commands::agent::switch_workspace_provider,
             commands::agent::send_message,
             commands::agent::stop_agent,
             commands::agent::generate_commit_message,

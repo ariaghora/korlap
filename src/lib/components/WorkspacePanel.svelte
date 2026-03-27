@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteMap } from "svelte/reactivity";
-  import type { WorkspaceInfo, RepoSettings, PrStatus, ScriptEvent, NamedScript } from "$lib/ipc";
+  import type { WorkspaceInfo, RepoSettings, PrStatus, ScriptEvent, NamedScript, ProviderInfo } from "$lib/ipc";
   import { runScript, stopScript, closeTerminal } from "$lib/ipc";
   import type { ReviewState } from "$lib/components/ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
@@ -64,6 +64,8 @@
     stagingConflictingCount?: number;
     contextWarning?: boolean;
     terminalPaneVisible?: boolean;
+    providerInfoByWorkspace?: SvelteMap<string, ProviderInfo>;
+    onProviderSwitch?: (wsId: string, provider: import("$lib/ipc").AgentProvider) => void;
   }
 
   let {
@@ -113,6 +115,8 @@
     stagingMergedCount = 0,
     stagingConflictingCount = 0,
     contextWarning = false,
+    providerInfoByWorkspace = new SvelteMap(),
+    onProviderSwitch,
   }: Props = $props();
 
   let availableTabs = $derived(
@@ -715,6 +719,7 @@
                   model={modelByWorkspace.get(ws.id) ?? ""}
                   queue={getQueueItems(ws.id)}
                   {contextWarning}
+                  providerInfo={providerInfoByWorkspace.get(ws.id) ?? null}
                   onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
                   onSendImmediate={(prompt) => onSendImmediate(prompt)}
                   {onStop}
@@ -726,6 +731,7 @@
                   onExecutePlan={() => onExecutePlan(ws.id)}
                   onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
                   onReady={(api) => onChatReady(ws.id, api)}
+                  onProviderSwitch={onProviderSwitch ? (provider) => onProviderSwitch(ws.id, provider) : undefined}
                 />
               </div>
             </div>
@@ -759,6 +765,7 @@
               model={modelByWorkspace.get(ws.id) ?? ""}
               queue={getQueueItems(ws.id)}
               {contextWarning}
+              providerInfo={providerInfoByWorkspace.get(ws.id) ?? null}
               onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
               onSendImmediate={(prompt) => onSendImmediate(prompt)}
               {onStop}

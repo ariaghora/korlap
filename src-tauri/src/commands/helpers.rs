@@ -119,6 +119,29 @@ pub fn get_shell_env() -> &'static ShellEnv {
             tracing::warn!("Could not resolve `claude` binary path — agent spawn will likely fail");
         }
 
+        // Resolve codex binary path (optional — only needed if user selects Codex provider)
+        let codex_path = std::process::Command::new("zsh")
+            .args(["-lic", &format!("echo {delimiter}; whence -p codex; echo {delimiter}")])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .and_then(|o| {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let mut parts = stdout.split(delimiter);
+                let _before = parts.next();
+                let value = parts.next()?;
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() || trimmed.contains("not found") {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+
+        if codex_path.is_some() {
+            tracing::info!("Resolved codex binary: {:?}", codex_path);
+        }
+
         // Capture full environment from interactive login shell so spawned
         // processes get all user env vars (CARGO_TARGET_DIR, GOPATH, etc.)
         // that a Tauri app launched from Finder/Dock would otherwise miss.
@@ -178,7 +201,7 @@ pub fn get_shell_env() -> &'static ShellEnv {
             all_vars.len()
         );
 
-        ShellEnv { ssh_auth_sock, home, path, claude_path, all_vars }
+        ShellEnv { ssh_auth_sock, home, path, claude_path, codex_path, all_vars }
     })
 }
 
@@ -187,6 +210,7 @@ pub struct ShellEnv {
     pub home: Option<String>,
     pub path: Option<String>,
     pub claude_path: Option<String>,
+    pub codex_path: Option<String>,
     /// Full environment captured from an interactive login shell.
     /// Contains all user env vars (CARGO_TARGET_DIR, GOPATH, etc.)
     /// that a Tauri app launched from Finder/Dock would otherwise miss.

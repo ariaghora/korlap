@@ -9,6 +9,14 @@ pub enum WorkspaceStatus {
     Waiting,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentProvider {
+    #[default]
+    Claude,
+    Codex,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoInfo {
     pub id: String,
@@ -36,6 +44,12 @@ pub struct WorkspaceInfo {
     pub source_todo_id: Option<String>,
     #[serde(default)]
     pub custom_branch: bool,
+    #[serde(default)]
+    pub provider_override: Option<AgentProvider>,
+}
+
+pub fn effective_provider(ws: &WorkspaceInfo, settings: &RepoSettings) -> AgentProvider {
+    ws.provider_override.unwrap_or(settings.agent_provider)
 }
 
 pub struct AgentHandle {
@@ -79,6 +93,8 @@ pub struct RepoSettings {
     /// Key is the server name (e.g. "jira", "slack"). Must not be "korlap".
     #[serde(default)]
     pub mcp_servers: std::collections::HashMap<String, McpServerConfig>,
+    #[serde(default)]
+    pub agent_provider: AgentProvider,
 }
 
 /// Configuration for a 3rd-party MCP server (stdio or SSE transport).
