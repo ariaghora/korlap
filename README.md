@@ -10,9 +10,7 @@ A macOS app for running multiple [Claude Code](https://docs.anthropic.com/en/doc
 
 <img width="1331" height="825" alt="image" src="https://github.com/user-attachments/assets/2bafd622-3596-4d62-8841-ab953fcccd25" />
 
-
-
-Built with Tauri v2, Svelte 5, and Rust.
+Built with Tauri v2, Svelte 5, and Rust. Primary support for macOS, may or may not run well on the other platforms.
 
 ## What it does
 
@@ -36,7 +34,6 @@ The name comes from Indonesian *koordinator lapangan* (field coordinator). The p
 
 ## Prerequisites
 
-- **macOS** only
 - [Bun](https://bun.sh/) (package manager + runtime)
 - [Rust](https://rustup.rs/) (stable toolchain)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
