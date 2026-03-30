@@ -720,3 +720,144 @@ pub async fn gh_pr_merge(
     .await
     .map_err(|e| format!("Task failed: {}", e))?
 }
+
+// ── PR listing for checkout ─────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct RepoPrEntry {
+    pub number: i64,
+    pub title: String,
+    pub branch: String,
+    pub base_branch: String,
+    pub author: String,
+    pub url: String,
+    pub updated_at: String,
+    pub additions: i64,
+    pub deletions: i64,
+}
+
+#[tauri::command]
+pub async fn list_repo_prs(
+    repo_id: String,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<RepoPrEntry>, String> {
+    let (repo_path, gh_profile) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st.repos.get(&repo_id).ok_or("Repo not found")?;
+        (repo.path.clone(), repo.gh_profile.clone())
+    };
+
+    let gh_token = resolve_gh_token(&gh_profile);
+
+    let nwo = extract_gh_nwo(&repo_path)
+        .ok_or("Could not determine GitHub owner/repo from remote URL")?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("gh");
+        cmd.args([
+            "pr", "list",
+            "--repo", &nwo,
+            "--json", "number,title,headRefName,baseRefName,author,url,updatedAt,additions,deletions",
+            "--limit", "50",
+        ]);
+        inject_shell_env(&mut cmd);
+        if let Some(ref token) = gh_token {
+            cmd.env("GH_TOKEN", token);
+        }
+
+        let output = cmd.output().map_err(|e| format!("Failed to run gh pr list: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("gh pr list failed: {}", stderr.trim()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let raw: Vec<serde_json::Value> = serde_json::from_str(&stdout)
+            .map_err(|e| format!("Failed to parse gh pr list output: {}", e))?;
+
+        let entries = raw.iter().map(|pr| {
+            RepoPrEntry {
+                number: pr["number"].as_i64().unwrap_or(0),
+                title: pr["title"].as_str().unwrap_or("").to_string(),
+                branch: pr["headRefName"].as_str().unwrap_or("").to_string(),
+                base_branch: pr["baseRefName"].as_str().unwrap_or("").to_string(),
+                author: pr["author"]["login"].as_str().unwrap_or("").to_string(),
+                url: pr["url"].as_str().unwrap_or("").to_string(),
+                updated_at: pr["updatedAt"].as_str().unwrap_or("").to_string(),
+                additions: pr["additions"].as_i64().unwrap_or(0),
+                deletions: pr["deletions"].as_i64().unwrap_or(0),
+            }
+        }).collect();
+
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+// ── PR detail for workspace creation ────────────────────────────────
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct PrDetail {
+    pub number: i64,
+    pub title: String,
+    pub branch: String,
+    pub base_branch: String,
+    pub url: String,
+    pub body: String,
+}
+
+/// Fetch detailed PR metadata (body included) for a single PR by number.
+/// Used by create_workspace_from_pr to get PR context for agent injection.
+#[tauri::command]
+pub async fn get_pr_detail(
+    repo_id: String,
+    pr_number: i64,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<PrDetail, String> {
+    let (repo_path, gh_profile) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st.repos.get(&repo_id).ok_or("Repo not found")?;
+        (repo.path.clone(), repo.gh_profile.clone())
+    };
+
+    let gh_token = resolve_gh_token(&gh_profile);
+
+    let nwo = extract_gh_nwo(&repo_path)
+        .ok_or("Could not determine GitHub owner/repo from remote URL")?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("gh");
+        cmd.args([
+            "pr", "view",
+            &pr_number.to_string(),
+            "--repo", &nwo,
+            "--json", "number,title,headRefName,baseRefName,url,body",
+        ]);
+        inject_shell_env(&mut cmd);
+        if let Some(ref token) = gh_token {
+            cmd.env("GH_TOKEN", token);
+        }
+
+        let output = cmd.output().map_err(|e| format!("Failed to run gh pr view: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("gh pr view failed: {}", stderr.trim()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let pr: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|e| format!("Failed to parse gh pr view output: {}", e))?;
+
+        Ok(PrDetail {
+            number: pr["number"].as_i64().unwrap_or(0),
+            title: pr["title"].as_str().unwrap_or("").to_string(),
+            branch: pr["headRefName"].as_str().unwrap_or("").to_string(),
+            base_branch: pr["baseRefName"].as_str().unwrap_or("").to_string(),
+            url: pr["url"].as_str().unwrap_or("").to_string(),
+            body: pr["body"].as_str().unwrap_or("").to_string(),
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}

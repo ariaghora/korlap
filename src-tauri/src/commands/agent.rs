@@ -1,4 +1,4 @@
-use crate::state::{effective_provider, AgentHandle, AgentProvider, AppState, WorkspaceStatus};
+use crate::state::{effective_provider, AgentHandle, AgentProvider, AppState, SourcePr, WorkspaceStatus};
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -187,6 +187,7 @@ pub fn send_message(
         mcp_api_port,
         data_dir,
         session_id,
+        source_pr,
     ) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         if st.agents.contains_key(&workspace_id) {
@@ -218,6 +219,7 @@ pub fn send_message(
             st.mcp_api_port,
             st.data_dir.clone(),
             sid,
+            ws.source_pr.clone(),
         )
     };
 
@@ -264,6 +266,7 @@ pub fn send_message(
             &context_dir,
             &prompt,
             &user_system_prompt,
+            &source_pr,
         ))
     } else {
         None
@@ -505,9 +508,13 @@ fn build_system_prompt(
     context_dir: &Path,
     prompt: &str,
     user_system_prompt: &str,
+    source_pr: &Option<SourcePr>,
 ) -> String {
-    let base_branch =
-        detect_default_branch(repo_path).unwrap_or_else(|_| "main".to_string());
+    let base_branch = if let Some(ref pr) = source_pr {
+        pr.base_branch.clone()
+    } else {
+        detect_default_branch(repo_path).unwrap_or_else(|_| "main".to_string())
+    };
     let wt_display = worktree_path.to_string_lossy();
     let repo_display = repo_path.to_string_lossy();
     let rename_instruction = if !is_custom_branch {
@@ -599,6 +606,21 @@ fn build_system_prompt(
                 }
             }
         }
+    }
+
+    // Inject PR review context if this workspace was created from a PR
+    if let Some(ref pr) = source_pr {
+        system_prompt.push_str(&format!(
+            "\n\n## PR Review Context\n\n\
+             You are reviewing PR #{}: {}\n\
+             PR URL: {}\n\
+             PR branch: {} → {}\n\n\
+             This workspace contains the PR's code branched from its HEAD.\n\
+             Your task is to review, test, and identify issues in this PR.\n\
+             You can make changes, add tests, and fix issues. Commits stay on your review branch \
+             and will NOT automatically update the PR.",
+            pr.number, pr.title, pr.url, pr.branch, pr.base_branch,
+        ));
     }
 
     if !user_system_prompt.is_empty() {

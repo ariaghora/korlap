@@ -33,6 +33,16 @@ export interface WorkspaceInfo {
   source_todo_id?: string | null;
   custom_branch?: boolean;
   provider_override?: AgentProvider | null;
+  source_pr?: SourcePr | null;
+  base_branch?: string | null;
+}
+
+export interface SourcePr {
+  number: number;
+  branch: string;
+  base_branch: string;
+  url: string;
+  title: string;
 }
 
 export interface ProviderInfo {
@@ -640,6 +650,31 @@ export async function getPrStatus(workspaceId: string): Promise<PrStatus> {
 
 export async function getPrTemplate(repoId: string): Promise<string> {
   return invoke<string>("get_pr_template", { repoId });
+}
+
+// ── PR checkout ─────────────────────────────────────────────────────
+
+export interface RepoPrEntry {
+  number: number;
+  title: string;
+  branch: string;
+  base_branch: string;
+  author: string;
+  url: string;
+  updated_at: string;
+  additions: number;
+  deletions: number;
+}
+
+export async function listRepoPrs(repoId: string): Promise<RepoPrEntry[]> {
+  return invoke<RepoPrEntry[]>("list_repo_prs", { repoId });
+}
+
+export async function createWorkspaceFromPr(
+  repoId: string,
+  prNumber: number,
+): Promise<WorkspaceInfo> {
+  return invoke<WorkspaceInfo>("create_workspace_from_pr", { repoId, prNumber });
 }
 
 // ── Repo Settings ────────────────────────────────────────────────────
