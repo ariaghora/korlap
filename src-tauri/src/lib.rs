@@ -1,4 +1,5 @@
 mod commands;
+pub mod git_provider;
 mod lsp;
 mod mcp_api;
 mod state;
@@ -62,6 +63,7 @@ pub fn run() {
             // Tauri commands use State<'_, Arc<Mutex<AppState>>>
             app.manage(state);
             app.manage(lsp_manager);
+            app.manage(std::sync::Arc::new(git_provider::GitProviderRegistry::new()));
 
             #[cfg(target_os = "macos")]
             {

@@ -1,3 +1,4 @@
+use crate::git_provider::SharedProviderRegistry;
 use crate::state::{AgentHandle, AppState, ContextBuildStatus, ContextMeta};
 use std::io::BufRead;
 use std::sync::{Arc, Mutex};
@@ -5,7 +6,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use super::agent::{AgentEvent, ToolUseInfo};
-use super::helpers::{get_shell_env, inject_shell_env, now_unix, resolve_gh_token};
+use super::helpers::{get_shell_env, inject_shell_env, now_unix};
 
 /// Get the current HEAD commit SHA of a git repo.
 fn git_head_commit(repo_path: &str) -> Option<String> {
@@ -87,6 +88,7 @@ fn iso_timestamp() -> String {
 pub async fn regenerate_hot(
     repo_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<(), String> {
     let (repo_path, gh_profile, context_dir) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -97,6 +99,8 @@ pub async fn regenerate_hot(
             st.context_dir(&repo_id),
         )
     };
+
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
         let _ = std::fs::create_dir_all(&context_dir);
@@ -155,9 +159,10 @@ pub async fn regenerate_hot(
             Err(e) => tracing::warn!("git branch -r failed for hot.md: {}", e),
         }
 
-        // gh pr list
-        let gh_token = resolve_gh_token(&gh_profile);
-        let mut gh_cmd = std::process::Command::new("gh");
+        // pr list via provider
+        let provider = providers.for_repo(&repo_path);
+        let gh_token = provider.resolve_token(&gh_profile);
+        let mut gh_cmd = provider.cli_cmd_with_auth(&repo_path, &gh_token);
         gh_cmd.args([
             "pr",
             "list",
@@ -166,11 +171,6 @@ pub async fn regenerate_hot(
             "--limit",
             "10",
         ]);
-        gh_cmd.current_dir(&repo_path);
-        inject_shell_env(&mut gh_cmd);
-        if let Some(ref token) = gh_token {
-            gh_cmd.env("GH_TOKEN", token);
-        }
         match gh_cmd.output() {
             Ok(o) if o.status.success() => {
                 let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -388,6 +388,7 @@ pub fn build_knowledge_base(
     repo_id: String,
     on_event: Channel<AgentEvent>,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
     app: AppHandle,
 ) -> Result<(), String> {
     let (repo_path, gh_profile, context_dir, meta) = {
@@ -549,10 +550,11 @@ Delete {output_dir}/tmp/ after synthesis. Write a brief summary of what was foun
 
     inject_shell_env(&mut cmd);
 
-    // Inject GH token if available
-    let gh_token = resolve_gh_token(&gh_profile);
-    if let Some(ref token) = gh_token {
-        cmd.env("GH_TOKEN", token);
+    // Inject auth env vars via the provider
+    let provider = providers.for_repo(&repo_path);
+    let gh_token = provider.resolve_token(&gh_profile);
+    for (key, value) in provider.build_auth_env_vars(&gh_token) {
+        cmd.env(key, value);
     }
 
     let mut child = cmd
@@ -887,6 +889,7 @@ pub fn update_context_after_merge(
     workspace_id: String,
     on_event: Channel<AgentEvent>,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
     app: AppHandle,
 ) -> Result<(), String> {
     let (repo_path, worktree_path, gh_profile, context_dir, ws_branch, base_branch) = {
@@ -1002,9 +1005,10 @@ Explain each change you made and why in a brief summary at the end."#,
 
     inject_shell_env(&mut cmd);
 
-    let gh_token = resolve_gh_token(&gh_profile);
-    if let Some(ref token) = gh_token {
-        cmd.env("GH_TOKEN", token);
+    let provider = providers.for_repo(&repo_path);
+    let gh_token = provider.resolve_token(&gh_profile);
+    for (key, value) in provider.build_auth_env_vars(&gh_token) {
+        cmd.env(key, value);
     }
 
     let mut child = cmd
@@ -1086,6 +1090,7 @@ pub fn update_knowledge_base_incremental(
     repo_id: String,
     on_event: Channel<AgentEvent>,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
     app: AppHandle,
 ) -> Result<(), String> {
     let (repo_path, context_dir, built_at_commit) = {
@@ -1294,13 +1299,14 @@ End with a brief summary of changes made."#,
 
     inject_shell_env(&mut cmd);
 
-    // Inject GH token if available
+    // Inject auth env vars via the provider
     {
         let st = state.lock().map_err(|e| e.to_string())?;
         let gh_profile = st.repos.get(&repo_id).and_then(|r| r.gh_profile.clone());
-        let gh_token = resolve_gh_token(&gh_profile);
-        if let Some(ref token) = gh_token {
-            cmd.env("GH_TOKEN", token);
+        let provider = providers.for_repo(&repo_path);
+        let gh_token = provider.resolve_token(&gh_profile);
+        for (key, value) in provider.build_auth_env_vars(&gh_token) {
+            cmd.env(key, value);
         }
     }
 

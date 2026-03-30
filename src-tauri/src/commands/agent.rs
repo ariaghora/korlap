@@ -1,3 +1,4 @@
+use crate::git_provider::SharedProviderRegistry;
 use crate::state::{effective_provider, AgentHandle, AgentProvider, AppState, SourcePr, WorkspaceStatus};
 use std::io::BufRead;
 use std::path::Path;
@@ -168,6 +169,7 @@ pub fn send_message(
     thinking_mode: Option<bool>,
     model: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
     app: AppHandle,
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
@@ -225,8 +227,10 @@ pub fn send_message(
 
     let backend = get_backend(provider);
 
-    // Get GH token per-profile (never switch global auth)
-    let gh_token = super::helpers::resolve_gh_token(&gh_profile);
+    // Get token per-profile via the provider (never switch global auth)
+    let git_provider = providers.for_repo(&repo_path);
+    let gh_token = git_provider.resolve_token(&gh_profile);
+    let git_auth_env = git_provider.build_auth_env_vars(&gh_token);
 
     // Resolve MCP server script path
     let mcp_dir = data_dir.join("mcp");
@@ -286,7 +290,7 @@ pub fn send_message(
         mcp_dir,
         workspace_id: workspace_id.clone(),
         images_dir,
-        gh_token,
+        git_auth_env,
         disallowed_tools: super::agent_backend::DISALLOWED_WORKTREE_TOOLS,
     };
 

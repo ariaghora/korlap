@@ -1,8 +1,7 @@
+use crate::git_provider::SharedProviderRegistry;
 use crate::state::AppState;
 use std::sync::{Arc, Mutex};
 use tauri::State;
-
-use super::helpers::{git_cmd_with_auth, resolve_gh_token};
 
 // ── Repo branch commands ────────────────────────────────────────────
 
@@ -317,17 +316,21 @@ pub async fn git_commit(
 pub async fn git_push(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<(), String> {
-    let (worktree_path, fallback_branch, gh_profile) = {
+    let (worktree_path, fallback_branch, gh_profile, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (ws.worktree_path.clone(), ws.branch.clone(), repo.gh_profile.clone())
+        (ws.worktree_path.clone(), ws.branch.clone(), repo.gh_profile.clone(), repo.path.clone())
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
+        let provider = providers.for_repo(&repo_path);
+        let gh_token = provider.resolve_token(&gh_profile);
+
         // Use actual git branch — metadata may be stale after a rename failure
         let branch = std::process::Command::new("git")
             .args(["branch", "--show-current"])
@@ -338,7 +341,7 @@ pub async fn git_push(
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or(fallback_branch);
 
-        let mut cmd = git_cmd_with_auth(&worktree_path, &gh_token);
+        let mut cmd = provider.git_cmd_with_auth(&worktree_path, &gh_token);
         cmd.args(["push", "-u", "origin", &branch]);
 
         let output = cmd.output().map_err(|e| format!("Failed to run git push: {}", e))?;
@@ -359,6 +362,7 @@ pub async fn git_push(
 pub async fn check_main_behind(
     repo_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<u32, String> {
     let (repo_path, gh_profile, base_branch) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -368,11 +372,14 @@ pub async fn check_main_behind(
         (repo.path.clone(), repo.gh_profile.clone(), branch)
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
+        let provider = providers.for_repo(&repo_path);
+        let gh_token = provider.resolve_token(&gh_profile);
+
         // Fetch latest
-        let mut fetch = git_cmd_with_auth(&repo_path, &gh_token);
+        let mut fetch = provider.git_cmd_with_auth(&repo_path, &gh_token);
         fetch.args(["fetch", "origin", &base_branch]);
         let output = fetch.output()
             .map_err(|e| format!("Failed to run git fetch: {}", e))?;
@@ -405,6 +412,7 @@ pub async fn check_main_behind(
 pub async fn sync_main(
     repo_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<(), String> {
     let (repo_path, gh_profile, base_branch) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -414,11 +422,14 @@ pub async fn sync_main(
         (repo.path.clone(), repo.gh_profile.clone(), branch)
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
+        let provider = providers.for_repo(&repo_path);
+        let gh_token = provider.resolve_token(&gh_profile);
+
         // 1. Fetch latest from origin
-        let mut fetch = git_cmd_with_auth(&repo_path, &gh_token);
+        let mut fetch = provider.git_cmd_with_auth(&repo_path, &gh_token);
         fetch.args(["fetch", "origin", &base_branch]);
         let output = fetch
             .output()
@@ -492,22 +503,26 @@ pub struct BaseUpdateStatus {
 pub async fn check_base_updates(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<BaseUpdateStatus, String> {
-    let (worktree_path, base_branch, gh_profile) = {
+    let (worktree_path, base_branch, gh_profile, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
         let base = ws.base_branch.clone()
             .or_else(|| repo.default_branch.clone())
             .unwrap_or_else(|| "main".to_string());
-        (ws.worktree_path.clone(), base, repo.gh_profile.clone())
+        (ws.worktree_path.clone(), base, repo.gh_profile.clone(), repo.path.clone())
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
+        let provider = providers.for_repo(&repo_path);
+        let gh_token = provider.resolve_token(&gh_profile);
+
         // Fetch latest from origin for the base branch
-        let mut fetch_cmd = git_cmd_with_auth(&worktree_path, &gh_token);
+        let mut fetch_cmd = provider.git_cmd_with_auth(&worktree_path, &gh_token);
         fetch_cmd.args(["fetch", "origin", &base_branch]);
         fetch_cmd
             .stdout(std::process::Stdio::null())
@@ -558,22 +573,26 @@ pub async fn check_base_updates(
 pub async fn update_from_base(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<(), String> {
-    let (worktree_path, base_branch, gh_profile) = {
+    let (worktree_path, base_branch, gh_profile, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
         let base = ws.base_branch.clone()
             .or_else(|| repo.default_branch.clone())
             .unwrap_or_else(|| "main".to_string());
-        (ws.worktree_path.clone(), base, repo.gh_profile.clone())
+        (ws.worktree_path.clone(), base, repo.gh_profile.clone(), repo.path.clone())
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
+        let provider = providers.for_repo(&repo_path);
+        let gh_token = provider.resolve_token(&gh_profile);
+
         // Fetch latest
-        let mut fetch_cmd = git_cmd_with_auth(&worktree_path, &gh_token);
+        let mut fetch_cmd = provider.git_cmd_with_auth(&worktree_path, &gh_token);
         fetch_cmd.args(["fetch", "origin", &base_branch]);
         let fetch_output = fetch_cmd
             .output()

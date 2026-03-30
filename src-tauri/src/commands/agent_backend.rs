@@ -19,7 +19,9 @@ pub struct SessionContext {
     pub mcp_dir: PathBuf,
     pub workspace_id: String,
     pub images_dir: PathBuf,
-    pub gh_token: Option<String>,
+    /// Provider-agnostic auth env vars (e.g. GH_TOKEN, GIT_CONFIG_PARAMETERS).
+    /// Built by the git service provider so agent processes authenticate correctly.
+    pub git_auth_env: Vec<(String, String)>,
     pub disallowed_tools: &'static str,
 }
 
@@ -230,15 +232,8 @@ impl AgentBackend for ClaudeBackend {
 
         inject_shell_env(&mut cmd);
 
-        if let Some(ref token) = ctx.gh_token {
-            cmd.env("GH_TOKEN", token);
-            cmd.env(
-                "GIT_CONFIG_PARAMETERS",
-                format!(
-                    "'url.https://oauth2:{}@github.com/.insteadOf=git@github.com:'",
-                    token
-                ),
-            );
+        for (key, value) in &ctx.git_auth_env {
+            cmd.env(key, value);
         }
 
         Ok((cmd, Vec::new()))
@@ -583,15 +578,8 @@ impl AgentBackend for CodexBackend {
 
         inject_shell_env(&mut cmd);
 
-        if let Some(ref token) = ctx.gh_token {
-            cmd.env("GH_TOKEN", token);
-            cmd.env(
-                "GIT_CONFIG_PARAMETERS",
-                format!(
-                    "'url.https://oauth2:{}@github.com/.insteadOf=git@github.com:'",
-                    token
-                ),
-            );
+        for (key, value) in &ctx.git_auth_env {
+            cmd.env(key, value);
         }
 
         Ok((cmd, codex_mcp_names))
