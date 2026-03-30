@@ -391,25 +391,33 @@
 
   async function handleCreateRepo() {
     if (!selectedProfile || !createName.trim()) return;
+    const name = createName.trim();
+    const description = createDescription.trim() || null;
+    const isPrivate = createPrivate;
+    const readme = createReadme;
+    const profile = selectedProfile;
+
+    // Close form immediately so the UI isn't blocked
+    showCreateForm = false;
+    createName = "";
+    createDescription = "";
     creating = true;
+
+    const toastId = addToast(`Creating "${name}"...`, "info", 0);
+
     try {
       const result = await createGhRepo(
-        {
-          name: createName.trim(),
-          private: createPrivate,
-          description: createDescription.trim() || null,
-          add_readme: createReadme,
-        },
-        selectedProfile,
+        { name, private: isPrivate, description, add_readme: readme },
+        profile,
       );
+      removeToast(toastId);
+      addToast(`Repository "${name}" created`, "success");
       if (!repos.find((r) => r.id === result.id)) {
         repos = [...repos, result];
       }
-      showCreateForm = false;
-      createName = "";
-      createDescription = "";
       await selectRepo(result);
     } catch (e) {
+      removeToast(toastId);
       addToast(String(e));
     } finally {
       creating = false;
@@ -2365,10 +2373,10 @@
           {/if}
         </div>
 
-        {#if cloning || creating}
+        {#if cloning}
           <div class="gh-loading">
             <div class="spinner"></div>
-            <span>{creating ? "Creating repository..." : "Cloning repository..."}</span>
+            <span>Cloning repository...</span>
           </div>
         {:else if selectedProfile && repoSearch.trim() && /^[a-zA-Z0-9._-]+$/.test(repoSearch.trim())}
           {#if !showCreateForm}
