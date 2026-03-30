@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getJiraIssues, type JiraIssue } from "$lib/ipc";
   import type { PastedImage } from "$lib/chat-utils";
-  import type { Mention } from "./MentionInput.svelte";
+  import type { Mention } from "$lib/components/chat/MentionInput.svelte";
   import { Loader2 } from "lucide-svelte";
 
   export interface JiraTaskData {

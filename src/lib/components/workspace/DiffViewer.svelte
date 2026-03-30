@@ -2,7 +2,7 @@
   import { getChangedFiles, getDiff, type ChangedFile } from "$lib/ipc";
   import { MessageSquare, FileCode, SquareArrowOutUpRight } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
-  import ResizeHandle from "./ResizeHandle.svelte";
+  import ResizeHandle from "../ResizeHandle.svelte";
 
   interface Props {
     workspaceId: string;

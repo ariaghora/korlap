@@ -7,9 +7,9 @@
   import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
   import MentionAutocomplete, { type MentionAutocompleteApi } from "./MentionAutocomplete.svelte";
   import VirtualScroller from "./VirtualScroller.svelte";
-  import AskUserQuestion from "./chat/AskUserQuestion.svelte";
-  import EditDiffBlock from "./chat/EditDiffBlock.svelte";
-  import TodoListBlock from "./chat/TodoListBlock.svelte";
+  import AskUserQuestion from "./AskUserQuestion.svelte";
+  import EditDiffBlock from "./EditDiffBlock.svelte";
+  import TodoListBlock from "./TodoListBlock.svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import {
     toolIcons,
