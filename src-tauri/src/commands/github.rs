@@ -1,56 +1,20 @@
-use crate::state::AppState;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
-
-use super::helpers::{
-    extract_gh_nwo, inject_shell_env, resolve_gh_token, strip_ansi, gh_cmd_with_auth,
+use crate::git_provider::{
+    CliStatus, CreateRepoOptions, GitServiceProvider, PrDetail, PrEntry, PrStatus,
+    RepoEntry, ServiceProfile, SharedProviderRegistry,
 };
+use crate::state::AppState;
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, State};
 
-/// PID of the in-flight `gh auth login` process, or 0 if none.
-static GH_AUTH_PID: AtomicU32 = AtomicU32::new(0);
+use super::helpers::inject_shell_env;
 
 // ── GitHub profile commands ──────────────────────────────────────────
 
-#[derive(Clone, serde::Serialize)]
-pub struct GhProfile {
-    pub login: String,
-    pub active: bool,
-}
-
 #[tauri::command]
-pub fn list_gh_profiles() -> Result<Vec<GhProfile>, String> {
-    let mut cmd = std::process::Command::new("gh");
-    cmd.args(["auth", "status", "--json", "hosts"]);
-    inject_shell_env(&mut cmd);
-    let output = cmd.output()
-        .map_err(|e| format!("Failed to run gh: {}", e))?;
-
-    if !output.status.success() {
-        return Ok(vec![]); // gh not installed or not logged in
-    }
-
-    let v: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("Failed to parse gh output: {}", e))?;
-
-    let mut profiles = Vec::new();
-    if let Some(hosts) = v.get("hosts").and_then(|h| h.as_object()) {
-        for accounts in hosts.values() {
-            if let Some(arr) = accounts.as_array() {
-                for account in arr {
-                    if let Some(login) = account.get("login").and_then(|l| l.as_str()) {
-                        let active = account.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
-                        profiles.push(GhProfile {
-                            login: login.to_string(),
-                            active,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(profiles)
+pub fn list_gh_profiles(
+    providers: State<'_, SharedProviderRegistry>,
+) -> Result<Vec<ServiceProfile>, String> {
+    providers.github().list_profiles()
 }
 
 #[tauri::command]
@@ -68,196 +32,42 @@ pub fn set_repo_profile(
 
 // ── GitHub onboarding commands ───────────────────────────────────────
 
-#[derive(Clone, serde::Serialize)]
-pub struct GhCliStatus {
-    pub installed: bool,
-    pub authenticated: bool,
-    pub profiles: Vec<GhProfile>,
+#[tauri::command]
+pub fn check_gh_cli(
+    providers: State<'_, SharedProviderRegistry>,
+) -> Result<CliStatus, String> {
+    providers.github().check_cli()
 }
 
 #[tauri::command]
-pub fn check_gh_cli() -> Result<GhCliStatus, String> {
-    let mut cmd = std::process::Command::new("gh");
-    cmd.arg("--version");
-    inject_shell_env(&mut cmd);
-    let version_result = cmd.output();
-
-    let installed = match version_result {
-        Ok(ref o) => o.status.success(),
-        Err(_) => false,
-    };
-
-    if !installed {
-        return Ok(GhCliStatus {
-            installed: false,
-            authenticated: false,
-            profiles: vec![],
-        });
-    }
-
-    let profiles = list_gh_profiles()?;
-    let authenticated = !profiles.is_empty();
-
-    Ok(GhCliStatus {
-        installed,
-        authenticated,
-        profiles,
-    })
+pub async fn gh_auth_login(
+    app_handle: AppHandle,
+    providers: State<'_, SharedProviderRegistry>,
+) -> Result<(), String> {
+    let providers = providers.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || providers.github().auth_login(app_handle))
+        .await
+        .map_err(|e| format!("Task failed: {}", e))?
 }
 
 #[tauri::command]
-pub async fn gh_auth_login(app_handle: AppHandle) -> Result<(), String> {
+pub fn cancel_gh_auth_login(
+    providers: State<'_, SharedProviderRegistry>,
+) -> Result<(), String> {
+    providers.github().cancel_auth_login()
+}
+
+#[tauri::command]
+pub async fn list_gh_repos(
+    profile: String,
+    search: Option<String>,
+    providers: State<'_, SharedProviderRegistry>,
+) -> Result<Vec<RepoEntry>, String> {
+    let providers = providers.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        use std::io::BufRead;
-
-        let mut cmd = std::process::Command::new("gh");
-        cmd.args([
-            "auth", "login",
-            "--hostname", "github.com",
-            "--git-protocol", "https",
-            "--web",
-            "--scopes", "workflow",
-        ]);
-        inject_shell_env(&mut cmd);
-        cmd.stdin(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to start gh auth login: {}", e))?;
-        GH_AUTH_PID.store(child.id(), Ordering::SeqCst);
-
-        // Send newline to skip "Press Enter" prompt
-        if let Some(ref mut stdin) = child.stdin {
-            use std::io::Write;
-            let _ = stdin.write_all(b"\n");
-        }
-
-        // Read stderr to capture the one-time code and URL.
-        // gh outputs ANSI escape codes, so strip them before parsing.
-        if let Some(stderr) = child.stderr.take() {
-            let reader = std::io::BufReader::new(stderr);
-            for line in reader.lines() {
-                let line = match line {
-                    Ok(l) => strip_ansi(&l),
-                    Err(_) => break,
-                };
-                // Extract URL (https://...) and open in browser
-                if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://github.com/login")) {
-                    let _ = std::process::Command::new("open").arg(url).spawn();
-                }
-                // Extract device code (pattern: XXXX-XXXX, alphanumeric)
-                for word in line.split_whitespace() {
-                    let parts: Vec<&str> = word.split('-').collect();
-                    if parts.len() == 2
-                        && parts[0].len() == 4
-                        && parts[1].len() == 4
-                        && parts[0].chars().all(|c| c.is_ascii_alphanumeric())
-                        && parts[1].chars().all(|c| c.is_ascii_alphanumeric())
-                    {
-                        let _ = app_handle.emit("gh-auth-code", word.to_string());
-                    }
-                }
-            }
-        }
-
-        let status = child.wait().map_err(|e| format!("gh auth login failed: {}", e))?;
-        GH_AUTH_PID.store(0, Ordering::SeqCst);
-        if !status.success() {
-            return Err("GitHub authentication was cancelled or failed.".to_string());
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("Task failed: {}", e))?
-}
-
-#[tauri::command]
-pub fn cancel_gh_auth_login() -> Result<(), String> {
-    let pid = GH_AUTH_PID.swap(0, Ordering::SeqCst);
-    if pid != 0 {
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .output();
-    }
-    Ok(())
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct GhRepoEntry {
-    pub full_name: String,
-    pub description: String,
-    pub is_fork: bool,
-    pub clone_url: String,
-    pub updated_at: String,
-}
-
-#[tauri::command]
-pub async fn list_gh_repos(profile: String, search: Option<String>) -> Result<Vec<GhRepoEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let token = resolve_gh_token(&Some(profile.clone()));
-
-        let mut cmd = std::process::Command::new("gh");
-        cmd.args([
-            "repo",
-            "list",
-            &profile,
-            "--json",
-            "nameWithOwner,description,isFork,sshUrl,updatedAt",
-            "--limit",
-            "100",
-            "--source",
-        ]);
-        inject_shell_env(&mut cmd);
-        if let Some(ref t) = token {
-            cmd.env("GH_TOKEN", t);
-        }
-
-        let output = cmd.output().map_err(|e| format!("Failed to run gh: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("gh repo list failed: {}", stderr));
-        }
-
-        let arr: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)
-            .map_err(|e| format!("Failed to parse gh output: {}", e))?;
-
-        let search_lower = search.as_deref().unwrap_or("").to_lowercase();
-
-        let mut repos: Vec<GhRepoEntry> = arr
-            .into_iter()
-            .filter_map(|v| {
-                let full_name = v.get("nameWithOwner")?.as_str()?.to_string();
-                let description = v
-                    .get("description")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let is_fork = v.get("isFork").and_then(|f| f.as_bool()).unwrap_or(false);
-                let clone_url = v.get("sshUrl").and_then(|u| u.as_str()).unwrap_or("").to_string();
-                let updated_at = v
-                    .get("updatedAt")
-                    .and_then(|u| u.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                if !search_lower.is_empty()
-                    && !full_name.to_lowercase().contains(&search_lower)
-                    && !description.to_lowercase().contains(&search_lower)
-                {
-                    return None;
-                }
-
-                Some(GhRepoEntry {
-                    full_name,
-                    description,
-                    is_fork,
-                    clone_url,
-                    updated_at,
-                })
-            })
-            .collect();
-
-        repos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        Ok(repos)
+        let provider = providers.github();
+        let token = provider.resolve_token(&Some(profile.clone()));
+        provider.list_repos(&profile, search.as_deref(), &token)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -270,6 +80,7 @@ pub(super) fn clone_and_register(
     dest_path: Option<&str>,
     profile: &str,
     token: &Option<String>,
+    provider: &dyn GitServiceProvider,
     state: Arc<Mutex<AppState>>,
 ) -> Result<super::repo::RepoDetail, String> {
     let dest = if let Some(p) = dest_path {
@@ -283,7 +94,10 @@ pub(super) fn clone_and_register(
         if dest.join(".git").exists() {
             return super::repo::register_repo(dest, Some(profile.to_string()), state);
         }
-        return Err(format!("Destination already exists: {}", dest.display()));
+        return Err(format!(
+            "Destination already exists: {}",
+            dest.display()
+        ));
     }
 
     if let Some(parent) = dest.parent() {
@@ -292,24 +106,13 @@ pub(super) fn clone_and_register(
     }
 
     let mut cmd = std::process::Command::new("git");
-    if let Some(ref t) = token {
-        cmd.args([
-            "-c",
-            &format!(
-                "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
-                t
-            ),
-            "-c",
-            &format!(
-                "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
-                t
-            ),
-        ]);
-    }
+    provider.inject_git_auth(&mut cmd, token);
     cmd.args(["clone", clone_url, &dest.to_string_lossy()]);
     inject_shell_env(&mut cmd);
 
-    let output = cmd.output().map_err(|e| format!("Failed to run git clone: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run git clone: {}", e))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("git clone failed: {}", stderr));
@@ -326,7 +129,10 @@ pub(super) fn clone_and_register(
         .unwrap_or(false);
 
     if is_empty {
-        tracing::info!("Cloned repo is empty, creating initial commit for {}", repo_name);
+        tracing::info!(
+            "Cloned repo is empty, creating initial commit for {}",
+            repo_name
+        );
 
         std::fs::write(dest.join("README.md"), format!("# {}\n", repo_name))
             .map_err(|e| format!("Failed to create README: {}", e))?;
@@ -361,26 +167,11 @@ pub(super) fn clone_and_register(
             .unwrap_or_else(|| "main".to_string());
 
         // Push to establish the default branch on the remote
-        let mut push_cmd = std::process::Command::new("git");
-        if let Some(ref t) = token {
-            push_cmd.args([
-                "-c",
-                &format!(
-                    "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
-                    t
-                ),
-                "-c",
-                &format!(
-                    "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
-                    t
-                ),
-            ]);
-        }
+        let mut push_cmd = provider.git_cmd_with_auth(&dest, token);
         push_cmd.args(["push", "-u", "origin", &branch]);
-        push_cmd.current_dir(&dest);
-        inject_shell_env(&mut push_cmd);
 
-        let push_out = push_cmd.output()
+        let push_out = push_cmd
+            .output()
             .map_err(|e| format!("git push failed: {}", e))?;
         if !push_out.status.success() {
             let stderr = String::from_utf8_lossy(&push_out.stderr);
@@ -398,16 +189,20 @@ pub async fn clone_repo(
     dest_path: Option<String>,
     profile: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<super::repo::RepoDetail, String> {
     let state = state.inner().clone();
+    let providers = providers.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let token = resolve_gh_token(&Some(profile.clone()));
+        let provider = providers.github();
+        let token = provider.resolve_token(&Some(profile.clone()));
         clone_and_register(
             &clone_url,
             &repo_name,
             dest_path.as_deref(),
             &profile,
             &token,
+            provider,
             state,
         )
     })
@@ -417,61 +212,26 @@ pub async fn clone_repo(
 
 // ── Create repo on GitHub ────────────────────────────────────────────
 
-#[derive(Clone, serde::Deserialize)]
-pub struct CreateRepoOptions {
-    pub name: String,
-    pub private: bool,
-    pub description: Option<String>,
-    pub add_readme: bool,
-}
-
 #[tauri::command]
 pub async fn create_gh_repo(
     options: CreateRepoOptions,
     profile: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<super::repo::RepoDetail, String> {
     let state = state.inner().clone();
+    let providers = providers.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let token = resolve_gh_token(&Some(profile.clone()));
-
-        let full_name = format!("{}/{}", profile, options.name);
-
-        // Create the repo on GitHub
-        let mut cmd = std::process::Command::new("gh");
-        cmd.args(["repo", "create", &full_name]);
-        if options.private {
-            cmd.arg("--private");
-        } else {
-            cmd.arg("--public");
-        }
-        if let Some(ref desc) = options.description {
-            if !desc.is_empty() {
-                cmd.args(["-d", desc]);
-            }
-        }
-        if options.add_readme {
-            cmd.arg("--add-readme");
-        }
-        inject_shell_env(&mut cmd);
-        if let Some(ref t) = token {
-            cmd.env("GH_TOKEN", t);
-        }
-
-        let output = cmd.output().map_err(|e| format!("Failed to run gh: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(format!("Failed to create repository: {}", stderr));
-        }
-
-        // Clone the newly created repo
-        let clone_url = format!("git@github.com:{}.git", full_name);
+        let provider = providers.github();
+        let token = provider.resolve_token(&Some(profile.clone()));
+        let clone_url = provider.create_repo(&options, &profile, &token)?;
         clone_and_register(
             &clone_url,
             &options.name,
             None,
             &profile,
             &token,
+            provider,
             state,
         )
     })
@@ -482,32 +242,17 @@ pub async fn create_gh_repo(
 /// Check which connected GH profile has access to the repo at `path`.
 /// Returns the profile login that can access it, or None.
 #[tauri::command]
-pub async fn check_repo_gh_access(path: String, profiles: Vec<String>) -> Result<Option<String>, String> {
+pub async fn check_repo_gh_access(
+    path: String,
+    profiles: Vec<String>,
+    providers: State<'_, SharedProviderRegistry>,
+) -> Result<Option<String>, String> {
+    let providers = providers.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let path = std::path::PathBuf::from(&path)
             .canonicalize()
             .map_err(|e| format!("Invalid path: {}", e))?;
-
-        let nwo = match extract_gh_nwo(&path) {
-            Some(nwo) => nwo,
-            None => return Ok(None),
-        };
-
-        for profile in &profiles {
-            let token = resolve_gh_token(&Some(profile.clone()));
-            let mut cmd = std::process::Command::new("gh");
-            cmd.args(["repo", "view", &nwo, "--json", "name"]);
-            inject_shell_env(&mut cmd);
-            if let Some(ref t) = token {
-                cmd.env("GH_TOKEN", t);
-            }
-            let output = cmd.output().map_err(|e| format!("Failed to run gh: {}", e))?;
-            if output.status.success() {
-                return Ok(Some(profile.clone()));
-            }
-        }
-
-        Ok(None)
+        providers.github().check_repo_access(&path, &profiles)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -515,38 +260,30 @@ pub async fn check_repo_gh_access(path: String, profiles: Vec<String>) -> Result
 
 // ── PR commands ──────────────────────────────────────────────────────
 
-#[derive(Clone, serde::Serialize)]
-pub struct PrStatus {
-    pub state: String,         // "none", "open", "merged", "closed"
-    pub url: String,
-    pub number: i64,
-    pub title: String,
-    pub checks: String,        // "pending", "passing", "failing", "none"
-    pub mergeable: String,       // "mergeable", "conflicting", "unknown"
-    pub additions: i64,
-    pub deletions: i64,
-    pub ahead_by: i64,         // commits ahead of remote (unpushed)
-}
-
 #[tauri::command]
 pub async fn get_pr_status(
     workspace_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<PrStatus, String> {
-    let (worktree_path, fallback_branch, gh_profile) = {
+    let (worktree_path, fallback_branch, gh_profile, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st
             .workspaces
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
-        let repo = st
-            .repos
-            .get(&ws.repo_id)
-            .ok_or("Repo not found")?;
-        (ws.worktree_path.clone(), ws.branch.clone(), repo.gh_profile.clone())
+        let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
+        (
+            ws.worktree_path.clone(),
+            ws.branch.clone(),
+            repo.gh_profile.clone(),
+            repo.path.clone(),
+        )
     };
 
-    // Use actual git branch — metadata may be stale after a rename failure
+    let providers = providers.inner().clone();
+
+    // Use actual git branch -- metadata may be stale after a rename failure
     let branch = std::process::Command::new("git")
         .args(["branch", "--show-current"])
         .current_dir(&worktree_path)
@@ -556,108 +293,14 @@ pub async fn get_pr_status(
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or(fallback_branch);
 
-    // Resolve GH token outside the lock to avoid blocking other commands
-    let gh_token = if let Some(ref profile) = gh_profile {
-        let mut gh_auth_cmd = std::process::Command::new("gh");
-        gh_auth_cmd.args(["auth", "token", "--user", profile]);
-        inject_shell_env(&mut gh_auth_cmd);
-        gh_auth_cmd.output().ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    } else {
-        None
-    };
-
-    // Run gh in a blocking thread so it doesn't hold up the IPC queue
+    // Run in a blocking thread so it doesn't hold up the IPC queue
     tauri::async_runtime::spawn_blocking(move || {
-        let mut gh_cmd = std::process::Command::new("gh");
-        gh_cmd.args([
-            "pr", "view", &branch,
-            "--json", "state,url,number,title,statusCheckRollup,mergeable,additions,deletions",
-        ]);
-        gh_cmd.current_dir(&worktree_path);
-        inject_shell_env(&mut gh_cmd);
-        if let Some(ref token) = gh_token {
-            gh_cmd.env("GH_TOKEN", token);
-        }
-        let output = gh_cmd.output()
-            .map_err(|e| format!("Failed to run gh: {}", e))?;
-
-        if !output.status.success() {
-            return Ok(PrStatus {
-                state: "none".into(),
-                url: String::new(),
-                number: 0,
-                title: String::new(),
-                checks: "none".into(),
-                mergeable: "unknown".into(),
-                additions: 0,
-                deletions: 0,
-                ahead_by: 0,
-            });
-        }
-
-        let v: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .map_err(|e| format!("Failed to parse gh output: {}", e))?;
-
-        let pr_state = v.get("state").and_then(|s| s.as_str()).unwrap_or("OPEN").to_lowercase();
-        let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("").to_string();
-        let number = v.get("number").and_then(|n| n.as_i64()).unwrap_or(0);
-        let title = v.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string();
-        let additions = v.get("additions").and_then(|n| n.as_i64()).unwrap_or(0);
-        let deletions = v.get("deletions").and_then(|n| n.as_i64()).unwrap_or(0);
-        let mergeable = v.get("mergeable").and_then(|s| s.as_str()).unwrap_or("UNKNOWN").to_lowercase();
-
-        let checks = if let Some(checks_arr) = v.get("statusCheckRollup").and_then(|c| c.as_array()) {
-            if checks_arr.is_empty() {
-                "none".to_string()
-            } else {
-                let any_failing = checks_arr.iter().any(|c| {
-                    let conclusion = c.get("conclusion").and_then(|s| s.as_str()).unwrap_or("");
-                    conclusion == "FAILURE" || conclusion == "ERROR" || conclusion == "TIMED_OUT"
-                });
-                let all_done = checks_arr.iter().all(|c| {
-                    let status = c.get("status").and_then(|s| s.as_str()).unwrap_or("");
-                    status == "COMPLETED"
-                });
-                if any_failing {
-                    "failing".to_string()
-                } else if all_done {
-                    "passing".to_string()
-                } else {
-                    "pending".to_string()
-                }
-            }
-    } else {
-        "none".to_string()
-    };
-
-        // Count unpushed commits: how far local branch is ahead of remote
-        let ahead_by = {
-            let rev_output = std::process::Command::new("git")
-                .args(["rev-list", "--count", &format!("origin/{}..{}", branch, branch)])
-                .current_dir(&worktree_path)
-                .output();
-            match rev_output {
-                Ok(o) if o.status.success() => {
-                    String::from_utf8_lossy(&o.stdout).trim().parse::<i64>().unwrap_or(0)
-                }
-                _ => 0,
-            }
-        };
-
-        Ok(PrStatus {
-            state: pr_state,
-            url,
-            number,
-            title,
-            checks,
-            mergeable,
-            additions,
-            deletions,
-            ahead_by,
-        })
-    }).await.map_err(|e| format!("Task failed: {}", e))?
+        let provider = providers.for_repo(&repo_path);
+        let token = provider.resolve_token(&gh_profile);
+        provider.get_pr_status(&worktree_path, &branch, &token)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -696,26 +339,28 @@ pub async fn gh_pr_merge(
     workspace_id: String,
     pr_number: i64,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<(), String> {
-    let (worktree_path, gh_profile) = {
+    let (worktree_path, gh_profile, repo_path) = {
         let st = state.lock().map_err(|e| e.to_string())?;
-        let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
+        let ws = st
+            .workspaces
+            .get(&workspace_id)
+            .ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        (ws.worktree_path.clone(), repo.gh_profile.clone())
+        (
+            ws.worktree_path.clone(),
+            repo.gh_profile.clone(),
+            repo.path.clone(),
+        )
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = gh_cmd_with_auth(&worktree_path, &gh_token);
-        cmd.args(["pr", "merge", &pr_number.to_string(), "--squash", "--delete-branch=false"]);
-
-        let output = cmd.output().map_err(|e| format!("Failed to run gh pr merge: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("gh pr merge failed: {}", stderr.trim()));
-        }
-        Ok(())
+        let provider = providers.for_repo(&repo_path);
+        let token = provider.resolve_token(&gh_profile);
+        provider.merge_pr(&worktree_path, pr_number, &token)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -723,89 +368,33 @@ pub async fn gh_pr_merge(
 
 // ── PR listing for checkout ─────────────────────────────────────────
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct RepoPrEntry {
-    pub number: i64,
-    pub title: String,
-    pub branch: String,
-    pub base_branch: String,
-    pub author: String,
-    pub url: String,
-    pub updated_at: String,
-    pub additions: i64,
-    pub deletions: i64,
-}
-
 #[tauri::command]
 pub async fn list_repo_prs(
     repo_id: String,
     state: State<'_, Arc<Mutex<AppState>>>,
-) -> Result<Vec<RepoPrEntry>, String> {
+    providers: State<'_, SharedProviderRegistry>,
+) -> Result<Vec<PrEntry>, String> {
     let (repo_path, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
         let repo = st.repos.get(&repo_id).ok_or("Repo not found")?;
         (repo.path.clone(), repo.gh_profile.clone())
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
-
-    let nwo = extract_gh_nwo(&repo_path)
-        .ok_or("Could not determine GitHub owner/repo from remote URL")?;
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new("gh");
-        cmd.args([
-            "pr", "list",
-            "--repo", &nwo,
-            "--json", "number,title,headRefName,baseRefName,author,url,updatedAt,additions,deletions",
-            "--limit", "50",
-        ]);
-        inject_shell_env(&mut cmd);
-        if let Some(ref token) = gh_token {
-            cmd.env("GH_TOKEN", token);
-        }
-
-        let output = cmd.output().map_err(|e| format!("Failed to run gh pr list: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("gh pr list failed: {}", stderr.trim()));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let raw: Vec<serde_json::Value> = serde_json::from_str(&stdout)
-            .map_err(|e| format!("Failed to parse gh pr list output: {}", e))?;
-
-        let entries = raw.iter().map(|pr| {
-            RepoPrEntry {
-                number: pr["number"].as_i64().unwrap_or(0),
-                title: pr["title"].as_str().unwrap_or("").to_string(),
-                branch: pr["headRefName"].as_str().unwrap_or("").to_string(),
-                base_branch: pr["baseRefName"].as_str().unwrap_or("").to_string(),
-                author: pr["author"]["login"].as_str().unwrap_or("").to_string(),
-                url: pr["url"].as_str().unwrap_or("").to_string(),
-                updated_at: pr["updatedAt"].as_str().unwrap_or("").to_string(),
-                additions: pr["additions"].as_i64().unwrap_or(0),
-                deletions: pr["deletions"].as_i64().unwrap_or(0),
-            }
-        }).collect();
-
-        Ok(entries)
+        let provider = providers.for_repo(&repo_path);
+        let token = provider.resolve_token(&gh_profile);
+        let nwo = provider
+            .extract_repo_id(&repo_path)
+            .ok_or("Could not determine owner/repo from remote URL")?;
+        provider.list_prs(&repo_path, &nwo, &token)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
 // ── PR detail for workspace creation ────────────────────────────────
-
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct PrDetail {
-    pub number: i64,
-    pub title: String,
-    pub branch: String,
-    pub base_branch: String,
-    pub url: String,
-    pub body: String,
-}
 
 /// Fetch detailed PR metadata (body included) for a single PR by number.
 /// Used by create_workspace_from_pr to get PR context for agent injection.
@@ -814,6 +403,7 @@ pub async fn get_pr_detail(
     repo_id: String,
     pr_number: i64,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<PrDetail, String> {
     let (repo_path, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -821,42 +411,15 @@ pub async fn get_pr_detail(
         (repo.path.clone(), repo.gh_profile.clone())
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
-
-    let nwo = extract_gh_nwo(&repo_path)
-        .ok_or("Could not determine GitHub owner/repo from remote URL")?;
+    let providers = providers.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new("gh");
-        cmd.args([
-            "pr", "view",
-            &pr_number.to_string(),
-            "--repo", &nwo,
-            "--json", "number,title,headRefName,baseRefName,url,body",
-        ]);
-        inject_shell_env(&mut cmd);
-        if let Some(ref token) = gh_token {
-            cmd.env("GH_TOKEN", token);
-        }
-
-        let output = cmd.output().map_err(|e| format!("Failed to run gh pr view: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("gh pr view failed: {}", stderr.trim()));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let pr: serde_json::Value = serde_json::from_str(&stdout)
-            .map_err(|e| format!("Failed to parse gh pr view output: {}", e))?;
-
-        Ok(PrDetail {
-            number: pr["number"].as_i64().unwrap_or(0),
-            title: pr["title"].as_str().unwrap_or("").to_string(),
-            branch: pr["headRefName"].as_str().unwrap_or("").to_string(),
-            base_branch: pr["baseRefName"].as_str().unwrap_or("").to_string(),
-            url: pr["url"].as_str().unwrap_or("").to_string(),
-            body: pr["body"].as_str().unwrap_or("").to_string(),
-        })
+        let provider = providers.for_repo(&repo_path);
+        let token = provider.resolve_token(&gh_profile);
+        let nwo = provider
+            .extract_repo_id(&repo_path)
+            .ok_or("Could not determine owner/repo from remote URL")?;
+        provider.get_pr_detail(&repo_path, &nwo, pr_number, &token)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

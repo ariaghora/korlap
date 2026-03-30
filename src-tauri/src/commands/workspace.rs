@@ -1,10 +1,11 @@
+use crate::git_provider::SharedProviderRegistry;
 use crate::state::{AppState, SourcePr, WorkspaceInfo, WorkspaceStatus};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 use uuid::Uuid;
 
-use super::helpers::{detect_default_branch, extract_gh_nwo, inject_shell_env, now_unix, resolve_gh_token};
+use super::helpers::{detect_default_branch, inject_shell_env, now_unix};
 
 // ── Random workspace names ───────────────────────────────────────────
 
@@ -50,6 +51,7 @@ pub async fn create_workspace(
     source_todo_id: Option<String>,
     custom_branch: Option<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<WorkspaceInfo, String> {
     let (repo_path, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -57,53 +59,25 @@ pub async fn create_workspace(
         (repo.path.clone(), repo.gh_profile.clone())
     };
 
-    // Resolve GH token early — if a profile is configured but the token can't be
+    let provider = providers.for_repo(&repo_path);
+
+    // Resolve token early — if a profile is configured but the token can't be
     // obtained, fail immediately rather than silently branching off stale data.
-    let gh_token = if let Some(ref profile) = gh_profile {
-        let mut gh_auth_cmd = std::process::Command::new("gh");
-        gh_auth_cmd.args(["auth", "token", "--user", profile]);
-        inject_shell_env(&mut gh_auth_cmd);
-        let output = gh_auth_cmd
-            .output()
-            .map_err(|e| format!("Failed to run gh: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
-                "Cannot authenticate as GitHub profile '{}'. \
-                 Fix your gh auth or change the repo's profile.\n{}",
-                profile,
-                stderr.trim()
-            ));
-        }
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        None
-    };
+    let gh_token = provider.resolve_token(&gh_profile);
+    if gh_profile.is_some() && gh_token.is_none() {
+        return Err(format!(
+            "Cannot authenticate as profile '{}'. \
+             Fix your auth or change the repo's profile.",
+            gh_profile.as_deref().unwrap_or("unknown")
+        ));
+    }
 
     let base_branch = detect_default_branch(&repo_path)?;
 
     // Fetch origin so we branch from the latest remote state.
-    // When a gh_profile is set, rewrite SSH URLs to HTTPS with the token so
-    // git authenticates as the selected profile, not the ambient SSH key.
-    let mut fetch_cmd = std::process::Command::new("git");
-    if let Some(ref token) = gh_token {
-        fetch_cmd.args([
-            "-c",
-            &format!(
-                "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
-                token
-            ),
-            "-c",
-            &format!(
-                "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
-                token
-            ),
-        ]);
-    }
-    fetch_cmd
-        .args(["fetch", "origin", &base_branch])
-        .current_dir(&repo_path);
-    inject_shell_env(&mut fetch_cmd);
+    // Provider handles URL rewriting for authentication.
+    let mut fetch_cmd = provider.git_cmd_with_auth(&repo_path, &gh_token);
+    fetch_cmd.args(["fetch", "origin", &base_branch]);
     let fetch_output = fetch_cmd
         .output()
         .map_err(|e| format!("Failed to run git fetch: {}", e))?;
@@ -279,6 +253,7 @@ pub async fn create_workspace_from_pr(
     repo_id: String,
     pr_number: i64,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<WorkspaceInfo, String> {
     let (repo_path, gh_profile) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -286,66 +261,23 @@ pub async fn create_workspace_from_pr(
         (repo.path.clone(), repo.gh_profile.clone())
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
+    let provider = providers.for_repo(&repo_path);
+    let gh_token = provider.resolve_token(&gh_profile);
 
-    // Fetch PR metadata via gh CLI
-    let nwo = extract_gh_nwo(&repo_path)
-        .ok_or("Could not determine GitHub owner/repo from remote URL")?;
+    // Fetch PR metadata via provider CLI
+    let nwo = provider
+        .extract_repo_id(&repo_path)
+        .ok_or("Could not determine owner/repo from remote URL")?;
 
-    let pr_detail = {
-        let mut cmd = std::process::Command::new("gh");
-        cmd.args([
-            "pr", "view",
-            &pr_number.to_string(),
-            "--repo", &nwo,
-            "--json", "number,title,headRefName,baseRefName,url,body",
-        ]);
-        inject_shell_env(&mut cmd);
-        if let Some(ref token) = &gh_token {
-            cmd.env("GH_TOKEN", token);
-        }
+    let detail = provider.get_pr_detail(&repo_path, &nwo, pr_number, &gh_token)
+        .map_err(|e| format!("Could not fetch PR #{}: {}", pr_number, e))?;
 
-        let output = cmd.output().map_err(|e| format!("Failed to run gh pr view: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Could not fetch PR #{}: {}", pr_number, stderr.trim()));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let pr: serde_json::Value = serde_json::from_str(&stdout)
-            .map_err(|e| format!("Failed to parse PR data: {}", e))?;
-
-        (
-            pr["title"].as_str().unwrap_or("").to_string(),
-            pr["headRefName"].as_str().unwrap_or("").to_string(),
-            pr["baseRefName"].as_str().unwrap_or("").to_string(),
-            pr["url"].as_str().unwrap_or("").to_string(),
-            pr["body"].as_str().unwrap_or("").to_string(),
-        )
-    };
-
-    let (pr_title, pr_branch, pr_base_branch, pr_url, pr_body) = pr_detail;
+    let (pr_title, pr_branch, pr_base_branch, pr_url, pr_body) =
+        (detail.title, detail.branch, detail.base_branch, detail.url, detail.body);
 
     // Fetch the PR ref (fork-safe: uses pull/<number>/head)
-    let mut fetch_cmd = std::process::Command::new("git");
-    if let Some(ref token) = gh_token {
-        fetch_cmd.args([
-            "-c",
-            &format!(
-                "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
-                token
-            ),
-            "-c",
-            &format!(
-                "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
-                token
-            ),
-        ]);
-    }
-    fetch_cmd
-        .args(["fetch", "origin", &format!("pull/{}/head", pr_number)])
-        .current_dir(&repo_path);
-    inject_shell_env(&mut fetch_cmd);
+    let mut fetch_cmd = provider.git_cmd_with_auth(&repo_path, &gh_token);
+    fetch_cmd.args(["fetch", "origin", &format!("pull/{}/head", pr_number)]);
 
     let fetch_output = fetch_cmd
         .output()

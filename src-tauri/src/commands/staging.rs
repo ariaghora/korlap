@@ -1,9 +1,10 @@
+use crate::git_provider::SharedProviderRegistry;
 use crate::state::{AppState, WorkspaceInfo, WorkspaceStatus};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use uuid::Uuid;
 
-use super::helpers::{detect_default_branch, git_cmd_with_auth, inject_shell_env, now_unix, resolve_gh_token};
+use super::helpers::{detect_default_branch, inject_shell_env, now_unix};
 
 #[derive(Clone, serde::Serialize)]
 pub struct StagingResult {
@@ -17,6 +18,7 @@ pub async fn create_staging_workspace(
     repo_id: String,
     branch_names: Vec<String>,
     state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
 ) -> Result<StagingResult, String> {
     let (repo_path, gh_profile, worktree_base) = {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -24,12 +26,13 @@ pub async fn create_staging_workspace(
         (repo.path.clone(), repo.gh_profile.clone(), st.worktree_dir())
     };
 
-    let gh_token = resolve_gh_token(&gh_profile);
+    let provider = providers.for_repo(&repo_path);
+    let gh_token = provider.resolve_token(&gh_profile);
 
     let base_branch = detect_default_branch(&repo_path)?;
 
     // Fetch origin/<default_branch>
-    let mut fetch_cmd = git_cmd_with_auth(&repo_path, &gh_token);
+    let mut fetch_cmd = provider.git_cmd_with_auth(&repo_path, &gh_token);
     fetch_cmd.args(["fetch", "origin", &base_branch]);
     let fetch_output = fetch_cmd
         .output()
@@ -142,7 +145,7 @@ pub async fn create_staging_workspace(
 
     for branch in &branch_names {
         // Fetch the branch
-        let mut fetch_br = git_cmd_with_auth(&repo_path, &gh_token);
+        let mut fetch_br = provider.git_cmd_with_auth(&repo_path, &gh_token);
         fetch_br.args(["fetch", "origin", branch]);
         let fetch_out = fetch_br
             .output()
