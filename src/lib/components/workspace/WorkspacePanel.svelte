@@ -1624,22 +1624,22 @@
     align-items: center;
     gap: 0.35rem;
     padding: 0.4rem 0.65rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border-light);
+    background: color-mix(in srgb, var(--accent) 15%, var(--bg-card));
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
     border-radius: 20px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.75rem;
     font-weight: 500;
-    color: var(--text-secondary);
-    transition: background 0.15s, border-color 0.15s;
+    color: var(--accent);
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
 
   .chat-pill:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-    border-color: var(--border);
+    background: color-mix(in srgb, var(--accent) 25%, var(--bg-card));
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 60%, transparent);
   }
 
   .chat-pill-active {
