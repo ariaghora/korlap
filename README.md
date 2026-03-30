@@ -8,6 +8,10 @@ A macOS app for running multiple [Claude Code](https://docs.anthropic.com/en/doc
 
 <img width="1380" height="889" alt="image" src="https://github.com/user-attachments/assets/a94561fe-9831-46cf-b31f-5c2e12678f4c" />
 
+<img width="1380" height="889" alt="image" src="https://github.com/user-attachments/assets/b19b4714-e2db-418e-8a82-dacd943a31e3" />
+
+
+
 Built with Tauri v2, Svelte 5, and Rust. Primary support for macOS, may or may not run well on the other platforms.
 
 ## What it does
