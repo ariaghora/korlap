@@ -522,43 +522,33 @@ fn build_system_prompt(
     let wt_display = worktree_path.to_string_lossy();
     let repo_display = repo_path.to_string_lossy();
     let rename_instruction = if !is_custom_branch {
-        "Use the rename_branch tool to give your branch a meaningful name based on the task. \
-         Use conventional prefixes: feat/, fix/, refactor/, chore/, docs/. Keep names concise (<30 chars).\n\
-         IMPORTANT: Renaming the branch is your FIRST priority. Call rename_branch BEFORE reading files, writing code, or running any commands. \
-         Parse the user's request, pick a name, and rename immediately.\n\
-         If the task scope changes mid-conversation, rename the branch again to reflect the new direction."
+        "FIRST PRIORITY: Call rename_branch immediately with a conventional name (feat/, fix/, refactor/, chore/). \
+         Rename again if scope changes."
     } else {
-        "The branch was manually named by the user. Do NOT rename it unless the user explicitly asks you to."
+        "Branch was manually named. Do NOT rename unless explicitly asked."
     };
     let mut system_prompt = format!(
-        "You are working inside Korlap, a Mac app that runs coding agents in parallel.\n\
-         Your working directory is already set to the workspace. Do not cd into it — you are already there.\n\
-         Target branch: {ws_branch}\n\
-         Base branch: {base_branch}\n\
+        "You are a coding agent inside Korlap, working in a git worktree.\n\
+         Worktree: {wt_display} | Main repo: {repo_display} (DO NOT access)\n\
+         Target branch: {ws_branch} | Base branch: {base_branch}\n\
          \n\
-         CRITICAL — workspace isolation:\n\
-         • Your workspace is a git worktree at: {wt_display}\n\
-         • The main repository lives at: {repo_display} — NEVER read, write, or cd into it.\n\
-         • ALL file operations (Read, Edit, Write, Bash) MUST use paths under {wt_display}.\n\
-         • The .git file in the worktree references the main repo — that is normal for worktrees. Do NOT follow it.\n\
-         • EnterWorktree and ExitWorktree are DISABLED — you are already in the correct worktree.\n\
-         • Do NOT use the Agent tool with isolation: \"worktree\" — it will create a worktree from the wrong repo.\n\
-         • If you discover paths outside {wt_display}, ignore them. You have no business there.\n\
+         ISOLATION: All file operations MUST stay under {wt_display}. \
+         EnterWorktree/ExitWorktree are DISABLED. Do not use Agent with isolation:\"worktree\". \
+         The .git file referencing the main repo is normal for worktrees — ignore it.\n\
          \n\
-         You have access to Korlap tools via MCP.\n\
          {rename_instruction}\n\
-         Keep all changes on the target branch. Do not modify other branches.\n\
+         Keep all changes on target branch.\n\
          \n\
-         You have LSP tools for compiler-accurate code navigation:\n\
-         • lsp_goto_definition — find where a symbol is defined\n\
-         • lsp_find_references — find all usages of a symbol\n\
-         • lsp_hover — get type info and docs for a symbol\n\
-         • lsp_workspace_symbols — search symbols by name across the workspace\n\
-         • lsp_diagnostics — get compiler errors/warnings for a file\n\
-         • lsp_rename — rename a symbol across all files (applies edits automatically)\n\
-         Use these instead of grep when you need precise code navigation. All positions are 1-based (line and character).\n\
-         After editing files, call lsp_diagnostics to check for compiler errors.\n\
-         For renaming symbols, prefer lsp_rename over find-and-replace — it handles all references correctly.",
+         LSP tools available (prefer over grep for precise navigation, 1-based positions):\n\
+         lsp_goto_definition, lsp_find_references, lsp_hover, lsp_workspace_symbols, lsp_diagnostics, lsp_rename\n\
+         After edits, call lsp_diagnostics. For renames, prefer lsp_rename over find-and-replace.\n\
+         \n\
+         TOKEN EFFICIENCY — minimize tool output to save context:\n\
+         • Bash: pipe verbose commands through `head -80` or `tail -40` (e.g. `cargo check 2>&1 | head -80`)\n\
+         • Read: use offset/limit to read only the section you need, not entire files\n\
+         • Grep: set head_limit to cap results (e.g. 20). Never run unbounded searches.\n\
+         • Git: use `git diff --stat` first; only read full diff for files you need to change\n\
+         • Avoid re-reading files you already have in context",
     );
 
     // Inject warm context from knowledge base (if built)
@@ -778,6 +768,8 @@ pub async fn generate_commit_message(
         let mut cmd = std::process::Command::new(claude_bin);
         cmd.arg("-p").arg(&prompt);
         cmd.args(["--output-format", "text"]);
+        cmd.args(["--model", "claude-haiku-4-5-20251001"]);
+        cmd.args(["--max-turns", "1"]);
         cmd.args(["--disallowedTools", super::agent_backend::DISALLOWED_WORKTREE_TOOLS]);
         cmd.current_dir(&worktree_path);
         cmd.stdout(std::process::Stdio::piped());
@@ -922,6 +914,7 @@ pub async fn prioritize_todos(
         let mut cmd = std::process::Command::new(claude_bin);
         cmd.arg("-p").arg(&prompt);
         cmd.args(["--output-format", "text"]);
+        cmd.args(["--model", "claude-haiku-4-5-20251001"]);
         cmd.args(["--max-turns", "1"]);
         cmd.arg("--system-prompt").arg(system_prompt);
         cmd.current_dir(&data_dir);
@@ -990,6 +983,7 @@ pub async fn determine_dependencies(
         let mut cmd = std::process::Command::new(claude_bin);
         cmd.arg("-p").arg(&todo_json);
         cmd.args(["--output-format", "text"]);
+        cmd.args(["--model", "claude-haiku-4-5-20251001"]);
         cmd.args(["--max-turns", "1"]);
         cmd.arg("--system-prompt").arg(system_prompt);
         cmd.current_dir(&data_dir);
@@ -1071,6 +1065,7 @@ pub async fn interpret_autopilot_command(
         let mut cmd = std::process::Command::new(claude_bin);
         cmd.arg("-p").arg(&prompt);
         cmd.args(["--output-format", "text"]);
+        cmd.args(["--model", "claude-haiku-4-5-20251001"]);
         cmd.args(["--max-turns", "1"]);
         cmd.arg("--system-prompt").arg(system_prompt);
         cmd.current_dir(&data_dir);
