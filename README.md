@@ -4,7 +4,7 @@
 
 # Korlap
 
-A macOS app for running multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in parallel, each isolated in its own `git worktree`.
+A macOS kanban app for running multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in parallel, each isolated in its own `git worktree`.
 
 <img width="1380" height="889" alt="image" src="https://github.com/user-attachments/assets/a94561fe-9831-46cf-b31f-5c2e12678f4c" />
 
