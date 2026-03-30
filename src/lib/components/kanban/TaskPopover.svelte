@@ -3,9 +3,9 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { X, TextSearch, Lightbulb, BookOpen, ChevronDown } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
-  import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "./MentionInput.svelte";
-  import MentionAutocomplete, { type MentionAutocompleteApi, type FileSearchResult } from "./MentionAutocomplete.svelte";
-  import SearchModal from "./SearchModal.svelte";
+  import MentionInput, { type Mention, type MentionInputValue, type MentionInputApi } from "$lib/components/chat/MentionInput.svelte";
+  import MentionAutocomplete, { type MentionAutocompleteApi, type FileSearchResult } from "$lib/components/chat/MentionAutocomplete.svelte";
+  import SearchModal from "../SearchModal.svelte";
   import { searchRepoFiles, getCachedModels, getModelLabel, type ProviderInfo, type AgentProvider } from "$lib/ipc";
 
   export interface TaskData {
