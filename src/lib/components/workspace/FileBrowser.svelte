@@ -3,9 +3,9 @@
   import { Folder, FolderOpen, File as FileIcon, Search, FileSearch } from "lucide-svelte";
   import { listDirectory, readFile, writeFile, listRepoDirectory, readRepoFile, writeRepoFile, searchWorkspaceFiles, searchRepoFiles, lspStartServer, type FileEntry, type FileSearchResult } from "$lib/ipc";
   import { tooltip } from "$lib/actions";
-  import ResizeHandle from "./ResizeHandle.svelte";
+  import ResizeHandle from "../ResizeHandle.svelte";
   import CodeEditor from "./CodeEditor.svelte";
-  import SearchModal from "./SearchModal.svelte";
+  import SearchModal from "../SearchModal.svelte";
 
   // ── Devicon imports (Vite resolves as URL strings) ──
   import iconRust from "devicon/icons/rust/rust-original.svg";

@@ -4,11 +4,13 @@
 
 # Korlap
 
-A macOS app for running multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in parallel, each isolated in its own `git worktree`.
+A macOS kanban app for running multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents in parallel, each isolated in its own `git worktree`.
 
-<img width="1331" height="825" alt="image" src="https://github.com/user-attachments/assets/ef599734-bd8a-4a99-a85f-9479f8b2fcd1" />
+<img width="1380" height="889" alt="image" src="https://github.com/user-attachments/assets/a94561fe-9831-46cf-b31f-5c2e12678f4c" />
 
-<img width="1331" height="825" alt="image" src="https://github.com/user-attachments/assets/2bafd622-3596-4d62-8841-ab953fcccd25" />
+<img width="1380" height="889" alt="image" src="https://github.com/user-attachments/assets/b19b4714-e2db-418e-8a82-dacd943a31e3" />
+
+
 
 Built with Tauri v2, Svelte 5, and Rust. Primary support for macOS, may or may not run well on the other platforms.
 
@@ -25,6 +27,7 @@ The core assumption: the kanban board is for AI agents, and each task maps to an
 - **Task board.** Four-column kanban (Todo, In Progress, Review, Done) that drives agent lifecycle.
 - **Workspace isolation.** Each agent gets a full worktree copy of the repo on a dedicated branch.
 - **Structured chat.** Agent output parsed from `--output-format stream-json`, rendered as a rich message list.
+- **Language Server Protocol (LSP).** LSP integration for a more efficient editing and navigation for agent and human.
 - **Diff viewer.** See what each agent changed against the base branch, with syntax highlighting.
 - **Review flow.** Opus-powered evaluation of diffs before merging.
 - **Script runner.** Run shell commands inside any worktree without leaving the app.
@@ -47,6 +50,9 @@ bun install
 
 # Run in development mode (starts both Vite dev server and Tauri)
 bun tauri dev
+
+# Build the app bundle
+bun tauri build
 ```
 
 That's it. The app opens, you add a repo via the folder picker, and create your first workspace.

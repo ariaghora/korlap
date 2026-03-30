@@ -2,17 +2,17 @@
   import { SvelteMap } from "svelte/reactivity";
   import type { WorkspaceInfo, RepoSettings, PrStatus, ScriptEvent, NamedScript, ProviderInfo } from "$lib/ipc";
   import { runScript, stopScript, closeTerminal } from "$lib/ipc";
-  import type { ReviewState } from "$lib/components/ReviewPill.svelte";
+  import type { ReviewState } from "./ReviewPill.svelte";
   import type { ChatPanelApi, QueueDisplayItem, PastedImage } from "$lib/chat-utils";
-  import type { Mention } from "$lib/components/MentionInput.svelte";
+  import type { Mention } from "$lib/components/chat/MentionInput.svelte";
   import { ExternalLink, Check, GitPullRequestCreate, GitMerge, ArrowUp, ArrowDown, AlertTriangle, Wrench, Eye, Play, Square, CircleX, MessageSquare, Minus, ChevronUp, ChevronDown, Timer, RefreshCcw, Plus, X, Terminal } from "lucide-svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import ChatPanel from "$lib/components/ChatPanel.svelte";
-  import DiffViewer from "$lib/components/DiffViewer.svelte";
-  import FileBrowser from "$lib/components/FileBrowser.svelte";
-  import TerminalView from "$lib/components/Terminal.svelte";
-  import ReviewPill from "$lib/components/ReviewPill.svelte";
-  import ResizeHandle from "$lib/components/ResizeHandle.svelte";
+  import ChatPanel from "$lib/components/chat/ChatPanel.svelte";
+  import DiffViewer from "./DiffViewer.svelte";
+  import FileBrowser from "./FileBrowser.svelte";
+  import TerminalView from "./Terminal.svelte";
+  import ReviewPill from "./ReviewPill.svelte";
+  import ResizeHandle from "../ResizeHandle.svelte";
   import { draggable, resizable, tooltip, type DragOffset } from "$lib/actions";
 
   export type PanelTab = "diff" | "files";
