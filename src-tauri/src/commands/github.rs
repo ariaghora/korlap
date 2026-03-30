@@ -270,7 +270,7 @@ pub(super) fn clone_and_register(
     dest_path: Option<&str>,
     profile: &str,
     token: &Option<String>,
-    state: State<'_, Arc<Mutex<AppState>>>,
+    state: Arc<Mutex<AppState>>,
 ) -> Result<super::repo::RepoDetail, String> {
     let dest = if let Some(p) = dest_path {
         std::path::PathBuf::from(p)
@@ -315,26 +315,104 @@ pub(super) fn clone_and_register(
         return Err(format!("git clone failed: {}", stderr));
     }
 
+    // Empty repos (e.g. created on GitHub without a README) have no commits and
+    // no remote refs, which causes detect_default_branch to fail downstream.
+    // Bootstrap with an initial commit + push so the default branch exists.
+    let is_empty = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&dest)
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(false);
+
+    if is_empty {
+        tracing::info!("Cloned repo is empty, creating initial commit for {}", repo_name);
+
+        std::fs::write(dest.join("README.md"), format!("# {}\n", repo_name))
+            .map_err(|e| format!("Failed to create README: {}", e))?;
+
+        let add_out = std::process::Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&dest)
+            .output()
+            .map_err(|e| format!("git add failed: {}", e))?;
+        if !add_out.status.success() {
+            return Err("Failed to stage initial README".to_string());
+        }
+
+        let commit_out = std::process::Command::new("git")
+            .args(["commit", "-m", "Initial commit"])
+            .current_dir(&dest)
+            .output()
+            .map_err(|e| format!("git commit failed: {}", e))?;
+        if !commit_out.status.success() {
+            let stderr = String::from_utf8_lossy(&commit_out.stderr);
+            return Err(format!("Failed to create initial commit: {}", stderr));
+        }
+
+        // Determine the local branch name (respects user's init.defaultBranch)
+        let branch = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(&dest)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|| "main".to_string());
+
+        // Push to establish the default branch on the remote
+        let mut push_cmd = std::process::Command::new("git");
+        if let Some(ref t) = token {
+            push_cmd.args([
+                "-c",
+                &format!(
+                    "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
+                    t
+                ),
+                "-c",
+                &format!(
+                    "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
+                    t
+                ),
+            ]);
+        }
+        push_cmd.args(["push", "-u", "origin", &branch]);
+        push_cmd.current_dir(&dest);
+        inject_shell_env(&mut push_cmd);
+
+        let push_out = push_cmd.output()
+            .map_err(|e| format!("git push failed: {}", e))?;
+        if !push_out.status.success() {
+            let stderr = String::from_utf8_lossy(&push_out.stderr);
+            return Err(format!("Failed to push initial commit: {}", stderr));
+        }
+    }
+
     super::repo::register_repo(dest, Some(profile.to_string()), state)
 }
 
 #[tauri::command]
-pub fn clone_repo(
+pub async fn clone_repo(
     clone_url: String,
     repo_name: String,
     dest_path: Option<String>,
     profile: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<super::repo::RepoDetail, String> {
-    let token = resolve_gh_token(&Some(profile.clone()));
-    clone_and_register(
-        &clone_url,
-        &repo_name,
-        dest_path.as_deref(),
-        &profile,
-        &token,
-        state,
-    )
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = resolve_gh_token(&Some(profile.clone()));
+        clone_and_register(
+            &clone_url,
+            &repo_name,
+            dest_path.as_deref(),
+            &profile,
+            &token,
+            state,
+        )
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 // ── Create repo on GitHub ────────────────────────────────────────────
@@ -348,52 +426,57 @@ pub struct CreateRepoOptions {
 }
 
 #[tauri::command]
-pub fn create_gh_repo(
+pub async fn create_gh_repo(
     options: CreateRepoOptions,
     profile: String,
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<super::repo::RepoDetail, String> {
-    let token = resolve_gh_token(&Some(profile.clone()));
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = resolve_gh_token(&Some(profile.clone()));
 
-    let full_name = format!("{}/{}", profile, options.name);
+        let full_name = format!("{}/{}", profile, options.name);
 
-    // Create the repo on GitHub
-    let mut cmd = std::process::Command::new("gh");
-    cmd.args(["repo", "create", &full_name]);
-    if options.private {
-        cmd.arg("--private");
-    } else {
-        cmd.arg("--public");
-    }
-    if let Some(ref desc) = options.description {
-        if !desc.is_empty() {
-            cmd.args(["-d", desc]);
+        // Create the repo on GitHub
+        let mut cmd = std::process::Command::new("gh");
+        cmd.args(["repo", "create", &full_name]);
+        if options.private {
+            cmd.arg("--private");
+        } else {
+            cmd.arg("--public");
         }
-    }
-    if options.add_readme {
-        cmd.arg("--add-readme");
-    }
-    inject_shell_env(&mut cmd);
-    if let Some(ref t) = token {
-        cmd.env("GH_TOKEN", t);
-    }
+        if let Some(ref desc) = options.description {
+            if !desc.is_empty() {
+                cmd.args(["-d", desc]);
+            }
+        }
+        if options.add_readme {
+            cmd.arg("--add-readme");
+        }
+        inject_shell_env(&mut cmd);
+        if let Some(ref t) = token {
+            cmd.env("GH_TOKEN", t);
+        }
 
-    let output = cmd.output().map_err(|e| format!("Failed to run gh: {}", e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("Failed to create repository: {}", stderr));
-    }
+        let output = cmd.output().map_err(|e| format!("Failed to run gh: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(format!("Failed to create repository: {}", stderr));
+        }
 
-    // Clone the newly created repo
-    let clone_url = format!("git@github.com:{}.git", full_name);
-    clone_and_register(
-        &clone_url,
-        &options.name,
-        None,
-        &profile,
-        &token,
-        state,
-    )
+        // Clone the newly created repo
+        let clone_url = format!("git@github.com:{}.git", full_name);
+        clone_and_register(
+            &clone_url,
+            &options.name,
+            None,
+            &profile,
+            &token,
+            state,
+        )
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 /// Check which connected GH profile has access to the repo at `path`.

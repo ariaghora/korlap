@@ -14,9 +14,14 @@ pub struct RepoDetail {
 }
 
 #[tauri::command]
-pub fn add_repo(path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<RepoDetail, String> {
+pub async fn add_repo(path: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<RepoDetail, String> {
+    let state = state.inner().clone();
     let path = std::path::PathBuf::from(&path);
-    register_repo(path, None, state)
+    tauri::async_runtime::spawn_blocking(move || {
+        register_repo(path, None, state)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -73,7 +78,7 @@ pub fn list_repos(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<RepoDeta
 pub(super) fn register_repo(
     path: std::path::PathBuf,
     gh_profile: Option<String>,
-    state: State<'_, Arc<Mutex<AppState>>>,
+    state: Arc<Mutex<AppState>>,
 ) -> Result<RepoDetail, String> {
     let path = path
         .canonicalize()
