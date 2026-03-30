@@ -1,10 +1,10 @@
-use crate::state::{AppState, WorkspaceInfo, WorkspaceStatus};
+use crate::state::{AppState, SourcePr, WorkspaceInfo, WorkspaceStatus};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 use uuid::Uuid;
 
-use super::helpers::{detect_default_branch, inject_shell_env, now_unix};
+use super::helpers::{detect_default_branch, extract_gh_nwo, inject_shell_env, now_unix, resolve_gh_token};
 
 // ── Random workspace names ───────────────────────────────────────────
 
@@ -232,6 +232,8 @@ pub async fn create_workspace(
         source_todo_id,
         custom_branch: custom_branch.is_some(),
         provider_override: None,
+        source_pr: None,
+        base_branch: None,
     };
 
     // Check if there's a setup script to run
@@ -269,6 +271,214 @@ pub async fn create_workspace(
     st.save_workspaces()?;
 
     tracing::info!("Created workspace {} ({})", ws.name, ws.id);
+    Ok(ws)
+}
+
+#[tauri::command]
+pub async fn create_workspace_from_pr(
+    repo_id: String,
+    pr_number: i64,
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<WorkspaceInfo, String> {
+    let (repo_path, gh_profile) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let repo = st.repos.get(&repo_id).ok_or("Repo not found")?;
+        (repo.path.clone(), repo.gh_profile.clone())
+    };
+
+    let gh_token = resolve_gh_token(&gh_profile);
+
+    // Fetch PR metadata via gh CLI
+    let nwo = extract_gh_nwo(&repo_path)
+        .ok_or("Could not determine GitHub owner/repo from remote URL")?;
+
+    let pr_detail = {
+        let mut cmd = std::process::Command::new("gh");
+        cmd.args([
+            "pr", "view",
+            &pr_number.to_string(),
+            "--repo", &nwo,
+            "--json", "number,title,headRefName,baseRefName,url,body",
+        ]);
+        inject_shell_env(&mut cmd);
+        if let Some(ref token) = &gh_token {
+            cmd.env("GH_TOKEN", token);
+        }
+
+        let output = cmd.output().map_err(|e| format!("Failed to run gh pr view: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Could not fetch PR #{}: {}", pr_number, stderr.trim()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let pr: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|e| format!("Failed to parse PR data: {}", e))?;
+
+        (
+            pr["title"].as_str().unwrap_or("").to_string(),
+            pr["headRefName"].as_str().unwrap_or("").to_string(),
+            pr["baseRefName"].as_str().unwrap_or("").to_string(),
+            pr["url"].as_str().unwrap_or("").to_string(),
+            pr["body"].as_str().unwrap_or("").to_string(),
+        )
+    };
+
+    let (pr_title, pr_branch, pr_base_branch, pr_url, pr_body) = pr_detail;
+
+    // Fetch the PR ref (fork-safe: uses pull/<number>/head)
+    let mut fetch_cmd = std::process::Command::new("git");
+    if let Some(ref token) = gh_token {
+        fetch_cmd.args([
+            "-c",
+            &format!(
+                "url.https://x-access-token:{}@github.com/.insteadOf=git@github.com:",
+                token
+            ),
+            "-c",
+            &format!(
+                "url.https://x-access-token:{}@github.com/.insteadOf=ssh://git@github.com/",
+                token
+            ),
+        ]);
+    }
+    fetch_cmd
+        .args(["fetch", "origin", &format!("pull/{}/head", pr_number)])
+        .current_dir(&repo_path);
+    inject_shell_env(&mut fetch_cmd);
+
+    let fetch_output = fetch_cmd
+        .output()
+        .map_err(|e| format!("Failed to fetch PR #{}: {}", pr_number, e))?;
+
+    if !fetch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+        return Err(format!(
+            "Could not fetch PR #{} from origin.\n{}",
+            pr_number,
+            stderr.trim()
+        ));
+    }
+
+    // Generate workspace name and branch
+    let worktree_base = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.worktree_dir()
+    };
+
+    let mut name = random_workspace_name();
+    for attempt in 0..10 {
+        let branch = format!("korlap/review-{}", name);
+        let check = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", &branch])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("Failed to run git: {}", e))?;
+
+        let folder_exists = worktree_base.join(&name).exists();
+
+        if !check.status.success() && !folder_exists {
+            break;
+        }
+
+        if attempt == 9 {
+            return Err("Could not generate a unique workspace name after 10 attempts".into());
+        }
+
+        name = format!(
+            "{}-{}",
+            random_workspace_name(),
+            &Uuid::new_v4().to_string()[..4]
+        );
+    }
+    let branch = format!("korlap/review-{}", name);
+
+    let id = Uuid::new_v4().to_string();
+    let worktree_path = worktree_base.join(&name);
+
+    std::fs::create_dir_all(worktree_path.parent().unwrap_or(&worktree_path))
+        .map_err(|e| e.to_string())?;
+
+    // Create worktree from FETCH_HEAD (the PR ref we just fetched)
+    let output = std::process::Command::new("git")
+        .args(["worktree", "add", "-b", &branch])
+        .arg(&worktree_path)
+        .arg("FETCH_HEAD")
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run git worktree add: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree add failed: {}", stderr.trim()));
+    }
+
+    // Truncate PR body for task_description (keep it reasonable for agent context)
+    let description = if pr_body.len() > 4000 {
+        format!("{}…", &pr_body[..4000])
+    } else {
+        pr_body
+    };
+
+    let ws = WorkspaceInfo {
+        id: id.clone(),
+        name: name.clone(),
+        branch,
+        worktree_path: worktree_path.clone(),
+        repo_id: repo_id.clone(),
+        gh_profile,
+        status: WorkspaceStatus::Waiting,
+        created_at: now_unix(),
+        task_title: Some(format!("Review PR #{}: {}", pr_number, pr_title)),
+        task_description: if description.is_empty() { None } else { Some(description) },
+        source_todo_id: None,
+        custom_branch: true, // prevent agent from renaming
+        provider_override: None,
+        source_pr: Some(SourcePr {
+            number: pr_number,
+            branch: pr_branch,
+            base_branch: pr_base_branch.clone(),
+            url: pr_url,
+            title: pr_title,
+        }),
+        base_branch: Some(pr_base_branch),
+    };
+
+    // Run setup script if configured
+    let (setup_script, default_branch) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        let script = st.repo_settings
+            .get(&repo_id)
+            .map(|s| s.setup_script.clone())
+            .unwrap_or_default();
+        let db = detect_default_branch(&repo_path).unwrap_or_else(|_| "main".to_string());
+        (script, db)
+    };
+
+    if !setup_script.trim().is_empty() {
+        tracing::info!("Running setup script for PR review workspace {}", ws.name);
+        let mut setup_cmd = std::process::Command::new("zsh");
+        setup_cmd.args(["-c", &setup_script]);
+        setup_cmd.current_dir(&worktree_path);
+        setup_cmd.env("KORLAP_WORKSPACE_NAME", &ws.name);
+        setup_cmd.env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string());
+        setup_cmd.env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string());
+        setup_cmd.env("KORLAP_DEFAULT_BRANCH", &default_branch);
+        inject_shell_env(&mut setup_cmd);
+        let output = setup_cmd.output();
+        if let Ok(ref out) = output {
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                tracing::warn!("Setup script failed: {}", stderr.trim());
+            }
+        }
+    }
+
+    let mut st = state.lock().map_err(|e| e.to_string())?;
+    st.workspaces.insert(id, ws.clone());
+    st.save_workspaces()?;
+
+    tracing::info!("Created PR review workspace {} for PR #{}", ws.name, pr_number);
     Ok(ws)
 }
 

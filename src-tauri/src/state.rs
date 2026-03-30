@@ -27,6 +27,15 @@ pub struct RepoInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcePr {
+    pub number: i64,
+    pub branch: String,
+    pub base_branch: String,
+    pub url: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceInfo {
     pub id: String,
     pub name: String,
@@ -46,6 +55,10 @@ pub struct WorkspaceInfo {
     pub custom_branch: bool,
     #[serde(default)]
     pub provider_override: Option<AgentProvider>,
+    #[serde(default)]
+    pub source_pr: Option<SourcePr>,
+    #[serde(default)]
+    pub base_branch: Option<String>,
 }
 
 pub fn effective_provider(ws: &WorkspaceInfo, settings: &RepoSettings) -> AgentProvider {

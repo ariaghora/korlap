@@ -87,7 +87,9 @@ pub async fn get_changed_files(
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        let base = ws.base_branch.clone()
+            .or_else(|| repo.default_branch.clone())
+            .unwrap_or_else(|| "main".to_string());
         (ws.worktree_path.clone(), base)
     };
 
@@ -181,7 +183,9 @@ pub async fn get_diff(
             .get(&workspace_id)
             .ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        let base = ws.base_branch.clone()
+            .or_else(|| repo.default_branch.clone())
+            .unwrap_or_else(|| "main".to_string());
         (ws.worktree_path.clone(), base)
     };
 
@@ -493,7 +497,9 @@ pub async fn check_base_updates(
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        let base = ws.base_branch.clone()
+            .or_else(|| repo.default_branch.clone())
+            .unwrap_or_else(|| "main".to_string());
         (ws.worktree_path.clone(), base, repo.gh_profile.clone())
     };
 
@@ -557,7 +563,9 @@ pub async fn update_from_base(
         let st = state.lock().map_err(|e| e.to_string())?;
         let ws = st.workspaces.get(&workspace_id).ok_or("Workspace not found")?;
         let repo = st.repos.get(&ws.repo_id).ok_or("Repo not found")?;
-        let base = repo.default_branch.clone().unwrap_or_else(|| "main".to_string());
+        let base = ws.base_branch.clone()
+            .or_else(|| repo.default_branch.clone())
+            .unwrap_or_else(|| "main".to_string());
         (ws.worktree_path.clone(), base, repo.gh_profile.clone())
     };
 

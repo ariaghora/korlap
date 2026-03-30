@@ -83,6 +83,7 @@ pub fn run() {
             commands::repo::list_repos,
             // workspace
             commands::workspace::create_workspace,
+            commands::workspace::create_workspace_from_pr,
             commands::workspace::remove_workspace,
             commands::workspace::list_workspaces,
             commands::workspace::rename_branch,
@@ -122,6 +123,8 @@ pub fn run() {
             commands::github::get_pr_status,
             commands::github::get_pr_template,
             commands::github::gh_pr_merge,
+            commands::github::list_repo_prs,
+            commands::github::get_pr_detail,
             // jira
             commands::jira::get_jira_issues,
             // agent

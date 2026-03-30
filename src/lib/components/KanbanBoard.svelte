@@ -7,8 +7,9 @@
   import TaskPopover, { type TaskData } from "./TaskPopover.svelte";
   import ManualCheckoutPopover, { type ManualCheckoutData } from "./ManualCheckoutPopover.svelte";
   import JiraImportPopover, { type JiraTaskData } from "./JiraImportPopover.svelte";
+  import PrCheckoutPopover from "./PrCheckoutPopover.svelte";
   import AutopilotPill, { type AutopilotEvent } from "./AutopilotPill.svelte";
-  import { Plus, Ellipsis, Trash2, GitBranch, Download } from "lucide-svelte";
+  import { Plus, Ellipsis, Trash2, GitBranch, GitPullRequest, Download } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
 
   interface TodoItem {
@@ -48,6 +49,7 @@
     onRemoveWorkspace: (wsId: string) => void;
     onRemoveAllDone: () => void;
     onManualCheckout: (data: ManualCheckoutData) => void;
+    onPrCheckout: (prNumber: number) => void;
     autopilotEnabled?: boolean;
     autopilotEvents?: AutopilotEvent[];
     autopilotActiveAgents?: number;
@@ -81,6 +83,7 @@
     onRemoveWorkspace,
     onRemoveAllDone,
     onManualCheckout,
+    onPrCheckout,
     autopilotEnabled = false,
     autopilotEvents = [],
     autopilotActiveAgents = 0,
@@ -94,6 +97,7 @@
 
   let showAddDialog = $state(false);
   let showManualCheckout = $state(false);
+  let showPrCheckout = $state(false);
   let showJiraImport = $state(false);
   let editingTodo = $state<TodoItem | null>(null);
   let showDoneMenu = $state(false);
@@ -144,7 +148,7 @@
   function handleBoardKeydown(e: KeyboardEvent) {
     if (!active) return;
     if (e.defaultPrevented) return;
-    if (showAddDialog || showManualCheckout || editingTodo || detailWs || showDoneMenu) return;
+    if (showAddDialog || showManualCheckout || showPrCheckout || editingTodo || detailWs || showDoneMenu) return;
 
     const target = e.target as HTMLElement;
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
@@ -253,6 +257,11 @@
   function handleManualCheckoutSubmit(data: ManualCheckoutData) {
     onManualCheckout(data);
     showManualCheckout = false;
+  }
+
+  function handlePrCheckoutSelect(prNumber: number) {
+    showPrCheckout = false;
+    onPrCheckout(prNumber);
   }
 
   function handleJiraImportSubmit(tasks: JiraTaskData[]) {
@@ -406,6 +415,14 @@
   />
 {/if}
 
+{#if showPrCheckout && repoId}
+  <PrCheckoutPopover
+    {repoId}
+    onSelect={handlePrCheckoutSelect}
+    onCancel={() => { showPrCheckout = false; }}
+  />
+{/if}
+
 {#if showJiraImport}
   <JiraImportPopover
     onSubmit={handleJiraImportSubmit}
@@ -465,6 +482,13 @@
     >
       <GitBranch size={12} />
       Manual checkout
+    </button>
+    <button
+      class="dropdown-item"
+      onclick={() => { showMoreMenu = false; showPrCheckout = true; }}
+    >
+      <GitPullRequest size={12} />
+      Review PR
     </button>
     <button
       class="dropdown-item"
