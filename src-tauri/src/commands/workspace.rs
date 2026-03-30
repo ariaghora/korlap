@@ -62,15 +62,20 @@ pub async fn create_workspace(
     let provider = providers.for_repo(&repo_path);
 
     // Resolve token early — if a profile is configured but the token can't be
-    // obtained, fail immediately rather than silently branching off stale data.
-    let gh_token = provider.resolve_token(&gh_profile);
-    if gh_profile.is_some() && gh_token.is_none() {
-        return Err(format!(
-            "Cannot authenticate as profile '{}'. \
-             Fix your auth or change the repo's profile.",
-            gh_profile.as_deref().unwrap_or("unknown")
-        ));
-    }
+    // obtained, fail immediately with diagnostic detail rather than silently
+    // branching off stale data.
+    let gh_token = match provider.resolve_token_strict(&gh_profile) {
+        Ok(token) => token,
+        Err(detail) => {
+            return Err(format!(
+                "Cannot authenticate as {} profile '{}'. \
+                 Fix your auth or change the repo's profile.\n{}",
+                provider.name(),
+                gh_profile.as_deref().unwrap_or("unknown"),
+                detail
+            ));
+        }
+    };
 
     let base_branch = detect_default_branch(&repo_path)?;
 

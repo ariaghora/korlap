@@ -41,15 +41,27 @@ impl GitServiceProvider for GitHubProvider {
 
     // ── Auth ──────────────────────────────────────────────────────
 
-    fn resolve_token(&self, profile: &Option<String>) -> Option<String> {
-        let profile = profile.as_ref()?;
+    fn resolve_token_strict(
+        &self,
+        profile: &Option<String>,
+    ) -> Result<Option<String>, String> {
+        let profile = match profile.as_ref() {
+            Some(p) => p,
+            None => return Ok(None),
+        };
         let mut cmd = Command::new("gh");
         cmd.args(["auth", "token", "--user", profile]);
         inject_shell_env(&mut cmd);
-        cmd.output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        let output = cmd
+            .output()
+            .map_err(|e| format!("Failed to run gh: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(stderr);
+        }
+        Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
     }
 
     fn list_profiles(&self) -> Result<Vec<ServiceProfile>, String> {

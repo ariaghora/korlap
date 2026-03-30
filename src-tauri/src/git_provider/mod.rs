@@ -91,9 +91,18 @@ pub trait GitServiceProvider: Send + Sync {
 
     // ── Auth ──────────────────────────────────────────────────────
 
-    /// Resolve an API token for the given profile. Returns `None` silently
-    /// when no profile is set or the token cannot be obtained.
-    fn resolve_token(&self, profile: &Option<String>) -> Option<String>;
+    /// Resolve an API token for the given profile, returning error detail
+    /// when a profile is configured but the token cannot be obtained.
+    /// Returns `Ok(None)` when no profile is set.
+    fn resolve_token_strict(
+        &self,
+        profile: &Option<String>,
+    ) -> Result<Option<String>, String>;
+
+    /// Convenience: resolve token silently (`None` on any failure).
+    fn resolve_token(&self, profile: &Option<String>) -> Option<String> {
+        self.resolve_token_strict(profile).ok().flatten()
+    }
 
     /// List authenticated profiles/accounts.
     fn list_profiles(&self) -> Result<Vec<ServiceProfile>, String>;
@@ -229,11 +238,10 @@ impl GitProviderRegistry {
 
 /// Read the origin remote URL from a repo. Returns None on failure.
 fn read_remote_url(path: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(path)
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("git");
+    cmd.args(["remote", "get-url", "origin"]).current_dir(path);
+    crate::commands::helpers::inject_shell_env(&mut cmd);
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }

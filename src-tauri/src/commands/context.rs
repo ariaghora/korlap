@@ -159,9 +159,10 @@ pub async fn regenerate_hot(
             Err(e) => tracing::warn!("git branch -r failed for hot.md: {}", e),
         }
 
-        // gh pr list
-        let gh_token = providers.for_repo(&repo_path).resolve_token(&gh_profile);
-        let mut gh_cmd = std::process::Command::new("gh");
+        // pr list via provider
+        let provider = providers.for_repo(&repo_path);
+        let gh_token = provider.resolve_token(&gh_profile);
+        let mut gh_cmd = provider.cli_cmd_with_auth(&repo_path, &gh_token);
         gh_cmd.args([
             "pr",
             "list",
@@ -170,11 +171,6 @@ pub async fn regenerate_hot(
             "--limit",
             "10",
         ]);
-        gh_cmd.current_dir(&repo_path);
-        inject_shell_env(&mut gh_cmd);
-        if let Some(ref token) = gh_token {
-            gh_cmd.env("GH_TOKEN", token);
-        }
         match gh_cmd.output() {
             Ok(o) if o.status.success() => {
                 let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
