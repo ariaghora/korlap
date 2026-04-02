@@ -2598,10 +2598,11 @@
               sendPrompt(wsId, "Execute the plan above. Do not ask for confirmation — just do it.", "Executing plan");
             }}
             onChatReady={(wsId, api) => chatPanelApis.set(wsId, api)}
-            onDiffQuote={(text) => {
+            onDiffQuote={async (text) => {
               if (selectedWsId) {
-                chatPanelApis.get(selectedWsId)?.insertText(text);
                 chatExpanded = true;
+                await tick();
+                chatPanelApis.get(selectedWsId)?.insertText(text);
               }
             }}
             onReviewCancel={(wsId) => {
