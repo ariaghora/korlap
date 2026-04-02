@@ -152,6 +152,7 @@
           mentionInputApi?.focus();
         },
         refreshSuggestions,
+        focusInput: () => mentionInputApi?.focus(),
       });
     }
   });

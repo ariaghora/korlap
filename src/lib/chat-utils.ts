@@ -43,6 +43,8 @@ export interface ChatPanelApi {
   insertText: (text: string) => void;
   /** Call when the agent finishes to trigger AI-powered suggestion generation. */
   refreshSuggestions: () => void;
+  /** Focus the chat input field. */
+  focusInput: () => void;
 }
 
 export interface QueueDisplayItem {

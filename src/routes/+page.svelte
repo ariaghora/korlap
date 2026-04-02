@@ -813,6 +813,15 @@
             terminalPaneVisible = !terminalPaneVisible;
           }
           break;
+        case "j":
+          if (appMode === "work") {
+            e.preventDefault();
+            chatExpanded = !chatExpanded;
+            if (chatExpanded && selectedWsId) {
+              tick().then(() => chatPanelApis.get(selectedWsId!)?.focusInput());
+            }
+          }
+          break;
       }
     }
 
