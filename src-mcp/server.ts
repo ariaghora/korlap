@@ -55,7 +55,7 @@ const server = new McpServer({
 
 server.tool(
   "rename_branch",
-  "Rename the current workspace branch. Use this to give the branch a meaningful name based on the task. Call this early in the conversation once you understand what the user wants. Use conventional naming: feat/..., fix/..., refactor/..., chore/..., etc. Keep it concise (<30 chars).",
+  "Rename the current workspace branch. The branch is auto-named when a session starts, but call this if the auto-name is wrong or the task scope changes. Use conventional naming: feat/..., fix/..., refactor/..., chore/..., etc. Keep it concise (<30 chars).",
   {
     new_name: z.string().describe(
       "The new branch name, e.g. 'feat/add-auth-middleware' or 'fix/login-redirect'"
