@@ -276,6 +276,13 @@ pub fn send_message(
         None
     };
 
+    let is_new_session = session_id.is_none();
+    let prompt_for_rename = if is_new_session && !is_custom_branch {
+        Some(prompt.clone())
+    } else {
+        None
+    };
+
     let images_dir = data_dir.join("images");
     let ctx = SessionContext {
         prompt,
@@ -326,6 +333,18 @@ pub fn send_message(
             "status": "running"
         }),
     );
+
+    // Auto-rename branch on first message (unless manually named)
+    if let Some(rename_prompt) = prompt_for_rename {
+        let state_arc = state.inner().clone();
+        spawn_auto_rename(
+            rename_prompt,
+            workspace_id.clone(),
+            worktree_path.clone(),
+            state_arc,
+            app.clone(),
+        );
+    }
 
     // Read stdout in background thread — provider-agnostic via backend.parse_stream_line()
     let ws_id = workspace_id.clone();
@@ -522,8 +541,8 @@ fn build_system_prompt(
     let wt_display = worktree_path.to_string_lossy();
     let repo_display = repo_path.to_string_lossy();
     let rename_instruction = if !is_custom_branch {
-        "FIRST PRIORITY: Call rename_branch immediately with a conventional name (feat/, fix/, refactor/, chore/). \
-         Rename again if scope changes."
+        "Branch will be auto-renamed based on your task. \
+         If the auto-name is wrong, call rename_branch to fix it."
     } else {
         "Branch was manually named. Do NOT rename unless explicitly asked."
     };
@@ -876,6 +895,125 @@ pub async fn suggest_replies(text: String) -> Result<Vec<String>, String> {
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
+}
+
+// ── Auto branch rename ──────────────────────────────────────────────
+
+/// Generate a branch name from the user's prompt using Haiku, then rename.
+/// Runs in a background thread so it doesn't block the agent.
+fn spawn_auto_rename(
+    prompt: String,
+    workspace_id: String,
+    worktree_path: std::path::PathBuf,
+    state: Arc<Mutex<AppState>>,
+    app: AppHandle,
+) {
+    std::thread::spawn(move || {
+        let claude_bin = get_shell_env()
+            .claude_path
+            .as_deref()
+            .unwrap_or("claude")
+            .to_string();
+
+        let system_prompt = "You are a branch name generator. Given a task description, output ONLY a git branch name.\n\
+            Rules:\n\
+            - Use conventional prefix: feat/, fix/, refactor/, chore/, docs/\n\
+            - Use kebab-case after the prefix\n\
+            - Keep it concise: max 5 words after prefix\n\
+            - No quotes, no explanation, just the branch name\n\
+            Examples: feat/add-auth-middleware, fix/login-redirect, refactor/split-utils";
+
+        let mut cmd = std::process::Command::new(&claude_bin);
+        cmd.arg("-p").arg(&prompt);
+        cmd.args(["--output-format", "text"]);
+        cmd.args(["--model", "claude-haiku-4-5-20251001"]);
+        cmd.args(["--max-turns", "1"]);
+        cmd.args(["--max-tokens", "50"]);
+        cmd.arg("--system-prompt").arg(system_prompt);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+        inject_shell_env(&mut cmd);
+
+        let child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Auto-rename: failed to spawn claude: {}", e);
+                return;
+            }
+        };
+
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let output = child.wait_with_output();
+            let _ = tx.send(output);
+        });
+
+        let branch_name = match rx.recv_timeout(std::time::Duration::from_secs(15)) {
+            Ok(Ok(output)) if output.status.success() => {
+                let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                // Sanitize: strip backticks/quotes, keep only valid branch chars
+                let cleaned = raw
+                    .trim_matches(|c: char| c == '`' || c == '\'' || c == '"' || c.is_whitespace())
+                    .to_string();
+                if cleaned.is_empty() || !cleaned.contains('/') || cleaned.len() > 60 {
+                    tracing::warn!("Auto-rename: invalid branch name from LLM: {:?}", raw);
+                    return;
+                }
+                cleaned
+            }
+            Ok(Ok(_)) => {
+                tracing::warn!("Auto-rename: claude exited with non-zero status");
+                return;
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("Auto-rename: claude failed: {}", e);
+                return;
+            }
+            Err(_) => {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+                tracing::warn!("Auto-rename: timed out");
+                return;
+            }
+        };
+
+        // Perform the rename
+        let fallback_branch = {
+            let st = match state.lock() {
+                Ok(st) => st,
+                Err(_) => return,
+            };
+            match st.workspaces.get(&workspace_id) {
+                Some(ws) => ws.branch.clone(),
+                None => return,
+            }
+        };
+
+        if let Err(e) = crate::state::rename_git_branch(&worktree_path, &branch_name, &fallback_branch) {
+            tracing::warn!("Auto-rename: git rename failed: {}", e);
+            return;
+        }
+
+        // Update state
+        if let Ok(mut st) = state.lock() {
+            if let Some(ws) = st.workspaces.get_mut(&workspace_id) {
+                ws.branch = branch_name.clone();
+                ws.name = branch_name.clone();
+                let _ = st.save_workspaces();
+            }
+        }
+
+        // Notify frontend
+        if let Ok(st) = state.lock() {
+            if let Some(ws) = st.workspaces.get(&workspace_id) {
+                let _ = app.emit("workspace-updated", ws.clone());
+            }
+        }
+
+        tracing::info!("Auto-renamed branch to: {}", branch_name);
+    });
 }
 
 // ── Autopilot utilities ──────────────────────────────────────────────
