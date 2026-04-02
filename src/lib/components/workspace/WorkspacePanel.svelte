@@ -704,7 +704,7 @@
                   <button
                     class="chat-overlay-btn"
                     onclick={() => onChatExpandedChange(false)}
-                    use:tooltip={{ text: "Collapse chat" }}
+                    use:tooltip={{ text: "Collapse chat", shortcut: "⌘J" }}
                   >
                     <Minus size={14} />
                   </button>
@@ -742,7 +742,7 @@
               class="chat-pill"
               class:chat-pill-active={isAgentRunning}
               onclick={() => { focusedPanel = "chat"; onChatExpandedChange(true); }}
-              use:tooltip={{ text: "Open chat" }}
+              use:tooltip={{ text: "Open chat", shortcut: "⌘J" }}
               style={chatDragOffset.x || chatDragOffset.y ? `transform: translate(${chatDragOffset.x}px, ${chatDragOffset.y}px)` : ""}
             >
               {#if isAgentRunning}
