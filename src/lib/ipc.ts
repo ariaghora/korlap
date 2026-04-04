@@ -34,6 +34,7 @@ export interface WorkspaceInfo {
   custom_branch?: boolean;
   provider_override?: AgentProvider | null;
   source_pr?: SourcePr | null;
+  source_prs?: SourcePr[] | null;
   base_branch?: string | null;
 }
 
@@ -675,6 +676,13 @@ export async function createWorkspaceFromPr(
   prNumber: number,
 ): Promise<WorkspaceInfo> {
   return invoke<WorkspaceInfo>("create_workspace_from_pr", { repoId, prNumber });
+}
+
+export async function createComboWorkspace(
+  repoId: string,
+  prNumbers: number[],
+): Promise<WorkspaceInfo> {
+  return invoke<WorkspaceInfo>("create_combo_workspace", { repoId, prNumbers });
 }
 
 // ── Repo Settings ────────────────────────────────────────────────────

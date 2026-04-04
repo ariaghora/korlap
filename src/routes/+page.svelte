@@ -8,6 +8,7 @@
     listRepos,
     createWorkspace,
     createWorkspaceFromPr,
+    createComboWorkspace,
     removeWorkspace,
     listWorkspaces,
     sendMessage,
@@ -1033,6 +1034,45 @@
     chatExpanded = true;
 
     createWorkspaceFromPr(repoId, prNumber)
+      .then((ws) => {
+        const idx = workspaces.findIndex((w) => w.id === tempId);
+        if (idx >= 0) workspaces[idx] = ws;
+        selectedWsId = ws.id;
+        creatingWsId = null;
+      })
+      .catch((e) => {
+        const failIdx = workspaces.findIndex((w) => w.id === tempId);
+        if (failIdx >= 0) workspaces.splice(failIdx, 1);
+        if (selectedWsId === tempId) selectedWsId = null;
+        creatingWsId = null;
+        addToast(String(e));
+      });
+  }
+
+  function handleComboCheckout(prNumbers: number[]) {
+    if (!activeRepo || creatingWsId) return;
+
+    const repoId = activeRepo.id;
+    const tempId = `creating-${crypto.randomUUID()}`;
+    const label = prNumbers.map((n) => `#${n}`).join(" + ");
+    const placeholder: WorkspaceInfo = {
+      id: tempId,
+      name: `Combo (${prNumbers.length} PRs)`,
+      branch: "",
+      worktree_path: "",
+      repo_id: repoId,
+      gh_profile: null,
+      status: "waiting",
+      created_at: Date.now() / 1000,
+      task_title: `Combo: ${label}`,
+    };
+    creatingWsId = tempId;
+    workspaces.push(placeholder);
+    selectWorkspace(tempId);
+    appMode = "work";
+    chatExpanded = true;
+
+    createComboWorkspace(repoId, prNumbers)
       .then((ws) => {
         const idx = workspaces.findIndex((w) => w.id === tempId);
         if (idx >= 0) workspaces[idx] = ws;
@@ -2646,6 +2686,7 @@
             onRemoveAllDone={handleRemoveAllDone}
             onManualCheckout={handleManualCheckout}
             onPrCheckout={handlePrCheckout}
+            onComboCheckout={handleComboCheckout}
             {autopilotEnabled}
             {autopilotEvents}
             autopilotActiveAgents={activeAgentCount}

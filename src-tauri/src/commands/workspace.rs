@@ -212,6 +212,7 @@ pub async fn create_workspace(
         custom_branch: custom_branch.is_some(),
         provider_override: None,
         source_pr: None,
+        source_prs: None,
         base_branch: None,
     };
 
@@ -378,6 +379,7 @@ pub async fn create_workspace_from_pr(
             url: pr_url,
             title: pr_title,
         }),
+        source_prs: None,
         base_branch: Some(pr_base_branch),
     };
 
@@ -416,6 +418,442 @@ pub async fn create_workspace_from_pr(
     st.save_workspaces()?;
 
     tracing::info!("Created PR review workspace {} for PR #{}", ws.name, pr_number);
+    Ok(ws)
+}
+
+#[tauri::command]
+pub async fn create_combo_workspace(
+    repo_id: String,
+    pr_numbers: Vec<i64>,
+    state: State<'_, Arc<Mutex<AppState>>>,
+    providers: State<'_, SharedProviderRegistry>,
+) -> Result<WorkspaceInfo, String> {
+    // Deduplicate and validate
+    let mut seen = std::collections::HashSet::new();
+    let pr_numbers: Vec<i64> = pr_numbers.into_iter().filter(|n| seen.insert(*n)).collect();
+    if pr_numbers.len() < 2 {
+        return Err(format!(
+            "At least 2 PRs are required for a combo workspace (got {})",
+            pr_numbers.len()
+        ));
+    }
+
+    let (repo_path, gh_profile) = {
+        let st = state.lock().map_err(|e| format!("Failed to lock app state: {}", e))?;
+        let repo = st.repos.get(&repo_id).ok_or_else(|| format!(
+            "Repo '{}' not found in app state — was it removed?", repo_id
+        ))?;
+        (repo.path.clone(), repo.gh_profile.clone())
+    };
+
+    let provider = providers.for_repo(&repo_path);
+    let gh_token = provider.resolve_token(&gh_profile);
+
+    let nwo = provider
+        .extract_repo_id(&repo_path)
+        .ok_or_else(|| format!(
+            "Could not determine owner/repo from git remote in {}",
+            repo_path.display()
+        ))?;
+
+    // Fetch PR details for all selected PRs
+    let mut source_prs = Vec::with_capacity(pr_numbers.len());
+    for &pr_num in &pr_numbers {
+        let detail = provider
+            .get_pr_detail(&repo_path, &nwo, pr_num, &gh_token)
+            .map_err(|e| format!(
+                "Could not fetch details for PR #{} from {}: {}", pr_num, nwo, e
+            ))?;
+        source_prs.push(SourcePr {
+            number: pr_num,
+            branch: detail.branch,
+            base_branch: detail.base_branch,
+            url: detail.url,
+            title: detail.title,
+        });
+    }
+
+    // Topologically sort PRs by dependency chain.
+    // A PR depends on another if its base_branch matches the other's branch.
+    // PRs targeting the default branch (or any branch not in the selection) come first.
+    let base_branch = detect_default_branch(&repo_path)?;
+
+    // Build a map from branch name to index for PRs in the selection
+    let branch_to_idx: std::collections::HashMap<&str, usize> = source_prs
+        .iter()
+        .enumerate()
+        .map(|(i, pr)| (pr.branch.as_str(), i))
+        .collect();
+
+    // Warn about missing dependencies: if a PR targets a branch that isn't the
+    // default branch and isn't provided by another PR in the selection
+    for pr in &source_prs {
+        if pr.base_branch != base_branch && !branch_to_idx.contains_key(pr.base_branch.as_str()) {
+            return Err(format!(
+                "PR #{} ({}) targets branch '{}' which is not the default branch and not provided by any other selected PR. \
+                 You may need to include its parent PR in the combo.",
+                pr.number, pr.title, pr.base_branch
+            ));
+        }
+    }
+
+    // Topological sort via Kahn's algorithm
+    let n = source_prs.len();
+    let mut in_degree = vec![0usize; n];
+    let mut dependents: Vec<Vec<usize>> = vec![vec![]; n];
+
+    for (i, pr) in source_prs.iter().enumerate() {
+        if let Some(&dep_idx) = branch_to_idx.get(pr.base_branch.as_str()) {
+            // PR i depends on PR dep_idx (i's base is dep_idx's branch)
+            in_degree[i] += 1;
+            dependents[dep_idx].push(i);
+        }
+    }
+
+    let mut queue: std::collections::VecDeque<usize> = in_degree
+        .iter()
+        .enumerate()
+        .filter(|(_, &d)| d == 0)
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut sorted_indices = Vec::with_capacity(n);
+    while let Some(idx) = queue.pop_front() {
+        sorted_indices.push(idx);
+        for &dep in &dependents[idx] {
+            in_degree[dep] -= 1;
+            if in_degree[dep] == 0 {
+                queue.push_back(dep);
+            }
+        }
+    }
+
+    if sorted_indices.len() != n {
+        let cycle_prs: Vec<String> = in_degree
+            .iter()
+            .enumerate()
+            .filter(|(_, &d)| d > 0)
+            .map(|(i, _)| format!("#{} ({})", source_prs[i].number, source_prs[i].branch))
+            .collect();
+        return Err(format!(
+            "Circular dependency detected among PRs: {}",
+            cycle_prs.join(" → ")
+        ));
+    }
+
+    // Reorder source_prs by topological order
+    let source_prs: Vec<SourcePr> = sorted_indices
+        .iter()
+        .map(|&i| source_prs[i].clone())
+        .collect();
+    let mut fetch_cmd = provider.git_cmd_with_auth(&repo_path, &gh_token);
+    fetch_cmd.args(["fetch", "origin", &base_branch]);
+    let fetch_output = fetch_cmd
+        .output()
+        .map_err(|e| format!("Failed to spawn 'git fetch origin {}': {}", base_branch, e))?;
+    if !fetch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+        return Err(format!(
+            "git fetch origin {} failed (exit {}):\n{}",
+            base_branch,
+            fetch_output.status.code().map_or("unknown".to_string(), |c| c.to_string()),
+            stderr.trim()
+        ));
+    }
+
+    // Generate unique workspace name
+    let worktree_base = {
+        let st = state.lock().map_err(|e| format!("Failed to lock app state: {}", e))?;
+        st.worktree_dir()
+    };
+
+    let mut name = random_workspace_name();
+    for attempt in 0..10 {
+        let branch = format!("korlap/combo-{}", name);
+        let check = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", &branch])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("Failed to spawn 'git rev-parse': {}", e))?;
+
+        let folder_exists = worktree_base.join(&name).exists();
+
+        if !check.status.success() && !folder_exists {
+            break;
+        }
+
+        if attempt == 9 {
+            return Err(format!(
+                "Could not generate a unique combo workspace name after 10 attempts — \
+                 last tried branch 'korlap/combo-{}' and path '{}'",
+                name, worktree_base.join(&name).display()
+            ));
+        }
+
+        name = format!(
+            "{}-{}",
+            random_workspace_name(),
+            &Uuid::new_v4().to_string()[..4]
+        );
+    }
+    let branch = format!("korlap/combo-{}", name);
+    let id = Uuid::new_v4().to_string();
+    let worktree_path = worktree_base.join(&name);
+    let start_point = format!("origin/{}", base_branch);
+
+    std::fs::create_dir_all(worktree_path.parent().unwrap_or(&worktree_path))
+        .map_err(|e| format!(
+            "Failed to create worktree parent directory '{}': {}",
+            worktree_path.parent().map_or("?".to_string(), |p| p.display().to_string()),
+            e
+        ))?;
+
+    let output = std::process::Command::new("git")
+        .args(["worktree", "add", "-b", &branch])
+        .arg(&worktree_path)
+        .arg(&start_point)
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!(
+            "Failed to spawn 'git worktree add -b {} {} {}': {}",
+            branch, worktree_path.display(), start_point, e
+        ))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "git worktree add failed (exit {}):\n  branch: {}\n  path: {}\n  start: {}\n  error: {}",
+            output.status.code().map_or("unknown".to_string(), |c| c.to_string()),
+            branch,
+            worktree_path.display(),
+            start_point,
+            stderr.trim()
+        ));
+    }
+
+    // Sequentially fetch and merge each PR
+    for (merge_idx, spr) in source_prs.iter().enumerate() {
+        let pr_ref = format!("pull/{}/head", spr.number);
+        let mut fetch_pr = provider.git_cmd_with_auth(&repo_path, &gh_token);
+        fetch_pr.args(["fetch", "origin", &pr_ref]);
+        let fetch_out = fetch_pr
+            .output()
+            .map_err(|e| format!(
+                "Failed to spawn 'git fetch origin {}': {}", pr_ref, e
+            ))?;
+
+        if !fetch_out.status.success() {
+            // Cleanup worktree + branch
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(&worktree_path)
+                .current_dir(&repo_path)
+                .output();
+            let _ = std::process::Command::new("git")
+                .args(["branch", "-D", &branch])
+                .current_dir(&repo_path)
+                .output();
+            let stderr = String::from_utf8_lossy(&fetch_out.stderr);
+            let already = if merge_idx > 0 {
+                let done: Vec<String> = source_prs[..merge_idx]
+                    .iter()
+                    .map(|p| format!("#{}", p.number))
+                    .collect();
+                format!("\n\nAlready merged: {}", done.join(", "))
+            } else {
+                String::new()
+            };
+            return Err(format!(
+                "Could not fetch PR #{} ({}) via refs/pull/{}/head (exit {}):\n{}{}",
+                spr.number, spr.title, spr.number,
+                fetch_out.status.code().map_or("unknown".to_string(), |c| c.to_string()),
+                stderr.trim(),
+                already
+            ));
+        }
+
+        // Resolve FETCH_HEAD to a commit SHA in repo_path (where fetch wrote it).
+        // We can't use the symbolic "FETCH_HEAD" in the worktree because git writes
+        // FETCH_HEAD to the main repo's .git dir, not the worktree's gitdir.
+        let rev_parse = std::process::Command::new("git")
+            .args(["rev-parse", "FETCH_HEAD"])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!(
+                "Failed to resolve FETCH_HEAD after fetching PR #{}: {}", spr.number, e
+            ))?;
+        if !rev_parse.status.success() {
+            let stderr = String::from_utf8_lossy(&rev_parse.stderr);
+            // Cleanup worktree + branch
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(&worktree_path)
+                .current_dir(&repo_path)
+                .output();
+            let _ = std::process::Command::new("git")
+                .args(["branch", "-D", &branch])
+                .current_dir(&repo_path)
+                .output();
+            return Err(format!(
+                "Failed to resolve FETCH_HEAD for PR #{} ({}): {}",
+                spr.number, spr.title, stderr.trim()
+            ));
+        }
+        let commit_sha = String::from_utf8_lossy(&rev_parse.stdout).trim().to_string();
+
+        let mut merge_cmd = std::process::Command::new("git");
+        merge_cmd
+            .args(["merge", &commit_sha, "--no-edit"])
+            .current_dir(&worktree_path);
+        inject_shell_env(&mut merge_cmd);
+        let merge_out = merge_cmd
+            .output()
+            .map_err(|e| format!(
+                "Failed to spawn 'git merge {}' for PR #{}: {}", commit_sha, spr.number, e
+            ))?;
+
+        if !merge_out.status.success() {
+            // Extract conflicting file names via ls-files --unmerged (reliable during conflict)
+            let unmerged_output = std::process::Command::new("git")
+                .args(["ls-files", "--unmerged", "--deduplicate"])
+                .current_dir(&worktree_path)
+                .output();
+            // ls-files --unmerged output: "<mode> <hash> <stage>\t<file>"
+            let conflict_files: Vec<String> = unmerged_output
+                .ok()
+                .map(|o| {
+                    let raw = String::from_utf8_lossy(&o.stdout);
+                    let mut files: Vec<String> = raw
+                        .lines()
+                        .filter_map(|line| line.split('\t').nth(1).map(String::from))
+                        .collect();
+                    files.sort();
+                    files.dedup();
+                    files
+                })
+                .unwrap_or_default();
+
+            // Also capture the merge output for additional context
+            let merge_stdout = String::from_utf8_lossy(&merge_out.stdout);
+            let merge_stderr = String::from_utf8_lossy(&merge_out.stderr);
+
+            // Abort the failed merge
+            let mut abort_cmd = std::process::Command::new("git");
+            abort_cmd.args(["merge", "--abort"]).current_dir(&worktree_path);
+            inject_shell_env(&mut abort_cmd);
+            let _ = abort_cmd.output();
+
+            // Cleanup worktree + branch
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(&worktree_path)
+                .current_dir(&repo_path)
+                .output();
+            let _ = std::process::Command::new("git")
+                .args(["branch", "-D", &branch])
+                .current_dir(&repo_path)
+                .output();
+
+            let file_section = if conflict_files.is_empty() {
+                // Fallback: show raw merge output if ls-files didn't find anything
+                let raw = format!("{}\n{}", merge_stdout.trim(), merge_stderr.trim());
+                let raw = raw.trim();
+                if raw.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\ngit merge output:\n{}", raw)
+                }
+            } else {
+                format!("\n\nConflicting files:\n{}", conflict_files
+                    .iter()
+                    .map(|f| format!("  • {}", f))
+                    .collect::<Vec<_>>()
+                    .join("\n"))
+            };
+
+            let already = if merge_idx > 0 {
+                let done: Vec<String> = source_prs[..merge_idx]
+                    .iter()
+                    .map(|p| format!("#{}", p.number))
+                    .collect();
+                format!("\nSuccessfully merged before conflict: {}", done.join(", "))
+            } else {
+                String::new()
+            };
+
+            return Err(format!(
+                "Merge conflict when adding PR #{} ({}) [{}/{}].{}{}",
+                spr.number, spr.title,
+                merge_idx + 1, source_prs.len(),
+                file_section, already
+            ));
+        }
+    }
+
+    // Build task description from PR list
+    let pr_summary: Vec<String> = source_prs
+        .iter()
+        .map(|p| format!("- PR #{}: {} ({})", p.number, p.title, p.url))
+        .collect();
+    let task_description = format!("Combined PRs for integration testing:\n{}", pr_summary.join("\n"));
+
+    let pr_titles: Vec<String> = source_prs.iter().map(|p| format!("#{}", p.number)).collect();
+    let task_title = format!("Combo: {}", pr_titles.join(" + "));
+
+    let ws = WorkspaceInfo {
+        id: id.clone(),
+        name: name.clone(),
+        branch,
+        worktree_path: worktree_path.clone(),
+        repo_id: repo_id.clone(),
+        gh_profile,
+        status: WorkspaceStatus::Waiting,
+        created_at: now_unix(),
+        task_title: Some(task_title),
+        task_description: Some(task_description),
+        source_todo_id: None,
+        custom_branch: true,
+        provider_override: None,
+        source_pr: None,
+        source_prs: Some(source_prs),
+        base_branch: Some(base_branch.clone()),
+    };
+
+    // Run setup script if configured
+    let setup_script = {
+        let st = state.lock().map_err(|e| format!("Failed to lock app state: {}", e))?;
+        st.repo_settings
+            .get(&repo_id)
+            .map(|s| s.setup_script.clone())
+            .unwrap_or_default()
+    };
+
+    if !setup_script.trim().is_empty() {
+        tracing::info!("Running setup script for combo workspace {}", ws.name);
+        let mut setup_cmd = std::process::Command::new("zsh");
+        setup_cmd.args(["-c", &setup_script]);
+        setup_cmd.current_dir(&worktree_path);
+        setup_cmd.env("KORLAP_WORKSPACE_NAME", &ws.name);
+        setup_cmd.env("KORLAP_WORKSPACE_PATH", &worktree_path.to_string_lossy().to_string());
+        setup_cmd.env("KORLAP_ROOT_PATH", repo_path.to_string_lossy().to_string());
+        setup_cmd.env("KORLAP_DEFAULT_BRANCH", &base_branch);
+        inject_shell_env(&mut setup_cmd);
+        let output = setup_cmd.output();
+        if let Ok(ref out) = output {
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                tracing::warn!("Setup script failed: {}", stderr.trim());
+            }
+        }
+    }
+
+    let mut st = state.lock().map_err(|e| format!("Failed to lock app state: {}", e))?;
+    st.workspaces.insert(id, ws.clone());
+    st.save_workspaces().map_err(|e| format!(
+        "Combo workspace created successfully but failed to persist metadata: {}", e
+    ))?;
+
+    tracing::info!("Created combo workspace {} with {} PRs", ws.name, ws.source_prs.as_ref().map_or(0, |v| v.len()));
     Ok(ws)
 }
 

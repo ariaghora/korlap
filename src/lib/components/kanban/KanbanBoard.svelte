@@ -8,8 +8,9 @@
   import ManualCheckoutPopover, { type ManualCheckoutData } from "./ManualCheckoutPopover.svelte";
   import JiraImportPopover, { type JiraTaskData } from "./JiraImportPopover.svelte";
   import PrCheckoutPopover from "./PrCheckoutPopover.svelte";
+  import ComboPrCheckoutPopover from "./ComboPrCheckoutPopover.svelte";
   import AutopilotPill, { type AutopilotEvent } from "./AutopilotPill.svelte";
-  import { Plus, Ellipsis, Trash2, GitBranch, GitPullRequest, Download } from "lucide-svelte";
+  import { Plus, Ellipsis, Trash2, GitBranch, GitPullRequest, GitMerge, Download } from "lucide-svelte";
   import { tooltip } from "$lib/actions";
 
   interface TodoItem {
@@ -50,6 +51,7 @@
     onRemoveAllDone: () => void;
     onManualCheckout: (data: ManualCheckoutData) => void;
     onPrCheckout: (prNumber: number) => void;
+    onComboCheckout: (prNumbers: number[]) => void;
     autopilotEnabled?: boolean;
     autopilotEvents?: AutopilotEvent[];
     autopilotActiveAgents?: number;
@@ -84,6 +86,7 @@
     onRemoveAllDone,
     onManualCheckout,
     onPrCheckout,
+    onComboCheckout,
     autopilotEnabled = false,
     autopilotEvents = [],
     autopilotActiveAgents = 0,
@@ -98,6 +101,7 @@
   let showAddDialog = $state(false);
   let showManualCheckout = $state(false);
   let showPrCheckout = $state(false);
+  let showComboCheckout = $state(false);
   let showJiraImport = $state(false);
   let editingTodo = $state<TodoItem | null>(null);
   let showDoneMenu = $state(false);
@@ -264,6 +268,11 @@
     onPrCheckout(prNumber);
   }
 
+  function handleComboSubmit(prNumbers: number[]) {
+    showComboCheckout = false;
+    onComboCheckout(prNumbers);
+  }
+
   function handleJiraImportSubmit(tasks: JiraTaskData[]) {
     for (const task of tasks) {
       onNewTodo(task);
@@ -423,6 +432,14 @@
   />
 {/if}
 
+{#if showComboCheckout && repoId}
+  <ComboPrCheckoutPopover
+    {repoId}
+    onSubmit={handleComboSubmit}
+    onCancel={() => { showComboCheckout = false; }}
+  />
+{/if}
+
 {#if showJiraImport}
   <JiraImportPopover
     onSubmit={handleJiraImportSubmit}
@@ -489,6 +506,13 @@
     >
       <GitPullRequest size={12} />
       Review PR
+    </button>
+    <button
+      class="dropdown-item"
+      onclick={() => { showMoreMenu = false; showComboCheckout = true; }}
+    >
+      <GitMerge size={12} />
+      Combo PRs
     </button>
     <button
       class="dropdown-item"
