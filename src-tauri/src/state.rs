@@ -58,6 +58,8 @@ pub struct WorkspaceInfo {
     #[serde(default)]
     pub source_pr: Option<SourcePr>,
     #[serde(default)]
+    pub source_prs: Option<Vec<SourcePr>>,
+    #[serde(default)]
     pub base_branch: Option<String>,
 }
 

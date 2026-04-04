@@ -86,6 +86,7 @@ pub fn run() {
             // workspace
             commands::workspace::create_workspace,
             commands::workspace::create_workspace_from_pr,
+            commands::workspace::create_combo_workspace,
             commands::workspace::remove_workspace,
             commands::workspace::list_workspaces,
             commands::workspace::rename_branch,

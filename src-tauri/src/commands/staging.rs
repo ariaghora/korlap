@@ -201,6 +201,7 @@ pub async fn create_staging_workspace(
         custom_branch: false,
         provider_override: None,
         source_pr: None,
+        source_prs: None,
         base_branch: None,
     };
 
