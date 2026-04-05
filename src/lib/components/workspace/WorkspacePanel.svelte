@@ -675,67 +675,7 @@
         {@const isActive = ws.id === selectedWsId}
         {@const isAgentRunning = ws.status === "running"}
         {#if isActive}
-          {#if chatExpanded}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="chat-overlay"
-              class:panel-focused={focusedPanel === "chat"}
-              onmousedown={() => { focusedPanel = "chat"; }}
-              use:draggable={{ handle: ".chat-overlay-header", offset: chatDragOffset, onDrag: (o) => { chatDragOffset = o; } }}
-              use:resizable={{ minWidth: 380, minHeight: 280, onResizeStart: onChatResizeStart, onResize: onChatResize }}
-              style:width={chatSize ? `${chatSize.w}px` : undefined}
-              style:height={chatSize ? `${chatSize.h}px` : undefined}
-            >
-              <div class="chat-overlay-header">
-                <span class="chat-overlay-title">
-                  <MessageSquare size={13} strokeWidth={2} />
-                  Chat
-                </span>
-                <div class="chat-overlay-actions">
-                  {#if chatDragOffset.x || chatDragOffset.y || chatSize}
-                    <button
-                      class="chat-overlay-btn"
-                      onclick={() => { chatDragOffset = { x: 0, y: 0 }; chatSize = null; }}
-                      use:tooltip={{ text: "Reset position and size" }}
-                    >
-                      <RefreshCcw size={12} />
-                    </button>
-                  {/if}
-                  <button
-                    class="chat-overlay-btn"
-                    onclick={() => onChatExpandedChange(false)}
-                    use:tooltip={{ text: "Collapse chat", shortcut: "⌘J" }}
-                  >
-                    <Minus size={14} />
-                  </button>
-                </div>
-              </div>
-              <div class="chat-overlay-body">
-                <ChatPanel
-                  workspaceId={ws.id}
-                  creating={ws.id === creatingWsId}
-                  planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
-                  thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
-                  model={modelByWorkspace.get(ws.id) ?? ""}
-                  queue={getQueueItems(ws.id)}
-                  {contextWarning}
-                  providerInfo={providerInfoByWorkspace.get(ws.id) ?? null}
-                  onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
-                  onSendImmediate={(prompt) => onSendImmediate(prompt)}
-                  {onStop}
-                  onSendNow={(id) => { if (ws.id) onSendNow(ws.id, id); }}
-                  onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
-                  onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
-                  onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}
-                  onModelChange={(model) => onModelChange(ws.id, model)}
-                  onExecutePlan={() => onExecutePlan(ws.id)}
-                  onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
-                  onReady={(api) => onChatReady(ws.id, api)}
-                  onProviderSwitch={onProviderSwitch ? (provider) => onProviderSwitch(ws.id, provider) : undefined}
-                />
-              </div>
-            </div>
-          {:else}
+          {#if !chatExpanded}
             <!-- Collapsed pill -->
             {@const agentTask = agentTaskByWorkspace.get(ws.id)}
             <button
@@ -754,6 +694,66 @@
               <ChevronUp size={13} />
             </button>
           {/if}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="chat-overlay"
+            class:panel-focused={focusedPanel === "chat"}
+            style:display={chatExpanded ? undefined : 'none'}
+            onmousedown={() => { focusedPanel = "chat"; }}
+            use:draggable={{ handle: ".chat-overlay-header", offset: chatDragOffset, onDrag: (o) => { chatDragOffset = o; } }}
+            use:resizable={{ minWidth: 380, minHeight: 280, onResizeStart: onChatResizeStart, onResize: onChatResize }}
+            style:width={chatSize ? `${chatSize.w}px` : undefined}
+            style:height={chatSize ? `${chatSize.h}px` : undefined}
+          >
+            <div class="chat-overlay-header">
+              <span class="chat-overlay-title">
+                <MessageSquare size={13} strokeWidth={2} />
+                Chat
+              </span>
+              <div class="chat-overlay-actions">
+                {#if chatDragOffset.x || chatDragOffset.y || chatSize}
+                  <button
+                    class="chat-overlay-btn"
+                    onclick={() => { chatDragOffset = { x: 0, y: 0 }; chatSize = null; }}
+                    use:tooltip={{ text: "Reset position and size" }}
+                  >
+                    <RefreshCcw size={12} />
+                  </button>
+                {/if}
+                <button
+                  class="chat-overlay-btn"
+                  onclick={() => onChatExpandedChange(false)}
+                  use:tooltip={{ text: "Collapse chat", shortcut: "⌘J" }}
+                >
+                  <Minus size={14} />
+                </button>
+              </div>
+            </div>
+            <div class="chat-overlay-body">
+              <ChatPanel
+                workspaceId={ws.id}
+                creating={ws.id === creatingWsId}
+                planMode={planModeByWorkspace.get(ws.id) ?? repoSettings?.default_plan ?? false}
+                thinkingMode={thinkingModeByWorkspace.get(ws.id) ?? repoSettings?.default_thinking ?? false}
+                model={modelByWorkspace.get(ws.id) ?? ""}
+                queue={getQueueItems(ws.id)}
+                {contextWarning}
+                providerInfo={providerInfoByWorkspace.get(ws.id) ?? null}
+                onSend={(prompt, images, mentions, planMode) => onSend(prompt, images, mentions, planMode)}
+                onSendImmediate={(prompt) => onSendImmediate(prompt)}
+                {onStop}
+                onSendNow={(id) => { if (ws.id) onSendNow(ws.id, id); }}
+                onRemoveFromQueue={(id) => { if (ws.id) onRemoveFromQueue(ws.id, id); }}
+                onPlanModeChange={(enabled) => onPlanModeChange(ws.id, enabled)}
+                onThinkingModeChange={(enabled) => onThinkingModeChange(ws.id, enabled)}
+                onModelChange={(model) => onModelChange(ws.id, model)}
+                onExecutePlan={() => onExecutePlan(ws.id)}
+                onMentionClick={(path) => { fileNavigatePath = path; activeTab = "files"; }}
+                onReady={(api) => onChatReady(ws.id, api)}
+                onProviderSwitch={onProviderSwitch ? (provider) => onProviderSwitch(ws.id, provider) : undefined}
+              />
+            </div>
+          </div>
         {:else}
           <!-- Hidden but mounted for non-active workspaces to preserve state -->
           <div class="chat-overlay-hidden" inert>
