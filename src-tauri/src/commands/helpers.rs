@@ -56,11 +56,45 @@ pub fn repo_display_name(repo_path: &Path) -> String {
         .unwrap_or_else(|| repo_path.display().to_string())
 }
 
+/// Build a Command that runs `script` inside the user's login shell.
+/// Handles shell-specific arg differences:
+///   zsh/bash: `<shell> -lic "<script>"`
+///   fish:     `fish --login --interactive -c "<script>"`
+fn login_shell_cmd(shell: &str, script: &str) -> std::process::Command {
+    let shell_name = Path::new(shell)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let mut cmd = std::process::Command::new(shell);
+    if shell_name == "fish" {
+        cmd.args(["--login", "--interactive", "-c", script]);
+    } else {
+        // zsh, bash, and other POSIX-ish shells all accept -lic
+        cmd.args(["-lic", script]);
+    }
+    cmd.stderr(std::process::Stdio::null());
+    cmd
+}
+
+/// Extract the delimited value from noisy shell output.
+/// Returns the trimmed text between the first pair of `delimiter` markers.
+fn extract_delimited(stdout: &str, delimiter: &str) -> Option<String> {
+    let mut parts = stdout.split(delimiter);
+    let _before = parts.next(); // noise before first delimiter
+    let value = parts.next()?;
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() { None } else { Some(trimmed) }
+}
+
 /// Cached shell env values (resolved once on first call).
 pub fn get_shell_env() -> &'static ShellEnv {
     use std::sync::OnceLock;
     static ENV: OnceLock<ShellEnv> = OnceLock::new();
     ENV.get_or_init(|| {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        tracing::info!("Resolving shell environment using {}", shell);
+
         let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok().or_else(|| {
             std::process::Command::new("launchctl")
                 .args(["getenv", "SSH_AUTH_SOCK"])
@@ -74,69 +108,43 @@ pub fn get_shell_env() -> &'static ShellEnv {
 
         let home = std::env::var("HOME").ok();
 
-        // Use interactive login shell (-lic) so .zshrc is sourced — this is
+        // Use interactive login shell so rc files are sourced — this is
         // where nvm/fnm/volta add their PATH entries.  Delimiters protect
-        // against noisy .zshrc output (motd, nvm "now using", etc.).
+        // against noisy shell output (motd, nvm "now using", etc.).
         let delimiter = "__KORLAP_ENV__";
-        let path = std::process::Command::new("zsh")
-            .args([
-                "-lic",
+        let path = login_shell_cmd(
+                &shell,
                 &format!("echo {delimiter}; echo $PATH; echo {delimiter}"),
-            ])
-            .stderr(std::process::Stdio::null())
+            )
             .output()
             .ok()
-            .and_then(|o| {
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                let mut parts = stdout.split(delimiter);
-                let _before = parts.next(); // noise before first delimiter
-                let value = parts.next()?;  // the actual PATH
-                let trimmed = value.trim().to_string();
-                if trimmed.is_empty() { None } else { Some(trimmed) }
-            });
+            .and_then(|o| extract_delimited(&String::from_utf8_lossy(&o.stdout), delimiter));
 
         // Resolve absolute path to `claude` binary once, so we don't rely
         // on PATH lookup at every spawn (which can fail in sandboxed contexts).
-        let claude_path = std::process::Command::new("zsh")
-            .args(["-lic", &format!("echo {delimiter}; whence -p claude; echo {delimiter}")])
-            .stderr(std::process::Stdio::null())
+        // `command -v` is POSIX and works in bash, zsh, and fish.
+        let claude_path = login_shell_cmd(
+                &shell,
+                &format!("echo {delimiter}; command -v claude; echo {delimiter}"),
+            )
             .output()
             .ok()
-            .and_then(|o| {
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                let mut parts = stdout.split(delimiter);
-                let _before = parts.next();
-                let value = parts.next()?;
-                let trimmed = value.trim().to_string();
-                if trimmed.is_empty() || trimmed.contains("not found") {
-                    None
-                } else {
-                    Some(trimmed)
-                }
-            });
+            .and_then(|o| extract_delimited(&String::from_utf8_lossy(&o.stdout), delimiter))
+            .filter(|s| !s.contains("not found"));
 
         if claude_path.is_none() {
             tracing::warn!("Could not resolve `claude` binary path — agent spawn will likely fail");
         }
 
         // Resolve codex binary path (optional — only needed if user selects Codex provider)
-        let codex_path = std::process::Command::new("zsh")
-            .args(["-lic", &format!("echo {delimiter}; whence -p codex; echo {delimiter}")])
-            .stderr(std::process::Stdio::null())
+        let codex_path = login_shell_cmd(
+                &shell,
+                &format!("echo {delimiter}; command -v codex; echo {delimiter}"),
+            )
             .output()
             .ok()
-            .and_then(|o| {
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                let mut parts = stdout.split(delimiter);
-                let _before = parts.next();
-                let value = parts.next()?;
-                let trimmed = value.trim().to_string();
-                if trimmed.is_empty() || trimmed.contains("not found") {
-                    None
-                } else {
-                    Some(trimmed)
-                }
-            });
+            .and_then(|o| extract_delimited(&String::from_utf8_lossy(&o.stdout), delimiter))
+            .filter(|s| !s.contains("not found"));
 
         if codex_path.is_some() {
             tracing::info!("Resolved codex binary: {:?}", codex_path);
@@ -145,12 +153,10 @@ pub fn get_shell_env() -> &'static ShellEnv {
         // Capture full environment from interactive login shell so spawned
         // processes get all user env vars (CARGO_TARGET_DIR, GOPATH, etc.)
         // that a Tauri app launched from Finder/Dock would otherwise miss.
-        let all_vars: HashMap<String, String> = std::process::Command::new("zsh")
-            .args([
-                "-lic",
+        let all_vars: HashMap<String, String> = login_shell_cmd(
+                &shell,
                 &format!("echo {delimiter}; /usr/bin/env; echo {delimiter}"),
-            ])
-            .stderr(std::process::Stdio::null())
+            )
             .output()
             .ok()
             .and_then(|o| {
@@ -197,8 +203,9 @@ pub fn get_shell_env() -> &'static ShellEnv {
             .unwrap_or_default();
 
         tracing::info!(
-            "Captured {} env vars from login shell",
-            all_vars.len()
+            "Captured {} env vars from login shell ({})",
+            all_vars.len(),
+            shell,
         );
 
         ShellEnv { ssh_auth_sock, home, path, claude_path, codex_path, all_vars }

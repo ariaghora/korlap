@@ -3,6 +3,17 @@ use crate::state::AppState;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
+use super::helpers::inject_shell_env;
+
+/// Return a `git` Command with the full user shell environment injected.
+/// Without this, commands spawned from a Finder/Dock-launched Tauri app would
+/// get a minimal PATH that is missing ~/.local/bin, Homebrew paths, etc.
+fn git_cmd() -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    inject_shell_env(&mut cmd);
+    cmd
+}
+
 // ── Repo branch commands ────────────────────────────────────────────
 
 #[tauri::command]
@@ -16,7 +27,7 @@ pub fn get_repo_head(
         repo.path.clone()
     };
 
-    let output = std::process::Command::new("git")
+    let output = git_cmd()
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(&repo_path)
         .output()
@@ -44,7 +55,7 @@ pub async fn checkout_default_branch(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let output = std::process::Command::new("git")
+        let output = git_cmd()
             .args(["checkout", &default_branch])
             .current_dir(&repo_path)
             .output()
@@ -96,7 +107,7 @@ pub async fn get_changed_files(
         // Compare against origin/<base> since workspaces branch from the remote tip.
         // Using the local base branch would show phantom diffs when local is behind remote.
         let remote_base = format!("origin/{}", base_branch);
-        let merge_base = std::process::Command::new("git")
+        let merge_base = git_cmd()
             .args(["merge-base", &remote_base, "HEAD"])
             .current_dir(&worktree_path)
             .output()
@@ -106,7 +117,7 @@ pub async fn get_changed_files(
             } else { None })
             .unwrap_or_else(|| remote_base.clone());
 
-        let output = std::process::Command::new("git")
+        let output = git_cmd()
             .args(["diff", "--numstat", &merge_base])
             .current_dir(&worktree_path)
             .output()
@@ -142,7 +153,7 @@ pub async fn get_changed_files(
             }
         }
 
-        let untracked = std::process::Command::new("git")
+        let untracked = git_cmd()
             .args(["ls-files", "--others", "--exclude-standard"])
             .current_dir(&worktree_path)
             .output()
@@ -191,7 +202,7 @@ pub async fn get_diff(
     tauri::async_runtime::spawn_blocking(move || {
         // Compare against origin/<base> since workspaces branch from the remote tip.
         let remote_base = format!("origin/{}", base_branch);
-        let merge_base = std::process::Command::new("git")
+        let merge_base = git_cmd()
             .args(["merge-base", &remote_base, "HEAD"])
             .current_dir(&worktree_path)
             .output()
@@ -201,7 +212,7 @@ pub async fn get_diff(
             } else { None })
             .unwrap_or_else(|| remote_base.clone());
 
-        let mut cmd = std::process::Command::new("git");
+        let mut cmd = git_cmd();
         cmd.args(["diff", &merge_base]);
         if let Some(ref fp) = file_path {
             cmd.arg("--").arg(fp);
@@ -267,7 +278,7 @@ pub async fn git_commit(
     let msg = message.clone();
     tauri::async_runtime::spawn_blocking(move || {
         // Stage all changes
-        let add_output = std::process::Command::new("git")
+        let add_output = git_cmd()
             .args(["add", "-A"])
             .current_dir(&worktree_path)
             .output()
@@ -278,7 +289,7 @@ pub async fn git_commit(
         }
 
         // Check if there's anything to commit
-        let diff_check = std::process::Command::new("git")
+        let diff_check = git_cmd()
             .args(["diff", "--cached", "--quiet"])
             .current_dir(&worktree_path)
             .status()
@@ -288,7 +299,7 @@ pub async fn git_commit(
         }
 
         // Commit
-        let commit_output = std::process::Command::new("git")
+        let commit_output = git_cmd()
             .args(["commit", "-m", &msg])
             .current_dir(&worktree_path)
             .output()
@@ -299,7 +310,7 @@ pub async fn git_commit(
         }
 
         // Get the short hash of the new commit
-        let hash_output = std::process::Command::new("git")
+        let hash_output = git_cmd()
             .args(["rev-parse", "--short", "HEAD"])
             .current_dir(&worktree_path)
             .output()
@@ -332,7 +343,7 @@ pub async fn git_push(
         let gh_token = provider.resolve_token(&gh_profile);
 
         // Use actual git branch — metadata may be stale after a rename failure
-        let branch = std::process::Command::new("git")
+        let branch = git_cmd()
             .args(["branch", "--show-current"])
             .current_dir(&worktree_path)
             .output()
@@ -388,7 +399,7 @@ pub async fn check_main_behind(
         }
 
         // Count commits local is behind: main..origin/main
-        let rev_list = std::process::Command::new("git")
+        let rev_list = git_cmd()
             .args([
                 "rev-list", "--count",
                 &format!("{}..origin/{}", base_branch, base_branch),
@@ -449,7 +460,7 @@ pub async fn sync_main(
         }
 
         // 2. Check if HEAD is on the default branch
-        let head_output = std::process::Command::new("git")
+        let head_output = git_cmd()
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(&repo_path)
             .output()
@@ -458,7 +469,7 @@ pub async fn sync_main(
 
         if current_branch == base_branch {
             // HEAD is on the default branch — must update working tree too
-            let output = std::process::Command::new("git")
+            let output = git_cmd()
                 .args(["merge", "--ff-only", &format!("origin/{}", base_branch)])
                 .current_dir(&repo_path)
                 .output()
@@ -470,7 +481,7 @@ pub async fn sync_main(
             }
         } else {
             // Default branch not checked out — safe to just move the ref
-            let output = std::process::Command::new("git")
+            let output = git_cmd()
                 .args([
                     "update-ref",
                     &format!("refs/heads/{}", base_branch),
@@ -532,7 +543,7 @@ pub async fn check_base_updates(
         let remote_base = format!("origin/{}", base_branch);
 
         // Find merge-base between HEAD and origin/<base>
-        let merge_base_output = std::process::Command::new("git")
+        let merge_base_output = git_cmd()
             .args(["merge-base", "HEAD", &remote_base])
             .current_dir(&worktree_path)
             .output()
@@ -548,7 +559,7 @@ pub async fn check_base_updates(
             .to_string();
 
         // Count commits on origin/<base> since the merge-base
-        let rev_list = std::process::Command::new("git")
+        let rev_list = git_cmd()
             .args(["rev-list", "--count", &format!("{}..{}", merge_base, remote_base)])
             .current_dir(&worktree_path)
             .output()
@@ -607,7 +618,7 @@ pub async fn update_from_base(
 
         // Merge origin/<base> into the workspace branch
         let remote_base = format!("origin/{}", base_branch);
-        let merge_output = std::process::Command::new("git")
+        let merge_output = git_cmd()
             .args(["merge", &remote_base, "--no-edit"])
             .current_dir(&worktree_path)
             .output()
@@ -618,7 +629,7 @@ pub async fn update_from_base(
             let stdout = String::from_utf8_lossy(&merge_output.stdout);
 
             // Abort the failed merge to leave worktree clean
-            let _ = std::process::Command::new("git")
+            let _ = git_cmd()
                 .args(["merge", "--abort"])
                 .current_dir(&worktree_path)
                 .output();

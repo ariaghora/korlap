@@ -86,28 +86,16 @@ fn spawn_pty(
     cmd.env("LANG", &lang);
     cmd.env("LC_ALL", &lang);
 
-    // Inject shell env for SSH, PATH, etc.
-    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
-        cmd.env("SSH_AUTH_SOCK", sock);
-    } else if let Ok(output) = std::process::Command::new("launchctl")
-        .args(["getenv", "SSH_AUTH_SOCK"])
-        .output()
-    {
-        let sock = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !sock.is_empty() {
+    // Inject cached shell env (PATH, SSH_AUTH_SOCK, HOME, GOPATH, etc.)
+    // so the PTY inherits the same environment as agent/git commands.
+    let shell_env = super::helpers::get_shell_env();
+    for (key, value) in &shell_env.all_vars {
+        cmd.env(key, value);
+    }
+    // Fallback: SSH_AUTH_SOCK from launchctl if not in shell env
+    if !shell_env.all_vars.contains_key("SSH_AUTH_SOCK") {
+        if let Some(ref sock) = shell_env.ssh_auth_sock {
             cmd.env("SSH_AUTH_SOCK", sock);
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        cmd.env("HOME", home);
-    }
-    if let Ok(output) = std::process::Command::new("zsh")
-        .args(["-l", "-c", "echo $PATH"])
-        .output()
-    {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            cmd.env("PATH", path);
         }
     }
 
