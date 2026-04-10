@@ -474,6 +474,13 @@
       {/if}
     {/if}
     <button
+      class="meow-btn"
+      onclick={() => addToast("Meow", "success")}
+      use:tooltip={{ text: "Meow" }}
+    >
+      🐱
+    </button>
+    <button
       class="autopilot-btn"
       class:active={autopilotEnabled}
       onclick={onAutopilotToggle}
@@ -772,6 +779,23 @@
 
   .add-item:hover {
     color: var(--text-primary);
+  }
+
+  .meow-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .meow-btn:hover {
+    background: var(--bg-hover);
   }
 
   .autopilot-btn {
