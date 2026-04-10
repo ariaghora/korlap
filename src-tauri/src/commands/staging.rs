@@ -68,11 +68,12 @@ pub async fn create_staging_workspace(
             // Remove worktree
             if let Some(ref path) = existing_path {
                 if path.exists() {
-                    let _ = std::process::Command::new("git")
-                        .args(["worktree", "remove", "--force"])
+                    let mut rm_cmd = std::process::Command::new("git");
+                    rm_cmd.args(["worktree", "remove", "--force"])
                         .arg(path)
-                        .current_dir(&repo_path)
-                        .output();
+                        .current_dir(&repo_path);
+                    inject_shell_env(&mut rm_cmd);
+                    let _ = rm_cmd.output();
                 }
             }
 
@@ -97,25 +98,28 @@ pub async fn create_staging_workspace(
 
     // Always clean up stale worktree/branch even if not tracked in state
     if worktree_path.exists() {
-        let _ = std::process::Command::new("git")
-            .args(["worktree", "remove", "--force"])
+        let mut rm_wt = std::process::Command::new("git");
+        rm_wt.args(["worktree", "remove", "--force"])
             .arg(&worktree_path)
-            .current_dir(&repo_path)
-            .output();
+            .current_dir(&repo_path);
+        inject_shell_env(&mut rm_wt);
+        let _ = rm_wt.output();
     }
     // Migration: clean up old shared "staging" path from before per-repo paths
     let old_staging_path = worktree_base.join("staging");
     if old_staging_path.exists() {
-        let _ = std::process::Command::new("git")
-            .args(["worktree", "remove", "--force"])
+        let mut rm_old = std::process::Command::new("git");
+        rm_old.args(["worktree", "remove", "--force"])
             .arg(&old_staging_path)
-            .current_dir(&repo_path)
-            .output();
+            .current_dir(&repo_path);
+        inject_shell_env(&mut rm_old);
+        let _ = rm_old.output();
     }
-    let _ = std::process::Command::new("git")
-        .args(["worktree", "prune"])
-        .current_dir(&repo_path)
-        .output();
+    let mut prune_cmd = std::process::Command::new("git");
+    prune_cmd.args(["worktree", "prune"])
+        .current_dir(&repo_path);
+    inject_shell_env(&mut prune_cmd);
+    let _ = prune_cmd.output();
     let mut stale_del = std::process::Command::new("git");
     stale_del
         .args(["branch", "-D", "korlap/staging"])
@@ -126,12 +130,13 @@ pub async fn create_staging_workspace(
     std::fs::create_dir_all(worktree_path.parent().unwrap_or(&worktree_path))
         .map_err(|e| e.to_string())?;
 
-    let output = std::process::Command::new("git")
-        .args(["worktree", "add", "-b", "korlap/staging"])
+    let mut wt_add = std::process::Command::new("git");
+    wt_add.args(["worktree", "add", "-b", "korlap/staging"])
         .arg(&worktree_path)
         .arg(&start_point)
-        .current_dir(&repo_path)
-        .output()
+        .current_dir(&repo_path);
+    inject_shell_env(&mut wt_add);
+    let output = wt_add.output()
         .map_err(|e| format!("Failed to run git worktree add: {}", e))?;
 
     if !output.status.success() {
@@ -256,24 +261,27 @@ pub async fn remove_staging_workspace(
 
     // Remove worktree
     if worktree_path.exists() {
-        let output = std::process::Command::new("git")
-            .args(["worktree", "remove", "--force"])
+        let mut rm_wt = std::process::Command::new("git");
+        rm_wt.args(["worktree", "remove", "--force"])
             .arg(&worktree_path)
-            .current_dir(&repo_path)
-            .output()
+            .current_dir(&repo_path);
+        inject_shell_env(&mut rm_wt);
+        let output = rm_wt.output()
             .map_err(|e| format!("Failed to remove worktree: {}", e))?;
 
         if !output.status.success() {
-            let _ = std::process::Command::new("git")
-                .args(["worktree", "prune"])
-                .current_dir(&repo_path)
-                .output();
+            let mut prune = std::process::Command::new("git");
+            prune.args(["worktree", "prune"])
+                .current_dir(&repo_path);
+            inject_shell_env(&mut prune);
+            let _ = prune.output();
         }
     } else {
-        let _ = std::process::Command::new("git")
-            .args(["worktree", "prune"])
-            .current_dir(&repo_path)
-            .output();
+        let mut prune = std::process::Command::new("git");
+        prune.args(["worktree", "prune"])
+            .current_dir(&repo_path);
+        inject_shell_env(&mut prune);
+        let _ = prune.output();
     }
 
     // Delete the staging branch

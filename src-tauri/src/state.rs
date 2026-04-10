@@ -392,11 +392,12 @@ impl AppState {
     }
 
     pub fn is_git_repo(path: &Path) -> Result<(), String> {
-        let output = std::process::Command::new("git")
-            .arg("rev-parse")
+        let mut cmd = std::process::Command::new("git");
+        cmd.arg("rev-parse")
             .arg("--git-dir")
-            .current_dir(path)
-            .output()
+            .current_dir(path);
+        crate::commands::helpers::inject_shell_env(&mut cmd);
+        let output = cmd.output()
             .map_err(|e| format!("Failed to run git: {}", e))?;
         if !output.status.success() {
             return Err(format!("{} is not a git repository", path.display()));
@@ -438,11 +439,11 @@ fn extract_task_from_messages(messages_dir: &Path, workspace_id: &str) -> Option
 /// rather than trusting stored metadata (the agent may have already renamed
 /// it via a bash command). No-ops if the branch is already at the target name.
 pub fn rename_git_branch(worktree_path: &Path, new_branch: &str, fallback_branch: &str) -> Result<(), String> {
-    let current_branch = match std::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(worktree_path)
-        .output()
-    {
+    let mut show_cmd = std::process::Command::new("git");
+    show_cmd.args(["branch", "--show-current"])
+        .current_dir(worktree_path);
+    crate::commands::helpers::inject_shell_env(&mut show_cmd);
+    let current_branch = match show_cmd.output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => fallback_branch.to_string(),
     };
@@ -451,10 +452,11 @@ pub fn rename_git_branch(worktree_path: &Path, new_branch: &str, fallback_branch
         return Ok(());
     }
 
-    let output = std::process::Command::new("git")
-        .args(["branch", "-m", &current_branch, new_branch])
-        .current_dir(worktree_path)
-        .output()
+    let mut rename_cmd = std::process::Command::new("git");
+    rename_cmd.args(["branch", "-m", &current_branch, new_branch])
+        .current_dir(worktree_path);
+    crate::commands::helpers::inject_shell_env(&mut rename_cmd);
+    let output = rename_cmd.output()
         .map_err(|e| format!("Failed to run git branch -m: {}", e))?;
 
     if !output.status.success() {
